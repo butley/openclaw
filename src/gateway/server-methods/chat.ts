@@ -9,6 +9,7 @@ import { resolveEffectiveMessagesConfig, resolveIdentityName } from "../../agent
 import { resolveThinkingDefault } from "../../agents/model-selection.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
+import { registerAgentRunContext } from "../../infra/agent-events.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import {
   extractShortModelName,
@@ -324,6 +325,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       }>;
       timeoutMs?: number;
       idempotencyKey: string;
+      mirror?: boolean;
     };
     const stopCommand = isChatStopCommandText(p.message);
     const normalizedAttachments =
@@ -375,6 +377,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     });
     const now = Date.now();
     const clientRunId = p.idempotencyKey;
+    registerAgentRunContext(clientRunId, { sessionKey: p.sessionKey, mirror: p.mirror });
 
     const sendPolicy = resolveSendPolicy({
       cfg,
@@ -561,6 +564,27 @@ export const chatHandlers: GatewayRequestHandlers = {
               sessionKey: p.sessionKey,
               message,
             });
+            if (p.mirror && combinedReply) {
+              try {
+                const keyParts = p.sessionKey.split(":").filter(Boolean);
+                // Format: agent:{agentId}:{channel}:{peerKind}:{peerId}
+                if (keyParts.length >= 5 && keyParts[0] === "agent") {
+                  const channel = keyParts[2];
+                  const peerId = keyParts.slice(4).join(":");
+                  if (channel === "whatsapp" && peerId) {
+                    import("../../web/outbound.js").then(({ sendMessageWhatsApp }) => {
+                      sendMessageWhatsApp(peerId, combinedReply, { verbose: false })
+                        .then(() =>
+                          context.logGateway.info(`[mirror] sent to ${channel}:${peerId}`),
+                        )
+                        .catch((err) => context.logGateway.warn(`[mirror] failed: ${err}`));
+                    });
+                  }
+                }
+              } catch (mirrorErr) {
+                context.logGateway.warn(`[mirror] error: ${mirrorErr}`);
+              }
+            }
           }
           context.dedupe.set(`chat:${clientRunId}`, {
             ts: Date.now(),

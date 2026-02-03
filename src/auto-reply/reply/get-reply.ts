@@ -11,6 +11,7 @@ import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/
 import { type OpenClawConfig, loadConfig } from "../../config/config.js";
 import { applyLinkUnderstanding } from "../../link-understanding/apply.js";
 import { applyMediaUnderstanding } from "../../media-understanding/apply.js";
+import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { defaultRuntime } from "../../runtime.js";
 import { resolveCommandAuthorization } from "../command-auth.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
@@ -90,6 +91,36 @@ export async function getReplyFromConfig(
       agentDir,
       activeModel: { provider, model },
     });
+    if (finalized.Transcript) {
+      const hookRunner = getGlobalHookRunner();
+      if (hookRunner?.hasHooks("message_received")) {
+        void hookRunner
+          .runMessageReceived(
+            {
+              from: finalized.From ?? "",
+              content: "🎤 " + finalized.Transcript,
+              timestamp: finalized.Timestamp,
+              metadata: {
+                to: finalized.To,
+                provider: finalized.Provider,
+                surface: finalized.Surface,
+                senderE164: finalized.SenderE164,
+                isTranscript: true,
+                originalBody: "<media:audio>",
+              },
+            },
+            {
+              channelId: (finalized.OriginatingChannel ??
+                finalized.Surface ??
+                finalized.Provider ??
+                "").toLowerCase(),
+              accountId: finalized.AccountId,
+              conversationId: finalized.OriginatingTo ?? finalized.To ?? finalized.From,
+            },
+          )
+          .catch(() => {});
+      }
+    }
     await applyLinkUnderstanding({
       ctx: finalized,
       cfg,

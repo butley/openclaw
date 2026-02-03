@@ -24,6 +24,7 @@ export type ActiveWebListener = {
     participant?: string,
   ) => Promise<void>;
   sendComposingTo: (to: string) => Promise<void>;
+  onWhatsApp?: (jid: string) => Promise<Array<{ exists?: boolean; jid?: string }>>;
   close?: () => Promise<void>;
 };
 

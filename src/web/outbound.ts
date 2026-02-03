@@ -8,8 +8,29 @@ import { normalizePollInput, type PollInput } from "../polls.js";
 import { toWhatsappJid } from "../utils.js";
 import { type ActiveWebSendOptions, requireActiveWebListener } from "./active-listener.js";
 import { loadWebMedia } from "./media.js";
+import { resolveBrazilianJid } from "./inbound/brazil-jid-resolver.js";
 
 const outboundLog = createSubsystemLogger("gateway/channels/whatsapp").child("outbound");
+
+async function resolveJidWithBrazil(
+  active: { onWhatsApp?: (jid: string) => Promise<Array<{ exists?: boolean; jid?: string }>> },
+  to: string,
+) {
+  const jid = toWhatsappJid(to);
+  if (!active.onWhatsApp) {
+    return jid;
+  }
+  try {
+    const resolved = await resolveBrazilianJid({ onWhatsApp: active.onWhatsApp }, jid);
+    if (resolved !== jid) {
+      outboundLog.info(`[brazil-jid] Resolved ${jid} -> ${resolved}`);
+    }
+    return resolved;
+  } catch (err) {
+    outboundLog.warn(`[brazil-jid] Resolution failed: ${(err as Error).message}`);
+    return jid;
+  }
+}
 
 export async function sendMessageWhatsApp(
   to: string,
@@ -40,7 +61,7 @@ export async function sendMessageWhatsApp(
     to,
   });
   try {
-    const jid = toWhatsappJid(to);
+    const jid = await resolveJidWithBrazil(active, to);
     let mediaBuffer: Buffer | undefined;
     let mediaType: string | undefined;
     if (options.mediaUrl) {
@@ -148,7 +169,7 @@ export async function sendPollWhatsApp(
     to,
   });
   try {
-    const jid = toWhatsappJid(to);
+    const jid = await resolveJidWithBrazil(active, to);
     const normalized = normalizePollInput(poll, { maxOptions: 12 });
     outboundLog.info(`Sending poll -> ${jid}: "${normalized.question}"`);
     logger.info(
