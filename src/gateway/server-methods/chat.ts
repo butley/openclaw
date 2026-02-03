@@ -9,7 +9,6 @@ import { resolveEffectiveMessagesConfig, resolveIdentityName } from "../../agent
 import { resolveThinkingDefault } from "../../agents/model-selection.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
-import { registerAgentRunContext } from "../../infra/agent-events.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import {
   extractShortModelName,
@@ -580,9 +579,7 @@ export const chatHandlers: GatewayRequestHandlers = {
                         .then(() =>
                           context.logGateway.info(`[mirror] sent to ${channel}:${peerId}`),
                         )
-                        .catch((err) =>
-                          context.logGateway.warn(`[mirror] failed: ${String(err)}`),
-                        );
+                        .catch((err) => context.logGateway.warn(`[mirror] failed: ${String(err)}`));
                     });
                   }
                 }

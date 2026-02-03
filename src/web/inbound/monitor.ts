@@ -364,7 +364,7 @@ export async function monitorWebInbox(options: {
     sock: {
       sendMessage: (jid: string, content: AnyMessageContent) => sock.sendMessage(jid, content),
       sendPresenceUpdate: (presence, jid?: string) => sock.sendPresenceUpdate(presence, jid),
-      onWhatsApp: (jid: string) => sock.onWhatsApp(jid),
+      onWhatsApp: async (jid: string) => (await sock.onWhatsApp(jid)) ?? [],
     },
     defaultAccountId: options.accountId,
   });
@@ -399,8 +399,7 @@ export async function monitorWebInbox(options: {
       resolveClose(reason ?? { status: undefined, isLoggedOut: false, error: "closed" });
     },
     // IPC surface (sendMessage/sendPoll/sendReaction/sendComposingTo)
-    onWhatsApp: (jid: string) => sock.onWhatsApp(jid),
+    onWhatsApp: async (jid: string) => (await sock.onWhatsApp(jid)) ?? [],
     ...sendApi,
-    onWhatsApp: (jid: string) => sock.onWhatsApp(jid),
   } as const;
 }

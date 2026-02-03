@@ -151,9 +151,7 @@ export async function dispatchReplyFromConfig(params: {
 
   // Extract common message data for hooks and WebSocket broadcast
   const timestamp =
-    typeof ctx.Timestamp === "number" && Number.isFinite(ctx.Timestamp)
-      ? ctx.Timestamp
-      : undefined;
+    typeof ctx.Timestamp === "number" && Number.isFinite(ctx.Timestamp) ? ctx.Timestamp : undefined;
   const messageIdForEvent =
     ctx.MessageSidFull ?? ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast;
   const content =
@@ -179,7 +177,7 @@ export async function dispatchReplyFromConfig(params: {
     timestamp,
     chatType: ctx.ChatType === "group" ? "group" : "dm",
     conversationId,
-    threadId: ctx.MessageThreadId,
+    threadId: ctx.MessageThreadId == null ? undefined : String(ctx.MessageThreadId),
     hasMedia: Boolean(ctx.MediaType || ctx.MediaTypes?.length),
     mediaType: ctx.MediaType,
     metadata: {
