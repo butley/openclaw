@@ -15,12 +15,12 @@ const palette = {
   accent: "#F6C453",
   accentSoft: "#F2A65A",
   border: "#3C414B",
-  userBg: "#2B2F36",
+  userBg: "#1a1a1a",
   userText: "#F3EEE0",
   systemText: "#9BA3B2",
-  toolPendingBg: "#1F2A2F",
+  toolPendingBg: "#12151a",
   toolSuccessBg: "#1E2D23",
-  toolErrorBg: "#2F1F1F",
+  toolErrorBg: "#181212",
   toolTitle: "#F6C453",
   toolOutput: "#E1DACB",
   quote: "#8CC8FF",
@@ -35,6 +35,7 @@ const palette = {
 
 const fg = (hex: string) => (text: string) => chalk.hex(hex)(text);
 const bg = (hex: string) => (text: string) => chalk.bgHex(hex)(text);
+const bgAnsi = (code: number) => (text: string) => chalk.bgAnsi256(code)(text);
 
 const syntaxTheme = createSyntaxTheme(fg(palette.code));
 
@@ -73,7 +74,7 @@ export const theme = {
   toolTitle: fg(palette.toolTitle),
   toolOutput: fg(palette.toolOutput),
   toolPendingBg: bg(palette.toolPendingBg),
-  toolSuccessBg: bg(palette.toolSuccessBg),
+  toolSuccessBg: bgAnsi(236), // dark gray
   toolErrorBg: bg(palette.toolErrorBg),
   border: fg(palette.border),
   bold: (text: string) => chalk.bold(text),

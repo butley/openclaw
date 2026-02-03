@@ -364,6 +364,7 @@ export async function monitorWebInbox(options: {
     sock: {
       sendMessage: (jid: string, content: AnyMessageContent) => sock.sendMessage(jid, content),
       sendPresenceUpdate: (presence, jid?: string) => sock.sendPresenceUpdate(presence, jid),
+      onWhatsApp: (jid: string) => sock.onWhatsApp(jid),
     },
     defaultAccountId: options.accountId,
   });
@@ -399,5 +400,6 @@ export async function monitorWebInbox(options: {
     },
     // IPC surface (sendMessage/sendPoll/sendReaction/sendComposingTo)
     ...sendApi,
+    onWhatsApp: (jid: string) => sock.onWhatsApp(jid),
   } as const;
 }

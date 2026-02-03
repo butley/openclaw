@@ -15,6 +15,7 @@ export type AgentRunContext = {
   sessionKey?: string;
   verboseLevel?: VerboseLevel;
   isHeartbeat?: boolean;
+  mirror?: boolean;
 };
 
 // Keep per-run counters so streams stay strictly monotonic per runId.
@@ -39,6 +40,9 @@ export function registerAgentRunContext(runId: string, context: AgentRunContext)
   }
   if (context.isHeartbeat !== undefined && existing.isHeartbeat !== context.isHeartbeat) {
     existing.isHeartbeat = context.isHeartbeat;
+  }
+  if (context.mirror !== undefined && existing.mirror !== context.mirror) {
+    existing.mirror = context.mirror;
   }
 }
 

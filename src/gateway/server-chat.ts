@@ -200,6 +200,28 @@ export function createAgentEventHandler({
         broadcast("chat", payload);
       }
       nodeSendToSession(sessionKey, "chat", payload);
+
+      // Mirror to original channel if requested
+      const runContext = getAgentRunContext(clientRunId);
+      if (runContext?.mirror && text) {
+        try {
+          const keyParts = sessionKey.split(":").filter(Boolean);
+          // Format: agent:{agentId}:{channel}:{peerKind}:{peerId}
+          if (keyParts.length >= 5 && keyParts[0] === "agent") {
+            const channel = keyParts[2];
+            const peerId = keyParts.slice(4).join(":");
+            if (channel === "whatsapp" && peerId) {
+              import("../web/outbound.js").then(({ sendMessageWhatsApp }) => {
+                sendMessageWhatsApp(peerId, text, { verbose: false })
+                  .then(() => console.log(`[mirror] sent to ${channel}:${peerId}`))
+                  .catch((err) => console.warn(`[mirror] failed: ${err}`));
+              });
+            }
+          }
+        } catch (mirrorErr) {
+          console.warn(`[mirror] error: ${mirrorErr}`);
+        }
+      }
       return;
     }
     const payload = {
