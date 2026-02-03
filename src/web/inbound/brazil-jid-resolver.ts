@@ -19,6 +19,12 @@ type CacheEntry = {
   timestamp: number;
 };
 
+type OnWhatsAppResult = { exists?: boolean; jid?: string };
+
+type OnWhatsAppApi = {
+  onWhatsApp: (jid: string) => Promise<Array<OnWhatsAppResult>>;
+};
+
 // In-memory cache (persisted to disk)
 let jidCache: Record<string, CacheEntry> | null = null;
 
@@ -63,7 +69,7 @@ function saveCache(): void {
       ),
     );
   } catch (err) {
-    console.error("[brazil-jid] Failed to save cache:", (err as Error).message);
+    console.error("[brazil-jid] Failed to save cache:", err instanceof Error ? err.message : err);
   }
 }
 
@@ -104,7 +110,7 @@ export function isBrazilianMobile(digits: string): boolean {
       return true;
     }
     // For 8-digit legacy, first digit should be 6-9 (mobile range)
-    if (localNumber.length === 8 && ["6", "7", "8", "9"].includes(localNumber[0])) {
+    if (localNumber.length === 8 && ["6", "7", "8", "9"].includes(localNumber[0] ?? "")) {
       return true;
     }
   }
@@ -139,12 +145,6 @@ export function generateBrazilianVariants(digits: string): string[] {
 
   return variants;
 }
-
-type OnWhatsAppResult = { exists?: boolean; jid?: string };
-
-type OnWhatsAppApi = {
-  onWhatsApp: (jid: string) => Promise<Array<OnWhatsAppResult>>;
-};
 
 /**
  * Resolve the correct WhatsApp JID for a Brazilian number
@@ -208,7 +208,10 @@ export async function resolveBrazilianJid(sock: OnWhatsAppApi, inputJid: string)
         return verifiedJid;
       }
     } catch (err) {
-      console.warn(`[brazil-jid] Query failed for ${variant}:`, (err as Error).message);
+      console.warn(
+        `[brazil-jid] Query failed for ${variant}:`,
+        err instanceof Error ? err.message : err,
+      );
     }
   }
 

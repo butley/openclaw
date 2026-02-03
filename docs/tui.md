@@ -40,6 +40,10 @@ Use `--password` if your Gateway uses password auth.
 - Footer: connection state + agent + session + model + think/verbose/reasoning + token counts + deliver.
 - Input: text editor with autocomplete.
 
+## Theme
+
+- User and tool cards use darker backgrounds for better contrast in low-light terminals.
+
 ## Mental model: agents + sessions
 
 - Agents are unique slugs (e.g. `main`, `research`). The Gateway exposes the list.

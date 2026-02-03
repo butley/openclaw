@@ -200,7 +200,6 @@ export function createAgentEventHandler({
         broadcast("chat", payload);
       }
       nodeSendToSession(sessionKey, "chat", payload);
-
       // Mirror to original channel if requested
       const runContext = getAgentRunContext(clientRunId);
       if (runContext?.mirror && text) {
@@ -214,12 +213,12 @@ export function createAgentEventHandler({
               import("../web/outbound.js").then(({ sendMessageWhatsApp }) => {
                 sendMessageWhatsApp(peerId, text, { verbose: false })
                   .then(() => console.log(`[mirror] sent to ${channel}:${peerId}`))
-                  .catch((err) => console.warn(`[mirror] failed: ${err}`));
+                  .catch((err) => console.warn(`[mirror] failed: ${String(err)}`));
               });
             }
           }
         } catch (mirrorErr) {
-          console.warn(`[mirror] error: ${mirrorErr}`);
+          console.warn(`[mirror] error: ${String(mirrorErr)}`);
         }
       }
       return;

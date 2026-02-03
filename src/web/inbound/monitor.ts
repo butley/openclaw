@@ -399,6 +399,7 @@ export async function monitorWebInbox(options: {
       resolveClose(reason ?? { status: undefined, isLoggedOut: false, error: "closed" });
     },
     // IPC surface (sendMessage/sendPoll/sendReaction/sendComposingTo)
+    onWhatsApp: (jid: string) => sock.onWhatsApp(jid),
     ...sendApi,
     onWhatsApp: (jid: string) => sock.onWhatsApp(jid),
   } as const;

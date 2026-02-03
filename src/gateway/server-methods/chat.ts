@@ -15,6 +15,7 @@ import {
   extractShortModelName,
   type ResponsePrefixContext,
 } from "../../auto-reply/reply/response-prefix-template.js";
+import { registerAgentRunContext } from "../../infra/agent-events.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
@@ -377,6 +378,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     });
     const now = Date.now();
     const clientRunId = p.idempotencyKey;
+    // Register run context with mirror flag for later use
     registerAgentRunContext(clientRunId, { sessionKey: p.sessionKey, mirror: p.mirror });
 
     const sendPolicy = resolveSendPolicy({
@@ -564,6 +566,7 @@ export const chatHandlers: GatewayRequestHandlers = {
               sessionKey: p.sessionKey,
               message,
             });
+            // Mirror to original channel if requested
             if (p.mirror && combinedReply) {
               try {
                 const keyParts = p.sessionKey.split(":").filter(Boolean);
@@ -577,12 +580,14 @@ export const chatHandlers: GatewayRequestHandlers = {
                         .then(() =>
                           context.logGateway.info(`[mirror] sent to ${channel}:${peerId}`),
                         )
-                        .catch((err) => context.logGateway.warn(`[mirror] failed: ${err}`));
+                        .catch((err) =>
+                          context.logGateway.warn(`[mirror] failed: ${String(err)}`),
+                        );
                     });
                   }
                 }
               } catch (mirrorErr) {
-                context.logGateway.warn(`[mirror] error: ${mirrorErr}`);
+                context.logGateway.warn(`[mirror] error: ${String(mirrorErr)}`);
               }
             }
           }

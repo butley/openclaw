@@ -41,7 +41,7 @@ export function createTtsTool(opts?: {
           lines.push("[[audio_as_voice]]");
         }
         // PATCH: Include TTS text as caption for logging
-        lines.push("🔊 " + text);
+        lines.push(`🔊 ${text}`);
         lines.push("");
         lines.push(`MEDIA:${result.audioPath}`);
         return {

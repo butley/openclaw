@@ -384,6 +384,9 @@ The `tts` tool converts text to speech and returns a `MEDIA:` path. When the
 result is Telegram-compatible, the tool includes `[[audio_as_voice]]` so
 Telegram sends a voice bubble.
 
+The tool also prepends a `🔊 <text>` caption line (plus a blank line) before the
+`MEDIA:` path so logs and message hooks can see the original text.
+
 ## Gateway RPC
 
 Gateway methods:

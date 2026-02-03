@@ -24,6 +24,9 @@ Status: the macOS/iOS SwiftUI chat UI talks directly to the Gateway WebSocket.
 ## How it works (behavior)
 
 - The UI connects to the Gateway WebSocket and uses `chat.history`, `chat.send`, and `chat.inject`.
+- `chat.send` accepts `mirror: true` to relay the final assistant reply to the session's
+  original channel (e.g., WhatsApp). Mirrors use the session key format
+  `agent:{agentId}:{channel}:{peerKind}:{peerId}` and currently only relay to WhatsApp.
 - `chat.inject` appends an assistant note directly to the transcript and broadcasts it to the UI (no agent run).
 - History is always fetched from the gateway (no local file watching).
 - If the gateway is unreachable, WebChat is read-only.

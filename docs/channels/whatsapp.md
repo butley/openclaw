@@ -324,7 +324,18 @@ WhatsApp can automatically send emoji reactions to incoming messages immediately
 WhatsApp sends audio as **voice notes** (PTT bubble).
 
 - Best results: OGG/Opus. OpenClaw rewrites `audio/ogg` to `audio/ogg; codecs=opus`.
+- TTS output for WhatsApp uses the Opus/OGG voice-note format (same as Telegram) so voice notes render correctly.
 - `[[audio_as_voice]]` is ignored for WhatsApp (audio already ships as voice note).
+
+## Brazil mobile number resolution (8-digit vs 9-digit)
+
+Brazilian mobile numbers can be registered with either legacy 8-digit or modern 9-digit
+variants. For outbound sends, OpenClaw queries WhatsApp (`onWhatsApp`) to resolve the
+correct JID before sending.
+
+- Cache: `~/.openclaw/brazil-jid-cache.json` (or `OPENCLAW_STATE_DIR`).
+- TTL: 7 days.
+- If resolution fails, OpenClaw falls back to the original JID.
 
 ## Media limits + optimization
 
