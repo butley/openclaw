@@ -6,6 +6,7 @@ import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { loadSessionStore, resolveStorePath } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
+import { emitInboundMessageEvent } from "../../infra/inbound-events.js";
 import {
   logMessageProcessed,
   logMessageQueued,
@@ -147,25 +148,53 @@ export async function dispatchReplyFromConfig(params: {
 
   const inboundAudio = isInboundAudioContext(ctx);
   const sessionTtsAuto = resolveSessionTtsAuto(ctx, cfg);
+
+  // Extract common message data for hooks and WebSocket broadcast
+  const timestamp =
+    typeof ctx.Timestamp === "number" && Number.isFinite(ctx.Timestamp)
+      ? ctx.Timestamp
+      : undefined;
+  const messageIdForEvent =
+    ctx.MessageSidFull ?? ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast;
+  const content =
+    typeof ctx.BodyForCommands === "string"
+      ? ctx.BodyForCommands
+      : typeof ctx.RawBody === "string"
+        ? ctx.RawBody
+        : typeof ctx.Body === "string"
+          ? ctx.Body
+          : "";
+  const channelId = (ctx.OriginatingChannel ?? ctx.Surface ?? ctx.Provider ?? "").toLowerCase();
+  const conversationId = ctx.OriginatingTo ?? ctx.To ?? ctx.From ?? undefined;
+
+  // Emit inbound message event for WebSocket broadcast to connected clients
+  emitInboundMessageEvent({
+    messageId: messageIdForEvent,
+    sessionKey,
+    channel: channelId,
+    accountId: ctx.AccountId,
+    from: ctx.From ?? "",
+    senderName: ctx.SenderName,
+    content,
+    timestamp,
+    chatType: ctx.ChatType === "group" ? "group" : "dm",
+    conversationId,
+    threadId: ctx.MessageThreadId,
+    hasMedia: Boolean(ctx.MediaType || ctx.MediaTypes?.length),
+    mediaType: ctx.MediaType,
+    metadata: {
+      to: ctx.To,
+      provider: ctx.Provider,
+      surface: ctx.Surface,
+      senderId: ctx.SenderId,
+      senderUsername: ctx.SenderUsername,
+      senderE164: ctx.SenderE164,
+    },
+  });
+
+  // Run message_received hooks
   const hookRunner = getGlobalHookRunner();
   if (hookRunner?.hasHooks("message_received")) {
-    const timestamp =
-      typeof ctx.Timestamp === "number" && Number.isFinite(ctx.Timestamp)
-        ? ctx.Timestamp
-        : undefined;
-    const messageIdForHook =
-      ctx.MessageSidFull ?? ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast;
-    const content =
-      typeof ctx.BodyForCommands === "string"
-        ? ctx.BodyForCommands
-        : typeof ctx.RawBody === "string"
-          ? ctx.RawBody
-          : typeof ctx.Body === "string"
-            ? ctx.Body
-            : "";
-    const channelId = (ctx.OriginatingChannel ?? ctx.Surface ?? ctx.Provider ?? "").toLowerCase();
-    const conversationId = ctx.OriginatingTo ?? ctx.To ?? ctx.From ?? undefined;
-
     void hookRunner
       .runMessageReceived(
         {
@@ -179,7 +208,7 @@ export async function dispatchReplyFromConfig(params: {
             threadId: ctx.MessageThreadId,
             originatingChannel: ctx.OriginatingChannel,
             originatingTo: ctx.OriginatingTo,
-            messageId: messageIdForHook,
+            messageId: messageIdForEvent,
             senderId: ctx.SenderId,
             senderName: ctx.SenderName,
             senderUsername: ctx.SenderUsername,

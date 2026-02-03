@@ -22,6 +22,7 @@ import { isDiagnosticsEnabled } from "../infra/diagnostic-events.js";
 import { logAcceptedEnvOption } from "../infra/env.js";
 import { createExecApprovalForwarder } from "../infra/exec-approval-forwarder.js";
 import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
+import { onInboundMessageEvent } from "../infra/inbound-events.js";
 import { startHeartbeatRunner } from "../infra/heartbeat-runner.js";
 import { getMachineDisplayName } from "../infra/machine-name.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
@@ -411,6 +412,11 @@ export async function startGatewayServer(
     broadcast("heartbeat", evt, { dropIfSlow: true });
   });
 
+  // Subscribe to inbound message events and broadcast to connected WebSocket clients
+  const inboundMessageUnsub = onInboundMessageEvent((evt) => {
+    broadcast("message.inbound", evt, { dropIfSlow: true });
+  });
+
   let heartbeatRunner = startHeartbeatRunner({ cfg: cfgAtStart });
 
   void cron.start().catch((err) => logCron.error(`failed to start: ${String(err)}`));
@@ -565,6 +571,7 @@ export async function startGatewayServer(
     dedupeCleanup,
     agentUnsub,
     heartbeatUnsub,
+    inboundMessageUnsub,
     chatRunState,
     clients,
     configReloader,
