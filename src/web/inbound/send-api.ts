@@ -12,20 +12,18 @@ export function createWebSendApi(params: {
   };
   defaultAccountId: string;
 }) {
-  const resolveJid = async (to: string) => {
+  const resolveJid = async (to: string): Promise<string> => {
     const jid = toWhatsappJid(to);
     if (!params.sock.onWhatsApp) {
       return jid;
     }
+    // Resolve Brazilian numbers that may have legacy 8-digit registration
     try {
-      return await resolveBrazilianJid(
-        { onWhatsApp: params.sock.onWhatsApp },
-        jid,
-      );
+      return await resolveBrazilianJid({ onWhatsApp: params.sock.onWhatsApp }, jid);
     } catch (err) {
       console.warn(
         "[send-api] Brazil JID resolution failed, using original:",
-        (err as Error).message,
+        err instanceof Error ? err.message : err,
       );
       return jid;
     }

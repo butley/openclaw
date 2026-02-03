@@ -91,14 +91,15 @@ export async function getReplyFromConfig(
       agentDir,
       activeModel: { provider, model },
     });
+    // PATCH: Audio transcript hook - emit message_received with transcript
     if (finalized.Transcript) {
       const hookRunner = getGlobalHookRunner();
-      if (hookRunner?.hasHooks("message_received")) {
+      if (hookRunner?.hasHooks?.("message_received")) {
         void hookRunner
           .runMessageReceived(
             {
               from: finalized.From ?? "",
-              content: "🎤 " + finalized.Transcript,
+              content: `🎤 ${finalized.Transcript}`,
               timestamp: finalized.Timestamp,
               metadata: {
                 to: finalized.To,
@@ -110,10 +111,7 @@ export async function getReplyFromConfig(
               },
             },
             {
-              channelId: (finalized.OriginatingChannel ??
-                finalized.Surface ??
-                finalized.Provider ??
-                "").toLowerCase(),
+              channelId: (finalized.OriginatingChannel ?? finalized.Surface ?? finalized.Provider ?? "").toLowerCase(),
               accountId: finalized.AccountId,
               conversationId: finalized.OriginatingTo ?? finalized.To ?? finalized.From,
             },

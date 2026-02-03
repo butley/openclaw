@@ -6,16 +6,17 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 import { convertMarkdownTables } from "../markdown/tables.js";
 import { normalizePollInput, type PollInput } from "../polls.js";
 import { toWhatsappJid } from "../utils.js";
-import { type ActiveWebSendOptions, requireActiveWebListener } from "./active-listener.js";
+import {
+  type ActiveWebListener,
+  type ActiveWebSendOptions,
+  requireActiveWebListener,
+} from "./active-listener.js";
 import { loadWebMedia } from "./media.js";
 import { resolveBrazilianJid } from "./inbound/brazil-jid-resolver.js";
 
 const outboundLog = createSubsystemLogger("gateway/channels/whatsapp").child("outbound");
 
-async function resolveJidWithBrazil(
-  active: { onWhatsApp?: (jid: string) => Promise<Array<{ exists?: boolean; jid?: string }>> },
-  to: string,
-) {
+async function resolveJidWithBrazil(active: ActiveWebListener, to: string): Promise<string> {
   const jid = toWhatsappJid(to);
   if (!active.onWhatsApp) {
     return jid;
@@ -27,7 +28,9 @@ async function resolveJidWithBrazil(
     }
     return resolved;
   } catch (err) {
-    outboundLog.warn(`[brazil-jid] Resolution failed: ${(err as Error).message}`);
+    outboundLog.warn(
+      `[brazil-jid] Resolution failed: ${err instanceof Error ? err.message : err}`,
+    );
     return jid;
   }
 }
