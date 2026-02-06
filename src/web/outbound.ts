@@ -11,8 +11,8 @@ import {
   type ActiveWebSendOptions,
   requireActiveWebListener,
 } from "./active-listener.js";
-import { loadWebMedia } from "./media.js";
 import { resolveBrazilianJid } from "./inbound/brazil-jid-resolver.js";
+import { loadWebMedia } from "./media.js";
 
 const outboundLog = createSubsystemLogger("gateway/channels/whatsapp").child("outbound");
 
@@ -28,9 +28,7 @@ async function resolveJidWithBrazil(active: ActiveWebListener, to: string): Prom
     }
     return resolved;
   } catch (err) {
-    outboundLog.warn(
-      `[brazil-jid] Resolution failed: ${err instanceof Error ? err.message : err}`,
-    );
+    outboundLog.warn(`[brazil-jid] Resolution failed: ${err instanceof Error ? err.message : err}`);
     return jid;
   }
 }
@@ -58,6 +56,9 @@ export async function sendMessageWhatsApp(
     accountId: resolvedAccountId ?? options.accountId,
   });
   text = convertMarkdownTables(text ?? "", tableMode);
+  // Convert markdown bold/bold-italic to WhatsApp formatting.
+  // ***text*** → *_text_* (bold italic), **text** → *text* (bold)
+  text = text.replace(/\*{3}(.+?)\*{3}/g, "*_$1_*").replace(/\*{2}(.+?)\*{2}/g, "*$1*");
   const logger = getChildLogger({
     module: "web-outbound",
     correlationId,

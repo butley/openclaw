@@ -29,7 +29,11 @@ export async function deliverWebReply(params: {
   const replyStarted = Date.now();
   const tableMode = params.tableMode ?? "code";
   const chunkMode = params.chunkMode ?? "length";
-  const convertedText = convertMarkdownTables(replyResult.text || "", tableMode);
+  // Convert markdown bold/bold-italic to WhatsApp bold (single asterisks).
+  const boldNormalized = (replyResult.text || "")
+    .replace(/\*{3}(.+?)\*{3}/g, "*_$1_*")
+    .replace(/\*{2}(.+?)\*{2}/g, "*$1*");
+  const convertedText = convertMarkdownTables(boldNormalized, tableMode);
   const textChunks = chunkMarkdownTextWithMode(convertedText, textLimit, chunkMode);
   const mediaList = replyResult.mediaUrls?.length
     ? replyResult.mediaUrls
