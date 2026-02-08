@@ -1,7 +1,7 @@
 # WhatsApp Outbound @Mention Support (LID Resolution)
 
-**Patch:** `0001-feat-whatsapp-outbound-mention-support-with-LID-reso.patch`
-**Commit:** `50eabdbe1` (butley/openclaw dev branch)
+**Patch:** `whatsapp-outbound-mentions.patch`
+**Commits:** `50eabdbe1`, `890b91946`, `7a9a78d30`, `0b797aacd`
 **Date:** 2026-02-08
 
 ## Problem
@@ -10,64 +10,61 @@ WhatsApp migrated group mentions from phone JIDs (`553196348700@s.whatsapp.net`)
 
 ## Solution
 
-Three-part fix:
-
 ### 1. Contact Name Cache (`src/web/inbound/contact-names.ts`) — NEW FILE
 
-In-memory cache mapping phone numbers to display names, populated from incoming messages' `pushName` field. Also provides:
+Persistent cache mapping phone numbers to display names, populated from incoming messages' `pushName` field. Provides:
+- `noteContactName(phone, name)` — record a contact (auto-saves to disk)
+- `loadContactNameCache()` — load cache from disk on startup
 - `getContactName(phone)` — phone → name lookup
-- `getContactPhone(name)` — reverse name → phone lookup
-- `readLidForPhone(phone)` — reads LID from Baileys' `lid-mapping-{phone}.json` files in the auth directory
+- `getContactPhone(name)` — reverse name → phone lookup (case-insensitive, prefix match)
+- `readLidForPhone(phone)` — reads LID from Baileys' `lid-mapping-{phone}.json` files
+
+Cache persists to `~/.openclaw/credentials/whatsapp/default/contact-names.json` and survives gateway restarts.
 
 ### 2. Outbound Mention Processing (`src/web/inbound/send-api.ts`) — MODIFIED
 
-New `processOutboundMentions(text)` function that:
+New exported `processOutboundMentions(text)` function that:
 
-1. **Detects `@+phone` / `@phone` patterns** → resolves phone to LID via mapping files → replaces text with `@LID_NUMBER` → adds `LID@lid` to Baileys mentions array
+1. **Detects `@+phone` / `@phone` patterns** → resolves phone to LID → replaces text with `@LID_NUMBER` → adds `LID@lid` to Baileys mentions array
 2. **Detects `@Name` patterns** → reverse-lookups name → phone via contact cache → resolves to LID → replaces text with `@LID_NUMBER` → adds to mentions array
 
-The payload sent to Baileys becomes:
-```json
-{
-  "text": "Hey @264351109914877, check this out",
-  "mentions": ["264351109914877@lid"]
-}
-```
+Applied in two code paths:
+- `send-api.ts` text payload (message tool / sendMessageWhatsApp)
+- `monitor.ts` inline reply callback (auto-reply / deliver-reply)
 
-WhatsApp renders `@264351109914877` as `@Lucas` (clickable, blue) automatically.
+### 3. Cache Population & Loading (`src/web/inbound/monitor.ts`) — MODIFIED
 
-### 3. Cache Population (`src/web/inbound/monitor.ts`) — MODIFIED
-
-Added `noteContactName(senderE164, senderName)` call when processing incoming messages, so the contact cache gets populated as messages arrive.
+- `noteContactName(senderE164, senderName)` called on every incoming message
+- `loadContactNameCache()` called on gateway startup (WhatsApp connect)
+- Inline `reply()` callback now uses `processOutboundMentions()` for proper mention rendering
 
 ## Key Discovery
 
-WhatsApp requires **both**:
+WhatsApp requires **both** for clickable mentions in groups:
 - `mentionedJid` array in contextInfo → must use `LID@lid` format
-- Message text → must contain `@LID_NUMBER` (WhatsApp client replaces with display name)
+- Message text → must contain `@LID_NUMBER` (WhatsApp client auto-replaces with display name)
 
-Using phone JID (`@s.whatsapp.net`) or display name (`@Lucas`) in either field does NOT produce clickable mentions in groups.
-
-## Limitations
-
-- Contact cache is in-memory only — resets on gateway restart
-- Names populate only after receiving at least one message from each contact
-- LID mapping files must exist in the Baileys auth directory (created automatically by Baileys during normal operation)
-- If no LID mapping exists for a phone number, falls back to `phone@s.whatsapp.net` (non-clickable)
+Using phone JID (`@s.whatsapp.net`) or display name (`@Lucas`) in either field does NOT produce clickable mentions.
 
 ## Files
 
 | File | Status | Description |
 |------|--------|-------------|
-| `src/web/inbound/contact-names.ts` | NEW | Contact name cache + LID resolver |
-| `src/web/inbound/send-api.ts` | MODIFIED | processOutboundMentions() in text payload path |
-| `src/web/inbound/monitor.ts` | MODIFIED | noteContactName() on incoming messages |
+| `src/web/inbound/contact-names.ts` | NEW | Persistent contact name cache + LID resolver |
+| `src/web/inbound/send-api.ts` | MODIFIED | processOutboundMentions() — exported, used in text payload path |
+| `src/web/inbound/monitor.ts` | MODIFIED | loadContactNameCache() on startup, noteContactName() on inbound, processOutboundMentions() on inline reply |
 
-## Apply
+## Apply to Vanilla OpenClaw
 
 ```bash
 cd /path/to/openclaw
-git apply patches/whatsapp-outbound-mentions/0001-feat-whatsapp-outbound-mention-support-with-LID-reso.patch
+git apply patches/whatsapp-outbound-mentions/whatsapp-outbound-mentions.patch
 pnpm run build
 systemctl --user restart openclaw-gateway.service
 ```
+
+## Limitations
+
+- Contact names populate only after receiving at least one message from each contact (persisted across restarts)
+- LID mapping files must exist in the Baileys auth directory (created automatically during normal WhatsApp operation)
+- If no LID mapping exists for a phone number, falls back to `phone@s.whatsapp.net` (mention linked but shows number instead of name)

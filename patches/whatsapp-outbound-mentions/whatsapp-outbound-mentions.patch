@@ -1,35 +1,12 @@
-From 50eabdbe132fc3df862669f162cf06d6e7aa556e Mon Sep 17 00:00:00 2001
-From: "Bob (AI Agent)" <bob@clawdbot.dev>
-Date: Sun, 8 Feb 2026 14:17:53 -0300
-Subject: [PATCH] feat(whatsapp): outbound @mention support with LID resolution
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
-
-- New contact-names.ts: in-memory cache of phone→name from incoming pushNames
-- New readLidForPhone(): resolves phone numbers to LID using mapping files
-- send-api.ts: processOutboundMentions() detects @phone and @name patterns,
-  resolves to LID JIDs, and replaces text with @LID for proper WhatsApp rendering
-- monitor.ts: populates contact name cache from incoming messages
-
-WhatsApp groups require LID format in both mentionedJid array and message text
-for mentions to render as clickable @Name tags.
----
- src/web/inbound/contact-names.ts | 88 ++++++++++++++++++++++++++++++++
- src/web/inbound/monitor.ts       |  4 ++
- src/web/inbound/send-api.ts      | 79 +++++++++++++++++++++++++++-
- tsconfig.json                    |  2 +-
- 4 files changed, 170 insertions(+), 3 deletions(-)
- create mode 100644 src/web/inbound/contact-names.ts
-
 diff --git a/src/web/inbound/contact-names.ts b/src/web/inbound/contact-names.ts
 new file mode 100644
-index 000000000..5425e047c
+index 000000000..0b58e5692
 --- /dev/null
 +++ b/src/web/inbound/contact-names.ts
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,135 @@
 +/**
-+ * Global in-memory contact name cache, populated from incoming messages (pushName).
++ * Global contact name cache, populated from incoming messages (pushName).
++ * Persisted to disk so it survives gateway restarts.
 + * Used by outbound to resolve phone numbers to display names for @mentions.
 + */
 +
@@ -38,6 +15,48 @@ index 000000000..5425e047c
 +import { normalizeE164 } from "../../utils.js";
 +
 +const contactNames = new Map<string, string>();
++let cacheFilePath: string | null = null;
++let savePending = false;
++
++function defaultCachePath(): string {
++  return path.join(
++    process.env.HOME ?? "/home/ubuntu",
++    ".openclaw/credentials/whatsapp/default/contact-names.json",
++  );
++}
++
++/** Load persisted contact names from disk. Called once at startup. */
++export function loadContactNameCache(filePath?: string): void {
++  cacheFilePath = filePath ?? defaultCachePath();
++  try {
++    const data = fs.readFileSync(cacheFilePath, "utf8");
++    const parsed = JSON.parse(data) as Record<string, string>;
++    for (const [phone, name] of Object.entries(parsed)) {
++      contactNames.set(phone, name);
++    }
++  } catch {
++    // No cache file yet — start fresh
++  }
++}
++
++function scheduleSave(): void {
++  if (savePending || !cacheFilePath) {
++    return;
++  }
++  savePending = true;
++  setTimeout(() => {
++    savePending = false;
++    try {
++      const obj: Record<string, string> = {};
++      for (const [k, v] of contactNames) {
++        obj[k] = v;
++      }
++      fs.writeFileSync(cacheFilePath!, JSON.stringify(obj, null, 2));
++    } catch {
++      // Best-effort persistence
++    }
++  }, 5000);
++}
 +
 +/**
 + * Record a contact's display name (typically from pushName on incoming messages).
@@ -48,7 +67,11 @@ index 000000000..5425e047c
 +  }
 +  const normalized = normalizeE164(e164);
 +  if (normalized) {
-+    contactNames.set(normalized, name);
++    const existing = contactNames.get(normalized);
++    if (existing !== name) {
++      contactNames.set(normalized, name);
++      scheduleSave();
++    }
 +  }
 +}
 +
@@ -117,18 +140,43 @@ index 000000000..5425e047c
 +  return undefined;
 +}
 diff --git a/src/web/inbound/monitor.ts b/src/web/inbound/monitor.ts
-index 913178fa2..95bf46d56 100644
+index 913178fa2..ea49130c2 100644
 --- a/src/web/inbound/monitor.ts
 +++ b/src/web/inbound/monitor.ts
 @@ -11,6 +11,7 @@ import { saveMediaBuffer } from "../../media/store.js";
  import { jidToE164, resolveJidToE164 } from "../../utils.js";
  import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.js";
  import { checkInboundAccessControl } from "./access-control.js";
-+import { noteContactName } from "./contact-names.js";
++import { loadContactNameCache, noteContactName } from "./contact-names.js";
  import { isRecentInboundMessage } from "./dedupe.js";
  import {
    describeReplyContext,
-@@ -292,6 +293,9 @@ export async function monitorWebInbox(options: {
+@@ -56,6 +57,9 @@ export async function monitorWebInbox(options: {
+     resolver(reason);
+   };
+ 
++  // Load persisted contact name cache for outbound @mention resolution
++  loadContactNameCache();
++
+   try {
+     await sock.sendPresenceUpdate("available");
+     if (shouldLogVerbose()) {
+@@ -283,7 +287,13 @@ export async function monitorWebInbox(options: {
+         }
+       };
+       const reply = async (text: string) => {
+-        await sock.sendMessage(chatJid, { text });
++        const { processOutboundMentions } = await import("./send-api.js");
++        const processed = processOutboundMentions(text);
++        const payload =
++          processed.mentions.length > 0
++            ? { text: processed.text, mentions: processed.mentions }
++            : { text };
++        await sock.sendMessage(chatJid, payload);
+       };
+       const sendMedia = async (payload: AnyMessageContent) => {
+         await sock.sendMessage(chatJid, payload);
+@@ -292,6 +302,9 @@ export async function monitorWebInbox(options: {
        const mentionedJids = extractMentionedJids(msg.message as proto.IMessage | undefined);
        const senderName = msg.pushName ?? undefined;
  
@@ -139,7 +187,7 @@ index 913178fa2..95bf46d56 100644
          { from, to: selfE164 ?? "me", body, mediaPath, mediaType, timestamp },
          "inbound message",
 diff --git a/src/web/inbound/send-api.ts b/src/web/inbound/send-api.ts
-index 12a259a0f..0796b48d9 100644
+index 12a259a0f..cc5b5148c 100644
 --- a/src/web/inbound/send-api.ts
 +++ b/src/web/inbound/send-api.ts
 @@ -1,8 +1,79 @@
@@ -149,7 +197,7 @@ index 12a259a0f..0796b48d9 100644
 -import { toWhatsappJid } from "../../utils.js";
 +import { normalizeE164, toWhatsappJid } from "../../utils.js";
  import { resolveBrazilianJid } from "./brazil-jid-resolver.js";
-+import { getContactName, getContactPhone, readLidForPhone } from "./contact-names.js";
++import { getContactPhone, readLidForPhone } from "./contact-names.js";
 +
 +/**
 + * Process @mentions in outbound text for WhatsApp:
@@ -159,7 +207,7 @@ index 12a259a0f..0796b48d9 100644
 + *
 + * The text keeps human-readable @Name; Baileys mentions array gets the JIDs.
 + */
-+function processOutboundMentions(text: string): { text: string; mentions: string[] } {
++export function processOutboundMentions(text: string): { text: string; mentions: string[] } {
 +  const mentions: string[] = [];
 +  let result = text;
 +
@@ -236,18 +284,3 @@ index 12a259a0f..0796b48d9 100644
        }
        const result = await params.sock.sendMessage(jid, payload);
        const accountId = sendOptions?.accountId ?? params.defaultAccountId;
-diff --git a/tsconfig.json b/tsconfig.json
-index 223515772..4c4be636b 100644
---- a/tsconfig.json
-+++ b/tsconfig.json
-@@ -19,6 +19,6 @@
-     "target": "es2023",
-     "useDefineForClassFields": false
-   },
--  "include": ["src/**/*", "ui/**/*"],
-+  "include": ["src/**/*"],
-   "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
- }
--- 
-2.43.0
-
