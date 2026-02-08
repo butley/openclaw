@@ -1,5 +1,6 @@
 /**
- * Global in-memory contact name cache, populated from incoming messages (pushName).
+ * Global contact name cache, populated from incoming messages (pushName).
+ * Persisted to disk so it survives gateway restarts.
  * Used by outbound to resolve phone numbers to display names for @mentions.
  */
 
@@ -8,6 +9,48 @@ import path from "node:path";
 import { normalizeE164 } from "../../utils.js";
 
 const contactNames = new Map<string, string>();
+let cacheFilePath: string | null = null;
+let savePending = false;
+
+function defaultCachePath(): string {
+  return path.join(
+    process.env.HOME ?? "/home/ubuntu",
+    ".openclaw/credentials/whatsapp/default/contact-names.json",
+  );
+}
+
+/** Load persisted contact names from disk. Called once at startup. */
+export function loadContactNameCache(filePath?: string): void {
+  cacheFilePath = filePath ?? defaultCachePath();
+  try {
+    const data = fs.readFileSync(cacheFilePath, "utf8");
+    const parsed = JSON.parse(data) as Record<string, string>;
+    for (const [phone, name] of Object.entries(parsed)) {
+      contactNames.set(phone, name);
+    }
+  } catch {
+    // No cache file yet — start fresh
+  }
+}
+
+function scheduleSave(): void {
+  if (savePending || !cacheFilePath) {
+    return;
+  }
+  savePending = true;
+  setTimeout(() => {
+    savePending = false;
+    try {
+      const obj: Record<string, string> = {};
+      for (const [k, v] of contactNames) {
+        obj[k] = v;
+      }
+      fs.writeFileSync(cacheFilePath!, JSON.stringify(obj, null, 2));
+    } catch {
+      // Best-effort persistence
+    }
+  }, 5000);
+}
 
 /**
  * Record a contact's display name (typically from pushName on incoming messages).
@@ -18,7 +61,11 @@ export function noteContactName(e164: string | undefined, name: string | undefin
   }
   const normalized = normalizeE164(e164);
   if (normalized) {
-    contactNames.set(normalized, name);
+    const existing = contactNames.get(normalized);
+    if (existing !== name) {
+      contactNames.set(normalized, name);
+      scheduleSave();
+    }
   }
 }
 

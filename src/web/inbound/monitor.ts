@@ -11,7 +11,7 @@ import { saveMediaBuffer } from "../../media/store.js";
 import { jidToE164, resolveJidToE164 } from "../../utils.js";
 import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.js";
 import { checkInboundAccessControl } from "./access-control.js";
-import { noteContactName } from "./contact-names.js";
+import { loadContactNameCache, noteContactName } from "./contact-names.js";
 import { isRecentInboundMessage } from "./dedupe.js";
 import {
   describeReplyContext,
@@ -56,6 +56,9 @@ export async function monitorWebInbox(options: {
     onCloseResolve = null;
     resolver(reason);
   };
+
+  // Load persisted contact name cache for outbound @mention resolution
+  loadContactNameCache();
 
   try {
     await sock.sendPresenceUpdate("available");
