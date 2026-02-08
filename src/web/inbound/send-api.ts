@@ -3,7 +3,7 @@ import type { ActiveWebSendOptions } from "../active-listener.js";
 import { recordChannelActivity } from "../../infra/channel-activity.js";
 import { normalizeE164, toWhatsappJid } from "../../utils.js";
 import { resolveBrazilianJid } from "./brazil-jid-resolver.js";
-import { getContactName, getContactPhone, readLidForPhone } from "./contact-names.js";
+import { getContactPhone, readLidForPhone } from "./contact-names.js";
 
 /**
  * Process @mentions in outbound text for WhatsApp:
