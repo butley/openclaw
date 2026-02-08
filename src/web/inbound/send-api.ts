@@ -13,7 +13,7 @@ import { getContactName, getContactPhone, readLidForPhone } from "./contact-name
  *
  * The text keeps human-readable @Name; Baileys mentions array gets the JIDs.
  */
-function processOutboundMentions(text: string): { text: string; mentions: string[] } {
+export function processOutboundMentions(text: string): { text: string; mentions: string[] } {
   const mentions: string[] = [];
   let result = text;
 

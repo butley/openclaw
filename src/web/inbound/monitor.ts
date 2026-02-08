@@ -287,7 +287,13 @@ export async function monitorWebInbox(options: {
         }
       };
       const reply = async (text: string) => {
-        await sock.sendMessage(chatJid, { text });
+        const { processOutboundMentions } = await import("./send-api.js");
+        const processed = processOutboundMentions(text);
+        const payload =
+          processed.mentions.length > 0
+            ? { text: processed.text, mentions: processed.mentions }
+            : { text };
+        await sock.sendMessage(chatJid, payload);
       };
       const sendMedia = async (payload: AnyMessageContent) => {
         await sock.sendMessage(chatJid, payload);
