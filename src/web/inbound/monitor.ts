@@ -11,6 +11,7 @@ import { saveMediaBuffer } from "../../media/store.js";
 import { jidToE164, resolveJidToE164 } from "../../utils.js";
 import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.js";
 import { checkInboundAccessControl } from "./access-control.js";
+import { noteContactName } from "./contact-names.js";
 import { isRecentInboundMessage } from "./dedupe.js";
 import {
   describeReplyContext,
@@ -291,6 +292,9 @@ export async function monitorWebInbox(options: {
       const timestamp = messageTimestampMs;
       const mentionedJids = extractMentionedJids(msg.message as proto.IMessage | undefined);
       const senderName = msg.pushName ?? undefined;
+
+      // Cache sender's display name for outbound @mention resolution
+      noteContactName(senderE164 ?? from, senderName);
 
       inboundLogger.info(
         { from, to: selfE164 ?? "me", body, mediaPath, mediaType, timestamp },
