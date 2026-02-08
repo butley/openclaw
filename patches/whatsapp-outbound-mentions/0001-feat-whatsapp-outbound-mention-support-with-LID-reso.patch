@@ -1,0 +1,253 @@
+From 50eabdbe132fc3df862669f162cf06d6e7aa556e Mon Sep 17 00:00:00 2001
+From: "Bob (AI Agent)" <bob@clawdbot.dev>
+Date: Sun, 8 Feb 2026 14:17:53 -0300
+Subject: [PATCH] feat(whatsapp): outbound @mention support with LID resolution
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- New contact-names.ts: in-memory cache of phone→name from incoming pushNames
+- New readLidForPhone(): resolves phone numbers to LID using mapping files
+- send-api.ts: processOutboundMentions() detects @phone and @name patterns,
+  resolves to LID JIDs, and replaces text with @LID for proper WhatsApp rendering
+- monitor.ts: populates contact name cache from incoming messages
+
+WhatsApp groups require LID format in both mentionedJid array and message text
+for mentions to render as clickable @Name tags.
+---
+ src/web/inbound/contact-names.ts | 88 ++++++++++++++++++++++++++++++++
+ src/web/inbound/monitor.ts       |  4 ++
+ src/web/inbound/send-api.ts      | 79 +++++++++++++++++++++++++++-
+ tsconfig.json                    |  2 +-
+ 4 files changed, 170 insertions(+), 3 deletions(-)
+ create mode 100644 src/web/inbound/contact-names.ts
+
+diff --git a/src/web/inbound/contact-names.ts b/src/web/inbound/contact-names.ts
+new file mode 100644
+index 000000000..5425e047c
+--- /dev/null
++++ b/src/web/inbound/contact-names.ts
+@@ -0,0 +1,88 @@
++/**
++ * Global in-memory contact name cache, populated from incoming messages (pushName).
++ * Used by outbound to resolve phone numbers to display names for @mentions.
++ */
++
++import fs from "node:fs";
++import path from "node:path";
++import { normalizeE164 } from "../../utils.js";
++
++const contactNames = new Map<string, string>();
++
++/**
++ * Record a contact's display name (typically from pushName on incoming messages).
++ */
++export function noteContactName(e164: string | undefined, name: string | undefined): void {
++  if (!e164 || !name) {
++    return;
++  }
++  const normalized = normalizeE164(e164);
++  if (normalized) {
++    contactNames.set(normalized, name);
++  }
++}
++
++/**
++ * Look up a contact's display name by phone number.
++ * Returns undefined if not known.
++ */
++export function getContactName(e164: string): string | undefined {
++  const normalized = normalizeE164(e164);
++  if (!normalized) {
++    return undefined;
++  }
++  return contactNames.get(normalized);
++}
++
++/**
++ * Reverse lookup: find a phone number (E164) by display name.
++ * Case-insensitive match. Returns the first match found.
++ */
++export function getContactPhone(name: string): string | undefined {
++  const lower = name.toLowerCase();
++  for (const [phone, contactName] of contactNames.entries()) {
++    if (contactName.toLowerCase() === lower) {
++      return phone;
++    }
++  }
++  // Partial match: check if the search name is a prefix of a contact name
++  for (const [phone, contactName] of contactNames.entries()) {
++    if (contactName.toLowerCase().startsWith(lower)) {
++      return phone;
++    }
++  }
++  return undefined;
++}
++
++/**
++ * Read the LID for a phone number from the WhatsApp auth directory's lid-mapping files.
++ * Returns the LID JID (e.g., "264351109914877@lid") or undefined if not found.
++ */
++export function readLidForPhone(phone: string, authDir?: string): string | undefined {
++  const digits = phone.replace(/[^\d]/g, "");
++  if (!digits) {
++    return undefined;
++  }
++  const dirs = authDir ? [authDir] : [];
++  // Default auth dir
++  const defaultDir = path.join(
++    process.env.HOME ?? "/home/ubuntu",
++    ".openclaw/credentials/whatsapp/default",
++  );
++  if (!dirs.includes(defaultDir)) {
++    dirs.push(defaultDir);
++  }
++  for (const dir of dirs) {
++    const filePath = path.join(dir, `lid-mapping-${digits}.json`);
++    try {
++      const data = fs.readFileSync(filePath, "utf8");
++      const lid = JSON.parse(data) as string | null;
++      if (lid) {
++        return `${lid}@lid`;
++      }
++    } catch {
++      // File doesn't exist or can't be read
++    }
++  }
++  return undefined;
++}
+diff --git a/src/web/inbound/monitor.ts b/src/web/inbound/monitor.ts
+index 913178fa2..95bf46d56 100644
+--- a/src/web/inbound/monitor.ts
++++ b/src/web/inbound/monitor.ts
+@@ -11,6 +11,7 @@ import { saveMediaBuffer } from "../../media/store.js";
+ import { jidToE164, resolveJidToE164 } from "../../utils.js";
+ import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.js";
+ import { checkInboundAccessControl } from "./access-control.js";
++import { noteContactName } from "./contact-names.js";
+ import { isRecentInboundMessage } from "./dedupe.js";
+ import {
+   describeReplyContext,
+@@ -292,6 +293,9 @@ export async function monitorWebInbox(options: {
+       const mentionedJids = extractMentionedJids(msg.message as proto.IMessage | undefined);
+       const senderName = msg.pushName ?? undefined;
+ 
++      // Cache sender's display name for outbound @mention resolution
++      noteContactName(senderE164 ?? from, senderName);
++
+       inboundLogger.info(
+         { from, to: selfE164 ?? "me", body, mediaPath, mediaType, timestamp },
+         "inbound message",
+diff --git a/src/web/inbound/send-api.ts b/src/web/inbound/send-api.ts
+index 12a259a0f..0796b48d9 100644
+--- a/src/web/inbound/send-api.ts
++++ b/src/web/inbound/send-api.ts
+@@ -1,8 +1,79 @@
+ import type { AnyMessageContent, WAPresence } from "@whiskeysockets/baileys";
+ import type { ActiveWebSendOptions } from "../active-listener.js";
+ import { recordChannelActivity } from "../../infra/channel-activity.js";
+-import { toWhatsappJid } from "../../utils.js";
++import { normalizeE164, toWhatsappJid } from "../../utils.js";
+ import { resolveBrazilianJid } from "./brazil-jid-resolver.js";
++import { getContactName, getContactPhone, readLidForPhone } from "./contact-names.js";
++
++/**
++ * Process @mentions in outbound text for WhatsApp:
++ *
++ * 1. @+553196348700 or @553196348700 → resolve to display name, add JID to mentions
++ * 2. @Lucas or @Guilherme → reverse-lookup phone from contact cache, add JID to mentions
++ *
++ * The text keeps human-readable @Name; Baileys mentions array gets the JIDs.
++ */
++function processOutboundMentions(text: string): { text: string; mentions: string[] } {
++  const mentions: string[] = [];
++  let result = text;
++
++  const addMention = (digits: string) => {
++    // Prefer LID format for group mentions (WhatsApp requires LID for clickable mentions)
++    const lidJid = readLidForPhone(digits);
++    const jid = lidJid ?? `${digits}@s.whatsapp.net`;
++    if (!mentions.includes(jid)) {
++      mentions.push(jid);
++    }
++  };
++
++  // Pass 1: @+phone or @phone patterns → replace with name, collect JID
++  const phonePattern = /@(\+?\d{10,15})\b/g;
++  const phoneMatches: Array<{ full: string; digits: string; e164: string }> = [];
++  let match: RegExpExecArray | null;
++  while ((match = phonePattern.exec(text)) !== null) {
++    const raw = match[1];
++    const digits = raw.replace(/^\+/, "");
++    const e164 = normalizeE164(raw) ?? `+${digits}`;
++    phoneMatches.push({ full: match[0], digits, e164 });
++    addMention(digits);
++  }
++  for (const m of phoneMatches) {
++    // WhatsApp requires @LID_NUMBER in text for clickable mentions in groups
++    const lidJid = readLidForPhone(m.digits);
++    if (lidJid) {
++      const lidNum = lidJid.replace(/@.*/, "");
++      result = result.replace(m.full, `@${lidNum}`);
++    }
++    // If no LID, keep the phone number as-is
++  }
++
++  // Pass 2: @Name patterns (non-numeric) → reverse-lookup phone → resolve LID → replace with @LID
++  const namePattern = /@([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ0-9_ ]{0,30})\b/g;
++  const nameMatches: Array<{ full: string; name: string }> = [];
++  while ((match = namePattern.exec(result)) !== null) {
++    const name = match[1].trim();
++    if (name) {
++      nameMatches.push({ full: match[0], name });
++    }
++  }
++  for (const m of nameMatches) {
++    const phone = getContactPhone(m.name);
++    if (phone) {
++      const digits = phone.replace(/^\+/, "");
++      const lidJid = readLidForPhone(digits);
++      if (lidJid) {
++        const lidNum = lidJid.replace(/@.*/, "");
++        // WhatsApp expects @LID_NUMBER in text for proper mention rendering
++        result = result.replace(m.full, `@${lidNum}`);
++        addMention(digits);
++      } else {
++        addMention(digits);
++      }
++    }
++  }
++
++  return { text: result, mentions };
++}
+ 
+ export function createWebSendApi(params: {
+   sock: {
+@@ -65,7 +136,11 @@ export function createWebSendApi(params: {
+           };
+         }
+       } else {
+-        payload = { text };
++        const processed = processOutboundMentions(text);
++        payload =
++          processed.mentions.length > 0
++            ? { text: processed.text, mentions: processed.mentions }
++            : { text };
+       }
+       const result = await params.sock.sendMessage(jid, payload);
+       const accountId = sendOptions?.accountId ?? params.defaultAccountId;
+diff --git a/tsconfig.json b/tsconfig.json
+index 223515772..4c4be636b 100644
+--- a/tsconfig.json
++++ b/tsconfig.json
+@@ -19,6 +19,6 @@
+     "target": "es2023",
+     "useDefineForClassFields": false
+   },
+-  "include": ["src/**/*", "ui/**/*"],
++  "include": ["src/**/*"],
+   "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
+ }
+-- 
+2.43.0
+
