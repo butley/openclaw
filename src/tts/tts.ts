@@ -1550,7 +1550,8 @@ export async function maybeApplyTtsToPayload(params: {
     };
 
     const channelId = resolveChannelId(params.channel);
-    const shouldVoice = channelId === "telegram" && result.voiceCompatible === true;
+    const shouldVoice =
+      (channelId === "telegram" || channelId === "whatsapp") && result.voiceCompatible === true;
     const finalPayload = {
       ...nextPayload,
       mediaUrl: result.audioPath,
