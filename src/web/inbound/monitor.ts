@@ -257,6 +257,7 @@ export async function monitorWebInbox(options: {
 
       let mediaPath: string | undefined;
       let mediaType: string | undefined;
+      let mediaFileName: string | undefined;
       try {
         const inboundMedia = await downloadInboundMedia(msg as proto.IWebMessageInfo, sock);
         if (inboundMedia) {
@@ -270,9 +271,11 @@ export async function monitorWebInbox(options: {
             inboundMedia.mimetype,
             "inbound",
             maxBytes,
+            inboundMedia.fileName,
           );
           mediaPath = saved.path;
           mediaType = inboundMedia.mimetype;
+          mediaFileName = inboundMedia.fileName;
         }
       } catch (err) {
         logVerbose(`Inbound media download failed: ${String(err)}`);
@@ -306,7 +309,7 @@ export async function monitorWebInbox(options: {
       noteContactName(senderE164 ?? from, senderName);
 
       inboundLogger.info(
-        { from, to: selfE164 ?? "me", body, mediaPath, mediaType, timestamp },
+        { from, to: selfE164 ?? "me", body, mediaPath, mediaType, mediaFileName, timestamp },
         "inbound message",
       );
       const inboundMessage: WebInboundMessage = {
@@ -339,6 +342,7 @@ export async function monitorWebInbox(options: {
         sendMedia,
         mediaPath,
         mediaType,
+        mediaFileName,
       };
       try {
         const task = Promise.resolve(debouncer.enqueue(inboundMessage));
