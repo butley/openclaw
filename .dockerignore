@@ -15,34 +15,6 @@
 *.mov
 *.wav
 *.mp3
-node_modules
-**/node_modules
 .pnpm-store
-**/.pnpm-store
-.turbo
-**/.turbo
-.cache
-**/.cache
-.next
-**/.next
-coverage
-**/coverage
-*.log
-tmp
-**/tmp
-
-# build artifacts
-dist
-**/dist
-apps/macos/.build
-apps/ios/build
-**/*.trace
-
-# large app trees not needed for CLI build
-apps/
-assets/
-Peekaboo/
-Swabble/
-Core/
-Users/
-vendor/
+node_modules
+node_modules.backup
