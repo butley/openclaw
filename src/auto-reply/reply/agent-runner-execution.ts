@@ -346,6 +346,91 @@ export async function runAgentTurnWithFallback(params: {
                 if (phase === "start" || phase === "update") {
                   await params.typingSignals.signalToolStart();
                 }
+                // Send live narration status message on tool start
+                if (phase === "start" && params.opts?.onToolResult) {
+                  const toolName = typeof evt.data.name === "string" ? evt.data.name : "";
+                  const args = (
+                    evt.data.args && typeof evt.data.args === "object" ? evt.data.args : {}
+                  ) as Record<string, unknown>;
+                  const onTR = params.opts?.onToolResult;
+                  const narrate = (emoji: string, desc: string) => {
+                    try {
+                      void onTR?.({ text: `\`${emoji} ${desc}\`` });
+                    } catch {
+                      /* ignore */
+                    }
+                  };
+                  const truncate = (s: string, n = 50) =>
+                    s.length > n ? s.slice(0, n) + "..." : s;
+                  switch (toolName) {
+                    case "web_search":
+                      narrate("🔍", `Pesquisando "${truncate(String(args.query || ""), 40)}"...`);
+                      break;
+                    case "web_fetch":
+                      narrate("🌐", `Acessando ${truncate(String(args.url || ""), 50)}...`);
+                      break;
+                    case "exec":
+                      narrate("⚙️", `Executando comando...`);
+                      break;
+                    case "Read":
+                    case "read":
+                      narrate(
+                        "📖",
+                        `Lendo ${truncate(String(args.path || args.file_path || "arquivo"), 50)}...`,
+                      );
+                      break;
+                    case "Write":
+                    case "write":
+                      narrate(
+                        "📝",
+                        `Escrevendo ${truncate(String(args.path || args.file_path || "arquivo"), 50)}...`,
+                      );
+                      break;
+                    case "Edit":
+                    case "edit":
+                      narrate(
+                        "✏️",
+                        `Editando ${truncate(String(args.path || args.file_path || "arquivo"), 50)}...`,
+                      );
+                      break;
+                    case "browser":
+                      narrate("🖥️", `Usando o navegador...`);
+                      break;
+                    case "image":
+                      narrate("🖼️", `Analisando imagem...`);
+                      break;
+                    case "memory_search":
+                      narrate(
+                        "🧠",
+                        `Buscando na memória "${truncate(String(args.query || ""), 40)}"...`,
+                      );
+                      break;
+                    case "memory_get":
+                      narrate("🧠", `Lendo memória...`);
+                      break;
+                    case "message":
+                      narrate("💬", `Enviando mensagem...`);
+                      break;
+                    case "tts":
+                      narrate("🎙️", `Gerando áudio...`);
+                      break;
+                    case "sessions_spawn":
+                      narrate("🤖", `Iniciando sub-agente...`);
+                      break;
+                    case "cron":
+                      narrate("⏰", `Configurando agendamento...`);
+                      break;
+                    case "gateway":
+                      narrate("🔄", `Configurando gateway...`);
+                      break;
+                    case "session_status":
+                      narrate("📊", `Verificando status...`);
+                      break;
+                    default:
+                      narrate("🔧", `Usando ${toolName}...`);
+                      break;
+                  }
+                }
               }
               // Track auto-compaction completion
               if (evt.stream === "compaction") {
