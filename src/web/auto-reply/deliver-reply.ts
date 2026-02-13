@@ -4,6 +4,7 @@ import type { WebInboundMsg } from "./types.js";
 import { chunkMarkdownTextWithMode, type ChunkMode } from "../../auto-reply/chunk.js";
 import { logVerbose, shouldLogVerbose } from "../../globals.js";
 import { convertMarkdownTables } from "../../markdown/tables.js";
+import { markdownToWhatsApp } from "../../markdown/whatsapp.js";
 import { sleep } from "../../utils.js";
 import { loadWebMedia } from "../media.js";
 import { newConnectionId } from "../reconnect.js";
@@ -29,11 +30,9 @@ export async function deliverWebReply(params: {
   const replyStarted = Date.now();
   const tableMode = params.tableMode ?? "code";
   const chunkMode = params.chunkMode ?? "length";
-  // Convert markdown bold/bold-italic to WhatsApp bold (single asterisks).
-  const boldNormalized = (replyResult.text || "")
-    .replace(/\*{3}(.+?)\*{3}/g, "*_$1_*")
-    .replace(/\*{2}(.+?)\*{2}/g, "*$1*");
-  const convertedText = convertMarkdownTables(boldNormalized, tableMode);
+  const convertedText = markdownToWhatsApp(
+    convertMarkdownTables(replyResult.text || "", tableMode),
+  );
   const textChunks = chunkMarkdownTextWithMode(convertedText, textLimit, chunkMode);
   const mediaList = replyResult.mediaUrls?.length
     ? replyResult.mediaUrls

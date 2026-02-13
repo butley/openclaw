@@ -9,7 +9,7 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
-import { registerAgentRunContext } from "../../infra/agent-events.js";
+import { resolveSessionFilePath } from "../../config/sessions.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
@@ -55,13 +55,19 @@ function resolveTranscriptPath(params: {
   sessionFile?: string;
 }): string | null {
   const { sessionId, storePath, sessionFile } = params;
-  if (sessionFile) {
-    return sessionFile;
-  }
-  if (!storePath) {
+  if (!storePath && !sessionFile) {
     return null;
   }
-  return path.join(path.dirname(storePath), `${sessionId}.jsonl`);
+  try {
+    const sessionsDir = storePath ? path.dirname(storePath) : undefined;
+    return resolveSessionFilePath(
+      sessionId,
+      sessionFile ? { sessionFile } : undefined,
+      sessionsDir ? { sessionsDir } : undefined,
+    );
+  } catch {
+    return null;
+  }
 }
 
 function ensureTranscriptFile(params: { transcriptPath: string; sessionId: string }): {
@@ -394,8 +400,6 @@ export const chatHandlers: GatewayRequestHandlers = {
     });
     const now = Date.now();
     const clientRunId = p.idempotencyKey;
-    // Register run context with mirror flag for later use
-    registerAgentRunContext(clientRunId, { sessionKey: p.sessionKey, mirror: p.mirror });
 
     const sendPolicy = resolveSendPolicy({
       cfg,
@@ -539,6 +543,14 @@ export const chatHandlers: GatewayRequestHandlers = {
             );
             if (connId && wantsToolEvents) {
               context.registerToolEventRecipient(runId, connId);
+              // Register for any other active runs *in the same session* so
+              // late-joining clients (e.g. page refresh mid-response) receive
+              // in-progress tool events without leaking cross-session data.
+              for (const [activeRunId, active] of context.chatAbortControllers) {
+                if (activeRunId !== runId && active.sessionKey === p.sessionKey) {
+                  context.registerToolEventRecipient(activeRunId, connId);
+                }
+              }
             }
           },
           onModelSelected,
@@ -596,7 +608,7 @@ export const chatHandlers: GatewayRequestHandlers = {
                   const channel = keyParts[2];
                   const peerId = keyParts.slice(4).join(":");
                   if (channel === "whatsapp" && peerId) {
-                    import("../../web/outbound.js").then(({ sendMessageWhatsApp }) => {
+                    void import("../../web/outbound.js").then(({ sendMessageWhatsApp }) => {
                       sendMessageWhatsApp(peerId, combinedReply, { verbose: false })
                         .then(() =>
                           context.logGateway.info(`[mirror] sent to ${channel}:${peerId}`),

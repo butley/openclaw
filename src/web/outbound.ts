@@ -4,6 +4,7 @@ import { resolveMarkdownTableMode } from "../config/markdown-tables.js";
 import { getChildLogger } from "../logging/logger.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { convertMarkdownTables } from "../markdown/tables.js";
+import { markdownToWhatsApp } from "../markdown/whatsapp.js";
 import { normalizePollInput, type PollInput } from "../polls.js";
 import { toWhatsappJid } from "../utils.js";
 import {
@@ -28,7 +29,9 @@ async function resolveJidWithBrazil(active: ActiveWebListener, to: string): Prom
     }
     return resolved;
   } catch (err) {
-    outboundLog.warn(`[brazil-jid] Resolution failed: ${err instanceof Error ? err.message : err}`);
+    outboundLog.warn(
+      `[brazil-jid] Resolution failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return jid;
   }
 }
@@ -56,9 +59,7 @@ export async function sendMessageWhatsApp(
     accountId: resolvedAccountId ?? options.accountId,
   });
   text = convertMarkdownTables(text ?? "", tableMode);
-  // Convert markdown bold/bold-italic to WhatsApp formatting.
-  // ***text*** → *_text_* (bold italic), **text** → *text* (bold)
-  text = text.replace(/\*{3}(.+?)\*{3}/g, "*_$1_*").replace(/\*{2}(.+?)\*{2}/g, "*$1*");
+  text = markdownToWhatsApp(text);
   const logger = getChildLogger({
     module: "web-outbound",
     correlationId,
