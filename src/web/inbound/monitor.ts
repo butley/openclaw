@@ -291,7 +291,7 @@ export async function monitorWebInbox(options: {
       };
       const reply = async (text: string) => {
         const { processOutboundMentions } = await import("./send-api.js");
-        const processed = processOutboundMentions(text);
+        const processed = await processOutboundMentions(text, lidLookup ?? undefined);
         const payload =
           processed.mentions.length > 0
             ? { text: processed.text, mentions: processed.mentions }
@@ -384,6 +384,7 @@ export async function monitorWebInbox(options: {
       onWhatsApp: async (jid: string) => (await sock.onWhatsApp(jid)) ?? [],
     },
     defaultAccountId: options.accountId,
+    lidResolver: lidLookup ?? undefined,
   });
 
   return {
