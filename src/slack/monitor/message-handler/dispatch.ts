@@ -115,6 +115,8 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
         runtime,
         textLimit: ctx.textLimit,
         replyThreadTs,
+        participatedThreads: ctx.participatedThreads,
+        channelId: prepared.message.channel,
       });
       replyPlan.markSent();
     },

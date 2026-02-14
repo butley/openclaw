@@ -95,6 +95,8 @@ export type SlackMonitorContext = {
   mediaMaxBytes: number;
   removeAckAfterReply: boolean;
 
+  /** Tracks thread_ts values where the bot has sent at least one reply. */
+  participatedThreads: Set<string>;
   logger: ReturnType<typeof getChildLogger>;
   markMessageSeen: (channelId: string | undefined, ts?: string) => boolean;
   shouldDropMismatchedSlackEvent: (body: unknown) => boolean;
@@ -417,6 +419,7 @@ export function createSlackMonitorContext(params: {
     ackReactionScope: params.ackReactionScope,
     mediaMaxBytes: params.mediaMaxBytes,
     removeAckAfterReply: params.removeAckAfterReply,
+    participatedThreads: new Set<string>(),
     logger,
     markMessageSeen,
     shouldDropMismatchedSlackEvent,

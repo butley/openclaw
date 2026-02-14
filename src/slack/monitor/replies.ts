@@ -16,6 +16,10 @@ export async function deliverReplies(params: {
   runtime: RuntimeEnv;
   textLimit: number;
   replyThreadTs?: string;
+  /** When provided, tracks threads the bot has participated in (for implicit mention). */
+  participatedThreads?: Set<string>;
+  /** Raw Slack channel ID (e.g. C0AEJ7P2JV8) for thread participation tracking. */
+  channelId?: string;
 }) {
   for (const payload of params.replies) {
     const threadTs = payload.replyToId ?? params.replyThreadTs;
@@ -47,6 +51,10 @@ export async function deliverReplies(params: {
           accountId: params.accountId,
         });
       }
+    }
+    // Track thread participation for implicit mention detection.
+    if (threadTs && params.participatedThreads && params.channelId) {
+      params.participatedThreads.add(`${params.channelId}:${threadTs}`);
     }
     params.runtime.log?.(`delivered reply to ${params.target}`);
   }

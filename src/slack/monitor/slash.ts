@@ -508,8 +508,12 @@ export function registerSlackMonitorSlashCommands(params: {
   const nativeCommands = nativeEnabled
     ? listNativeCommandSpecsForConfig(cfg, { skillCommands, provider: "slack" })
     : [];
+  console.log(
+    `[slack-slash] nativeEnabled=${nativeEnabled} nativeCommands=${nativeCommands.length} names=${nativeCommands.map((c) => c.name).join(",")}`,
+  );
   if (nativeCommands.length > 0) {
     for (const command of nativeCommands) {
+      console.log(`[slack-slash] registering /${command.name}`);
       ctx.app.command(
         `/${command.name}`,
         async ({ command: cmd, ack, respond }: SlackCommandMiddlewareArgs) => {
