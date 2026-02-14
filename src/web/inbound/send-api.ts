@@ -5,36 +5,6 @@ import { normalizeE164, toWhatsappJid } from "../../utils.js";
 import { resolveBrazilianJid } from "./brazil-jid-resolver.js";
 import { getContactPhone, readLidForPhone } from "./contact-names.js";
 
-/** Optional Baileys LID mapping store for resolving phone → LID without disk cache */
-export type LidResolver = {
-  getLIDForPN?: (pn: string) => Promise<string | null>;
-};
-
-/**
- * Resolve a phone number (digits) to its LID JID.
- * Tries Baileys in-memory lidMapping first, falls back to disk cache.
- */
-async function resolveLidForPhone(
-  digits: string,
-  lidResolver?: LidResolver,
-): Promise<string | undefined> {
-  // Try Baileys signalRepository.lidMapping first (in-memory, authoritative)
-  if (lidResolver?.getLIDForPN) {
-    try {
-      const pnJid = `${digits}@s.whatsapp.net`;
-      const lid = await lidResolver.getLIDForPN(pnJid);
-      if (lid) {
-        // getLIDForPN returns full JID like "12345@lid" — use as-is
-        return lid.includes("@") ? lid : `${lid}@lid`;
-      }
-    } catch {
-      // Fall through to disk cache
-    }
-  }
-  // Fallback: disk-based lid-mapping files
-  return readLidForPhone(digits);
-}
-
 /**
  * Process @mentions in outbound text for WhatsApp:
  *
@@ -43,16 +13,13 @@ async function resolveLidForPhone(
  *
  * The text keeps human-readable @Name; Baileys mentions array gets the JIDs.
  */
-export async function processOutboundMentions(
-  text: string,
-  lidResolver?: LidResolver,
-): Promise<{ text: string; mentions: string[] }> {
+export function processOutboundMentions(text: string): { text: string; mentions: string[] } {
   const mentions: string[] = [];
   let result = text;
 
-  const addMention = async (digits: string) => {
+  const addMention = (digits: string) => {
     // Prefer LID format for group mentions (WhatsApp requires LID for clickable mentions)
-    const lidJid = await resolveLidForPhone(digits, lidResolver);
+    const lidJid = readLidForPhone(digits);
     const jid = lidJid ?? `${digits}@s.whatsapp.net`;
     if (!mentions.includes(jid)) {
       mentions.push(jid);
@@ -68,11 +35,11 @@ export async function processOutboundMentions(
     const digits = raw.replace(/^\+/, "");
     const e164 = normalizeE164(raw) ?? `+${digits}`;
     phoneMatches.push({ full: match[0], digits, e164 });
-    await addMention(digits);
+    addMention(digits);
   }
   for (const m of phoneMatches) {
     // WhatsApp requires @LID_NUMBER in text for clickable mentions in groups
-    const lidJid = await resolveLidForPhone(m.digits, lidResolver);
+    const lidJid = readLidForPhone(m.digits);
     if (lidJid) {
       const lidNum = lidJid.replace(/@.*/, "");
       result = result.replace(m.full, `@${lidNum}`);
@@ -93,14 +60,14 @@ export async function processOutboundMentions(
     const phone = getContactPhone(m.name);
     if (phone) {
       const digits = phone.replace(/^\+/, "");
-      const lidJid = await resolveLidForPhone(digits, lidResolver);
+      const lidJid = readLidForPhone(digits);
       if (lidJid) {
         const lidNum = lidJid.replace(/@.*/, "");
         // WhatsApp expects @LID_NUMBER in text for proper mention rendering
         result = result.replace(m.full, `@${lidNum}`);
-        await addMention(digits);
+        addMention(digits);
       } else {
-        await addMention(digits);
+        addMention(digits);
       }
     }
   }
@@ -115,7 +82,6 @@ export function createWebSendApi(params: {
     onWhatsApp?: (jid: string) => Promise<Array<{ exists?: boolean; jid?: string }>>;
   };
   defaultAccountId: string;
-  lidResolver?: LidResolver;
 }) {
   const resolveJid = async (to: string): Promise<string> => {
     const jid = toWhatsappJid(to);
@@ -171,7 +137,7 @@ export function createWebSendApi(params: {
           };
         }
       } else {
-        const processed = await processOutboundMentions(text, params.lidResolver);
+        const processed = processOutboundMentions(text);
         payload =
           processed.mentions.length > 0
             ? { text: processed.text, mentions: processed.mentions }
