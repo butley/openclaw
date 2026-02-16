@@ -430,7 +430,10 @@ export function attachGatewayWsMessageHandler(params: {
           close(1008, truncateCloseReason(authMessage));
         };
         if (!device) {
-          if (scopes.length > 0) {
+          // Allow webchat clients with valid shared auth to keep their scopes
+          // (origin validation already passed at this point)
+          const preserveWebchatScopes = isWebchat && sharedAuthOk;
+          if (scopes.length > 0 && !preserveWebchatScopes) {
             scopes = [];
             connectParams.scopes = scopes;
           }
