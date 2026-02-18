@@ -753,7 +753,7 @@ export async function registerSlackMonitorSlashCommands(params: {
     if (typeof optionsHandler !== "function") {
       return;
     }
-    optionsHandler(SLACK_COMMAND_ARG_ACTION_ID, async ({ ack, body }) => {
+    optionsHandler.bind(ctx.app)(SLACK_COMMAND_ARG_ACTION_ID, async ({ ack, body }) => {
       const typedBody = body as {
         value?: string;
         user?: { id?: string };
