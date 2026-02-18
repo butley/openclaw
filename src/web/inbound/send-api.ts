@@ -1,9 +1,23 @@
 import type { AnyMessageContent, WAPresence } from "@whiskeysockets/baileys";
-import type { ActiveWebSendOptions } from "../active-listener.js";
 import { recordChannelActivity } from "../../infra/channel-activity.js";
 import { normalizeE164, toWhatsappJid } from "../../utils.js";
 import { resolveBrazilianJid } from "./brazil-jid-resolver.js";
 import { getContactPhone, readLidForPhone } from "./contact-names.js";
+import type { ActiveWebSendOptions } from "../active-listener.js";
+
+function recordWhatsAppOutbound(accountId: string) {
+  recordChannelActivity({
+    channel: "whatsapp",
+    accountId,
+    direction: "outbound",
+  });
+}
+
+function resolveOutboundMessageId(result: unknown): string {
+  return typeof result === "object" && result && "key" in result
+    ? String((result as { key?: { id?: string } }).key?.id ?? "unknown")
+    : "unknown";
+}
 
 /**
  * Process @mentions in outbound text for WhatsApp:
@@ -18,7 +32,6 @@ export function processOutboundMentions(text: string): { text: string; mentions:
   let result = text;
 
   const addMention = (digits: string) => {
-    // Prefer LID format for group mentions (WhatsApp requires LID for clickable mentions)
     const lidJid = readLidForPhone(digits);
     const jid = lidJid ?? `${digits}@s.whatsapp.net`;
     if (!mentions.includes(jid)) {
@@ -38,13 +51,11 @@ export function processOutboundMentions(text: string): { text: string; mentions:
     addMention(digits);
   }
   for (const m of phoneMatches) {
-    // WhatsApp requires @LID_NUMBER in text for clickable mentions in groups
     const lidJid = readLidForPhone(m.digits);
     if (lidJid) {
       const lidNum = lidJid.replace(/@.*/, "");
       result = result.replace(m.full, `@${lidNum}`);
     }
-    // If no LID, keep the phone number as-is
   }
 
   // Pass 2: @Name patterns (non-numeric) → reverse-lookup phone → resolve LID → replace with @LID
@@ -63,7 +74,6 @@ export function processOutboundMentions(text: string): { text: string; mentions:
       const lidJid = readLidForPhone(digits);
       if (lidJid) {
         const lidNum = lidJid.replace(/@.*/, "");
-        // WhatsApp expects @LID_NUMBER in text for proper mention rendering
         result = result.replace(m.full, `@${lidNum}`);
         addMention(digits);
       } else {
@@ -145,15 +155,8 @@ export function createWebSendApi(params: {
       }
       const result = await params.sock.sendMessage(jid, payload);
       const accountId = sendOptions?.accountId ?? params.defaultAccountId;
-      recordChannelActivity({
-        channel: "whatsapp",
-        accountId,
-        direction: "outbound",
-      });
-      const messageId =
-        typeof result === "object" && result && "key" in result
-          ? String((result as { key?: { id?: string } }).key?.id ?? "unknown")
-          : "unknown";
+      recordWhatsAppOutbound(accountId);
+      const messageId = resolveOutboundMessageId(result);
       return { messageId };
     },
     sendPoll: async (
@@ -168,15 +171,8 @@ export function createWebSendApi(params: {
           selectableCount: poll.maxSelections ?? 1,
         },
       } as AnyMessageContent);
-      recordChannelActivity({
-        channel: "whatsapp",
-        accountId: params.defaultAccountId,
-        direction: "outbound",
-      });
-      const messageId =
-        typeof result === "object" && result && "key" in result
-          ? String((result as { key?: { id?: string } }).key?.id ?? "unknown")
-          : "unknown";
+      recordWhatsAppOutbound(params.defaultAccountId);
+      const messageId = resolveOutboundMessageId(result);
       return { messageId };
     },
     sendReaction: async (
