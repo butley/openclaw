@@ -1,4 +1,5 @@
 import { listChannelPlugins } from "../channels/plugins/index.js";
+import { GATEWAY_EVENT_UPDATE_AVAILABLE } from "./events.js";
 
 const BASE_METHODS = [
   "health",
@@ -118,4 +119,5 @@ export const GATEWAY_EVENTS = [
   "exec.approval.requested",
   "exec.approval.resolved",
   "message.inbound",
+  GATEWAY_EVENT_UPDATE_AVAILABLE,
 ];
