@@ -199,6 +199,8 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
           channel: message.channel,
           threadTs: streamThreadTs,
           text,
+          teamId: ctx.teamId,
+          userId: message.user,
         });
         replyPlan.markSent();
         return;
@@ -356,7 +358,7 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
       skillFilter: prepared.channelConfig?.skills,
       hasRepliedRef,
       disableBlockStreaming: useStreaming
-        ? false
+        ? true
         : typeof account.config.blockStreaming === "boolean"
           ? !account.config.blockStreaming
           : undefined,
