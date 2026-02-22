@@ -19,6 +19,7 @@ export type MemoryQmdConfig = {
   update?: MemoryQmdUpdateConfig;
   limits?: MemoryQmdLimitsConfig;
   scope?: SessionSendPolicyConfig;
+  maxOutputChars?: number;
 };
 
 export type MemoryQmdIndexPath = {

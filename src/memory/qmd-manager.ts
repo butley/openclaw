@@ -32,7 +32,7 @@ const log = createSubsystemLogger("memory");
 
 const SNIPPET_HEADER_RE = /@@\s*-([0-9]+),([0-9]+)/;
 const SEARCH_PENDING_UPDATE_WAIT_MS = 500;
-const MAX_QMD_OUTPUT_CHARS = 200_000;
+const MAX_QMD_OUTPUT_CHARS = 10_000_000;
 const NUL_MARKER_RE = /(?:\^@|\\0|\\x00|\\u0000|null\s*byte|nul\s*byte)/i;
 const QMD_EMBED_BACKOFF_BASE_MS = 60_000;
 const QMD_EMBED_BACKOFF_MAX_MS = 60 * 60 * 1000;
@@ -112,7 +112,7 @@ export class QmdMemoryManager implements MemorySearchManager {
       target: string;
     }
   >();
-  private readonly maxQmdOutputChars = MAX_QMD_OUTPUT_CHARS;
+  private readonly maxQmdOutputChars: number;
   private readonly sessionExporter: SessionExporterConfig | null;
   private updateTimer: NodeJS.Timeout | null = null;
   private pendingUpdate: Promise<void> | null = null;
@@ -134,6 +134,7 @@ export class QmdMemoryManager implements MemorySearchManager {
     this.cfg = params.cfg;
     this.agentId = params.agentId;
     this.qmd = params.resolved;
+    this.maxQmdOutputChars = params.resolved.maxOutputChars ?? MAX_QMD_OUTPUT_CHARS;
     this.workspaceDir = resolveAgentWorkspaceDir(params.cfg, params.agentId);
     this.stateDir = resolveStateDir(process.env, os.homedir);
     this.agentStateDir = path.join(this.stateDir, "agents", this.agentId);
