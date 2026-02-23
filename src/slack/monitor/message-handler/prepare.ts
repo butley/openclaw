@@ -522,7 +522,7 @@ export async function prepareSlackMessage(params: {
       storePath,
       sessionKey, // Thread-specific session key
     });
-    if (threadInitialHistoryLimit > 0 && !threadSessionPreviousTimestamp) {
+    if (threadInitialHistoryLimit > 0) {
       const threadHistory = await resolveSlackThreadHistory({
         channelId: message.channel,
         threadTs,
@@ -643,6 +643,7 @@ export async function prepareSlackMessage(params: {
           channel: "slack",
           to: `user:${message.user}`,
           accountId: route.accountId,
+          threadId: threadContext.messageThreadId,
         }
       : undefined,
     onRecordError: (err) => {
