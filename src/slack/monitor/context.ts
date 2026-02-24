@@ -68,6 +68,7 @@ export type SlackMonitorContext = {
   dmEnabled: boolean;
   dmPolicy: DmPolicy;
   allowFrom: string[];
+  allowNameMatching: boolean;
   groupDmEnabled: boolean;
   groupDmChannels: string[];
   defaultRequireMention: boolean;
@@ -131,6 +132,7 @@ export function createSlackMonitorContext(params: {
   dmEnabled: boolean;
   dmPolicy: DmPolicy;
   allowFrom: Array<string | number> | undefined;
+  allowNameMatching: boolean;
   groupDmEnabled: boolean;
   groupDmChannels: Array<string | number> | undefined;
   defaultRequireMention?: boolean;
@@ -393,6 +395,7 @@ export function createSlackMonitorContext(params: {
     dmEnabled: params.dmEnabled,
     dmPolicy: params.dmPolicy,
     allowFrom,
+    allowNameMatching: params.allowNameMatching,
     groupDmEnabled: params.groupDmEnabled,
     groupDmChannels,
     defaultRequireMention,
