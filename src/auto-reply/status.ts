@@ -480,7 +480,7 @@ export function buildStatusMessage(args: StatusArgs): string {
   const runtime = { label: resolveRuntimeLabel(args) };
 
   const updatedAt = entry?.updatedAt;
-  const sessionLine = [
+  const _sessionLine = [
     `Session: ${args.sessionKey ?? "unknown"}`,
     typeof updatedAt === "number" ? `updated ${formatTimeAgo(now - updatedAt)}` : "no activity",
   ]
@@ -525,7 +525,7 @@ export function buildStatusMessage(args: StatusArgs): string {
     groupActivationValue ? `👥 Activation: ${groupActivationValue}` : null,
     `🪢 Queue: ${queueMode}${queueDetails}`,
   ];
-  const activationLine = activationParts.filter(Boolean).join(" · ");
+  const _activationLine = activationParts.filter(Boolean).join(" · ");
 
   const selectedAuthMode =
     normalizeAuthMode(args.modelAuth) ?? resolveModelAuthMode(selectedProvider, args.config);
@@ -608,15 +608,13 @@ export function buildStatusMessage(args: StatusArgs): string {
     return "channel override";
   })();
   const modelNote = channelModelNote ? ` · ${channelModelNote}` : "";
-  const modelLine = `🧠 Model: ${selectedModelLabel}${selectedAuthLabel}${modelNote}`;
+  const _modelLine = `🧠 Model: ${selectedModelLabel}${selectedAuthLabel}${modelNote}`;
   const showFallbackAuth = activeAuthLabelValue && activeAuthLabelValue !== selectedAuthLabelValue;
-  const fallbackLine = fallbackState.active
+  const _fallbackLine = fallbackState.active
     ? `↪️ Fallback: ${activeModelLabel}${
         showFallbackAuth ? ` · 🔑 ${activeAuthLabelValue}` : ""
       } (${fallbackState.reason ?? "selected model unavailable"})`
     : null;
-  const commit = resolveCommitHash();
-  const versionLine = `🦞 OpenClaw ${VERSION}${commit ? ` (${commit})` : ""}`;
   const usagePair = formatUsagePair(inputTokens, outputTokens);
   const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
   const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
@@ -625,24 +623,81 @@ export function buildStatusMessage(args: StatusArgs): string {
   const mediaLine = formatMediaUnderstandingLine(args.mediaDecisions);
   const voiceLine = formatVoiceModeLine(args.config, args.sessionEntry);
 
-  return [
-    versionLine,
-    args.timeLine,
-    modelLine,
-    fallbackLine,
-    usageCostLine,
-    cacheLine,
-    `📚 ${contextLine}`,
-    mediaLine,
-    args.usageLine,
-    `🧵 ${sessionLine}`,
-    args.subagentsLine,
-    `⚙️ ${optionsLine}`,
-    voiceLine,
-    activationLine,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  // --- Aligned status card format ---
+  const padLabel = (s: string) => s.padEnd(11);
+  const commit = resolveCommitHash();
+  const title = `*OpenClaw* \`${VERSION}${commit ? ` (${commit})` : ""}\``;
+
+  // Extract short label from auth value, e.g. "token sk-ant…uhzQAA (anthropic:bob-mini)" → "anthropic:bob-mini"
+  const providerLabel = (() => {
+    const raw = selectedAuthLabelValue ?? selectedProvider;
+    const match = raw?.match(/\(([^)]+)\)/);
+    return match ? match[1] : raw;
+  })();
+
+  const rows: string[] = [];
+  rows.push(`◈ ${padLabel("Model")}${selectedModelLabel}`);
+  rows.push(`∴ ${padLabel("Key")}${providerLabel}`);
+
+  if (fallbackState.active) {
+    rows.push(
+      `↩ ${padLabel("Fallback")}${activeModelLabel} (${fallbackState.reason ?? "unavailable"})`,
+    );
+  }
+
+  if (usageCostLine) {
+    const cleanUsage = usageCostLine
+      .replace(/🧮\s*Tokens:\s*/u, "")
+      .replace(/💵\s*Cost:\s*/u, "cost: ");
+    rows.push(`↕ ${padLabel("Tokens")}${cleanUsage}`);
+  }
+
+  if (cacheLine) {
+    const cleanCache = cacheLine.replace(/🗄️\s*Cache:\s*/u, "");
+    rows.push(`≡ ${padLabel("Cache")}${cleanCache}`);
+  }
+
+  const cleanContext = contextLine
+    .replace(/^Context:\s*/, "")
+    .replace(/🧹\s*Compactions/, "compactions");
+  rows.push(`▰ ${padLabel("Context")}${cleanContext}`);
+
+  if (mediaLine) {
+    rows.push(`◇ ${padLabel("Media")}${mediaLine.replace(/^[^\w]*/u, "")}`);
+  }
+
+  // Abbreviate session key: strip "agent:main:" prefix, truncate long group IDs
+  const shortSession = (args.sessionKey ?? "unknown")
+    .replace(/^agent:main:/, "")
+    .replace(/(group:\d{6})\d+@g\.us/, "$1…");
+  rows.push(`► ${padLabel("Session")}${shortSession}`);
+
+  if (args.subagentsLine) {
+    rows.push(`⊞ ${padLabel("Subs")}${args.subagentsLine.replace(/^[^\w]*/u, "")}`);
+  }
+
+  const cleanOptions = optionsLine.replace(/^Runtime:\s*/, "");
+  rows.push(`△ ${padLabel("Runtime")}${cleanOptions}`);
+
+  if (voiceLine) {
+    rows.push(`♫ ${padLabel("Voice")}${voiceLine.replace(/🔊\s*Voice:\s*/u, "")}`);
+  }
+
+  if (groupActivationValue) {
+    rows.push(`⊕ ${padLabel("Activation")}${groupActivationValue}`);
+  }
+  rows.push(`⌂ ${padLabel("Queue")}${queueMode}${queueDetails}`);
+
+  const parts: string[] = [title];
+  if (args.timeLine) {
+    parts.push(args.timeLine.replace(/🕒\s*Time:\s*/u, ""));
+  }
+  parts.push("```");
+  parts.push(...rows);
+  // Close code fence on same line as last row to avoid trailing blank line
+  parts[parts.length - 1] += "```";
+
+  return parts.join("\n");
 }
 
 const CATEGORY_LABELS: Record<CommandCategory, string> = {
