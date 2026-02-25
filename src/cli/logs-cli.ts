@@ -9,6 +9,7 @@ import { createSafeStreamWriter } from "../terminal/stream-writer.js";
 import { colorize, isRich, theme } from "../terminal/theme.js";
 import { formatCliCommand } from "./command-format.js";
 import { addGatewayClientOptions, callGatewayFromCli } from "./gateway-rpc.js";
+import { formatPrettyHeader, formatPrettyLine, resetPrettyState } from "./logs-pretty-formatter.js";
 
 type LogsTailPayload = {
   file?: string;
@@ -32,6 +33,8 @@ type LogsCliOptions = {
   token?: string;
   timeout?: string;
   expectFinal?: boolean;
+  pretty?: boolean;
+  n?: string | true;
 };
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -204,6 +207,8 @@ export function registerLogsCli(program: Command) {
     .option("--follow", "Follow log output", false)
     .option("--interval <ms>", "Polling interval in ms", "1000")
     .option("--json", "Emit JSON log lines", false)
+    .option("--pretty", "Rich formatted output with categories, icons, and colors", false)
+    .option("-n [count]", "Show last N lines and exit (default: 200 with --pretty, 100 without)")
     .option("--plain", "Plain text output (no ANSI styling)", false)
     .option("--no-color", "Disable ANSI colors")
     .option("--local-time", "Display timestamps in local timezone", false)
@@ -221,9 +226,22 @@ export function registerLogsCli(program: Command) {
     let cursor: number | undefined;
     let first = true;
     const jsonMode = Boolean(opts.json);
+    const usePrettyRich = Boolean(opts.pretty) && !jsonMode && !opts.plain;
     const pretty = !jsonMode && Boolean(process.stdout.isTTY) && !opts.plain;
     const rich = isRich() && opts.color !== false;
     const localTime = Boolean(opts.localTime);
+
+    // Handle -n flag: override limit and disable follow
+    if (opts.n !== undefined) {
+      const defaultN = usePrettyRich ? 200 : 100;
+      const nValue = opts.n === true ? defaultN : parsePositiveInt(String(opts.n), defaultN);
+      opts.limit = String(nValue);
+      opts.follow = false;
+    }
+
+    if (usePrettyRich) {
+      resetPrettyState();
+    }
 
     while (true) {
       let payload: LogsTailPayload;
@@ -283,14 +301,25 @@ export function registerLogsCli(program: Command) {
           }
         }
       } else {
-        if (first && payload.file) {
-          const prefix = pretty ? colorize(rich, theme.muted, "Log file:") : "Log file:";
-          if (!logLine(`${prefix} ${payload.file}`)) {
-            return;
+        if (first) {
+          if (usePrettyRich) {
+            if (!logLine(formatPrettyHeader())) {
+              return;
+            }
+          } else if (payload.file) {
+            const prefix = pretty ? colorize(rich, theme.muted, "Log file:") : "Log file:";
+            if (!logLine(`${prefix} ${payload.file}`)) {
+              return;
+            }
           }
         }
         for (const line of lines) {
-          if (
+          if (usePrettyRich) {
+            const formatted = formatPrettyLine(line, { localTime });
+            if (formatted !== null && !logLine(formatted)) {
+              return;
+            }
+          } else if (
             !logLine(
               formatLogLine(line, {
                 pretty,
