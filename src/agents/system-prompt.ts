@@ -601,16 +601,6 @@ export function buildAgentSystemPrompt(params: {
         "If SOUL.md is present, embody its persona and tone. Avoid stiff, generic replies; follow its guidance unless higher-priority instructions override it.",
       );
     }
-    const hasActiveContextFile = validContextFiles.some((file) => {
-      const normalizedPath = file.path.trim().replace(/\\/g, "/");
-      const baseName = normalizedPath.split("/").pop() ?? normalizedPath;
-      return baseName.toLowerCase() === "active-context.md";
-    });
-    if (hasActiveContextFile) {
-      lines.push(
-        "If active-context.md is present, treat it as working memory: current deadlines, active projects, pending decisions, and session handoff. Update it when significant state changes occur. It is NOT long-term memory (that is MEMORY.md) — it is what is hot right now.",
-      );
-    }
     lines.push("");
     for (const file of validContextFiles) {
       lines.push(`## ${file.path}`, "", file.content, "");
