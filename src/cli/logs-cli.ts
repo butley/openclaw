@@ -239,6 +239,11 @@ export function registerLogsCli(program: Command) {
       opts.follow = false;
     }
 
+    // --pretty implies follow unless -n was used
+    if (usePrettyRich && opts.n === undefined) {
+      opts.follow = true;
+    }
+
     if (usePrettyRich) {
       resetPrettyState();
     }
