@@ -206,12 +206,12 @@ function formatRunLine(msg: string): string | null {
     const info = _runInfo.get(runId);
     const model = info?.model ?? "";
     const modelPart = model ? ` ${C_TOOL_NAME}${model}${RST}` : "";
-    return `   ${C_TOOL_META}📡 calling API…${RST}${modelPart}`;
+    return ` ${C_TOOL_META}📡 calling API…${RST}${modelPart}`;
   }
   if (phase === "agent end") {
     const isError = kv.isError === "true";
     if (isError) {
-      return `   \x1b[1;31m📡 API error${RST}`;
+      return ` \x1b[1;31m📡 API error${RST}`;
     }
     return "";
   }
