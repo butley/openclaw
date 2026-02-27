@@ -118,6 +118,156 @@ const C_TIME = fg256(240);
 const C_BODY = fg256(252);
 const C_SEP = fg256(236);
 
+// ─── Tool / Run formatting ───────────────────────────────────────
+const C_TOOL_NAME = fg256(183, true); // bold lavender
+const C_TOOL_META = fg256(248); // dim grey
+const C_TOOL_PHASE = fg256(243); // dim for phase arrows
+
+const TOOL_EMOJI: Record<string, string> = {
+  exec: "⚙",
+  process: "🧰",
+  read: "📖",
+  write: "✏",
+  edit: "📝",
+  apply_patch: "🩹",
+  attach: "📎",
+  browser: "🌐",
+  canvas: "🖼️",
+  web_search: "🔍",
+  web_fetch: "🌐",
+  image: "🖼️",
+  message: "💬",
+  tts: "🔊",
+  cron: "⏱",
+  gateway: "⚙",
+  memory_search: "🧠",
+  memory_get: "🧠",
+  nodes: "📡",
+  sessions_spawn: "🚀",
+  sessions_send: "📨",
+  sessions_list: "📋",
+  sessions_history: "📜",
+  session_status: "📊",
+  subagents: "🤖",
+  whatsapp_login: "📱",
+  agents_list: "👥",
+};
+
+const MODEL_SHORT: Record<string, string> = {
+  "claude-opus-4-6": "opus-4.6",
+  "claude-opus-4-5": "opus-4.5",
+  "claude-sonnet-4-6": "sonnet-4.6",
+  "claude-sonnet-4-5": "sonnet-4.5",
+  "claude-haiku-4-5": "haiku-4.5",
+};
+
+// State for run/tool tracking
+const _runInfo = new Map<string, { model: string }>();
+const _toolStartTime = new Map<string, string>();
+const TOOL_MERGE_THRESHOLD_S = 2.0;
+
+function parseRunKv(rest: string): Record<string, string> {
+  const kv: Record<string, string> = {};
+  for (const m of rest.matchAll(/(\w+)=(\S+)/g)) {
+    kv[m[1]] = m[2];
+  }
+  return kv;
+}
+
+/** Format `embedded run *` lifecycle lines. Returns null if not a run line, '' to suppress. */
+function formatRunLine(msg: string): string | null {
+  const m = msg.match(
+    /^embedded run (start|prompt start|agent start|agent end|prompt end|done): runId=(\S+)(.*)/,
+  );
+  if (!m) {
+    return null;
+  }
+  const [, phase, runId, rest] = m;
+  const kv = parseRunKv(rest);
+
+  if (phase === "start") {
+    const model = MODEL_SHORT[kv.model ?? ""] ?? kv.model ?? "";
+    const thinking = kv.thinking ?? "";
+    const channel = kv.messageChannel ?? "";
+    _runInfo.set(runId, { model });
+    const parts = [`${C_TOOL_PHASE}▶${RST} 🤖 ${C_TOOL_NAME}${model}${RST}`];
+    if (thinking) {
+      parts.push(`${C_TOOL_META}thinking=${thinking}${RST}`);
+    }
+    if (channel) {
+      parts.push(`${C_TOOL_META}(${channel})${RST}`);
+    }
+    return parts.join(" ");
+  }
+  if (phase === "prompt start") {
+    return "";
+  }
+  if (phase === "agent start") {
+    const info = _runInfo.get(runId);
+    const model = info?.model ?? "";
+    const modelPart = model ? ` ${C_TOOL_NAME}${model}${RST}` : "";
+    return `   ${C_TOOL_META}📡 calling API…${RST}${modelPart}`;
+  }
+  if (phase === "agent end") {
+    const isError = kv.isError === "true";
+    if (isError) {
+      return `   \x1b[1;31m📡 API error${RST}`;
+    }
+    return "";
+  }
+  if (phase === "prompt end") {
+    const info = _runInfo.get(runId);
+    _runInfo.delete(runId);
+    const model = info?.model ?? "";
+    const ms = kv.durationMs ? parseFloat(kv.durationMs) : null;
+    const durStr = ms !== null ? ` ${C_TOOL_META}${(ms / 1000).toFixed(1)}s${RST}` : "";
+    const modelPart = model ? ` ${C_TOOL_NAME}${model}${RST}` : "";
+    return `${C_TOOL_PHASE}■${RST} 🤖${modelPart} done${durStr}`;
+  }
+  if (phase === "done") {
+    return "";
+  }
+  return null;
+}
+
+/** Format `embedded run tool start/end` lines. Returns null if not a tool line, '' to suppress. */
+function formatToolLine(msg: string, timeStr: string): string | null {
+  const m = msg.match(
+    /^embedded run tool (start|end): runId=\S+ tool=(\S+) toolCallId=(\S+)(?:\s+meta=(.+))?/s,
+  );
+  if (!m) {
+    return null;
+  }
+  const [, phase, toolName, toolCallId, metaRaw] = m;
+  const meta = (metaRaw ?? "").replace(/\n.*/s, "").trim().replace(/`$/, "").trim();
+  const emoji = TOOL_EMOJI[toolName] ?? "🧩";
+  const metaPart = meta ? ` ${C_TOOL_META}${meta}${RST}` : "";
+  const core = `${emoji} ${C_TOOL_NAME}${toolName}${RST}${metaPart}`;
+
+  if (phase === "start") {
+    _toolStartTime.set(toolCallId, timeStr);
+    return `${C_TOOL_PHASE}→${RST} ${core}`;
+  }
+  // end
+  const startTime = _toolStartTime.get(toolCallId);
+  _toolStartTime.delete(toolCallId);
+  let dur: number | null = null;
+  if (startTime && timeStr) {
+    try {
+      const toS = (t: string) =>
+        parseInt(t.slice(0, 2)) * 3600 + parseInt(t.slice(3, 5)) * 60 + parseInt(t.slice(6, 8));
+      dur = toS(timeStr) - toS(startTime);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (dur !== null && dur < TOOL_MERGE_THRESHOLD_S) {
+    return "";
+  }
+  const durStr = dur !== null ? ` ${C_TOOL_META}(${dur.toFixed(1)}s)${RST}` : "";
+  return `${C_TOOL_PHASE}✓${RST} ${core}${durStr}`;
+}
+
 // ─── Utilities ──────────────────────────────────────────────────
 
 function getTermWidth(): number {
@@ -333,6 +483,17 @@ function formatJsonBlob(msg: string, ccolor: string): string {
   if (!obj) {
     return phoneAlias(compactIds(msg));
   }
+  // Convert epoch-ms timestamps to human-readable BRT
+  for (const key of ["nextAt", "lastMessageAt", "lastAt"]) {
+    const val = obj[key];
+    if (typeof val === "number" && val > 1e12) {
+      try {
+        obj[key] = new Date(val).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo" });
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 
   const skip = new Set(["connectionId", "correlationId", "mediaPath", "mediaSizeBytes"]);
   const parts: string[] = [];
@@ -422,6 +583,22 @@ export function formatPrettyLine(rawLine: string, _opts?: PrettyFormatOptions): 
   msg = stripSubsystemPrefix(msg);
   const trimmed = msg.trim();
   let content: string;
+
+  // Agent run lifecycle + tool call formatting (highest priority)
+  const runFmt = formatRunLine(trimmed);
+  if (runFmt !== null) {
+    if (runFmt === "") {
+      return null;
+    } // suppress
+    return `${separator}${prefix}${wrapText(`${cat.headerColor}${runFmt}${RST}`, indent, cat.headerColor)}`;
+  }
+  const toolFmt = formatToolLine(trimmed, timeStr);
+  if (toolFmt !== null) {
+    if (toolFmt === "") {
+      return null;
+    } // suppress
+    return `${separator}${prefix}${wrapText(`${cat.headerColor}${toolFmt}${RST}`, indent, cat.headerColor)}`;
+  }
 
   if (trimmed.startsWith("{")) {
     const obj = tryParseJson(trimmed);
