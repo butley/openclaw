@@ -527,6 +527,64 @@ export interface PrettyFormatOptions {
 
 let prevTimeStr = "";
 
+/** Format session-memory hook lines (action=new, context resolved, reset fallback, etc.) */
+function formatSessionLine(msg: string): string | null {
+  // Pattern: {json} trailing description
+  const m = msg.match(/^(\{.*?\})\s+(.+)$/s);
+  if (!m) {
+    return null;
+  }
+  const obj = tryParseJson(m[1]);
+  if (!obj) {
+    return null;
+  }
+  const desc = m[2].trim();
+
+  // "Hook triggered for reset/new command"
+  if (desc.includes("Hook triggered") && typeof obj.action === "string") {
+    const icon = obj.action === "new" ? "🔄" : "♻️";
+    return `${icon} ${C_TOOL_NAME}session ${obj.action}${RST}`;
+  }
+
+  // "Session context resolved" — sessionId + hasCfg
+  if (desc.includes("Session context resolved") && typeof obj.sessionId === "string") {
+    const shortId = obj.sessionId.slice(0, 8);
+    const cfg = obj.hasCfg ? "✓" : "✗";
+    return `${C_TOOL_META}session ${shortId}… cfg=${cfg}${RST}`;
+  }
+
+  // "Loaded session content from reset fallback"
+  if (desc.includes("reset fallback") && typeof obj.latestResetPath === "string") {
+    const resetFile = obj.latestResetPath.split("/").pop() ?? "";
+    const tsMatch = resetFile.match(/\.reset\.(.+)$/);
+    const ts = tsMatch ? tsMatch[1] : resetFile;
+    return `${C_TOOL_META}↩ reset fallback${RST} ${DIM}${ts}${RST}`;
+  }
+
+  // "Session content loaded"
+  if (desc.includes("Session content loaded") && typeof obj.length === "number") {
+    return `${C_TOOL_META}session content ${obj.length} chars${RST}`;
+  }
+
+  // "Memory file path resolved"
+  if (desc.includes("Memory file path") && typeof obj.path === "string") {
+    const shortPath = obj.path.replace(/.*\/memory\//, "memory/");
+    return `${C_TOOL_META}→ ${shortPath}${RST}`;
+  }
+
+  // "Generated slug" / "Using fallback timestamp slug"
+  if (desc.includes("slug") && typeof obj.slug === "string") {
+    return `${C_TOOL_META}slug: ${obj.slug}${RST}`;
+  }
+
+  // "Calling generateSlugViaLLM..."
+  if (desc.includes("generateSlugViaLLM")) {
+    return `${C_TOOL_META}generating slug…${RST}`;
+  }
+
+  return null;
+}
+
 /** Format cron log lines: extracts trailing tag + timestamps. */
 function formatCronLine(msg: string, hcolor: string): string | null {
   // Match: {json blob} trailing-tag (e.g. "cron: timer armed", "cron-reaper: ...")
@@ -640,6 +698,17 @@ export function formatPrettyLine(rawLine: string, _opts?: PrettyFormatOptions): 
   msg = stripSubsystemPrefix(msg);
   const trimmed = msg.trim();
   let content: string;
+
+  // Session-memory hook formatting
+  if (subsystem.includes("session-memory")) {
+    const sessFmt = formatSessionLine(trimmed);
+    if (sessFmt !== null) {
+      if (sessFmt === "") {
+        return null;
+      }
+      return `${separator}${prefix}${sessFmt}`;
+    }
+  }
 
   // Cron line formatting
   if (subsystem.includes("cron")) {
