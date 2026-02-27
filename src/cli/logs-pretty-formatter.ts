@@ -226,6 +226,16 @@ function tryParseJson(s: string): Record<string, unknown> | null {
   try {
     return JSON.parse(trimmed) as Record<string, unknown>;
   } catch {
+    // msg may have trailing text after the JSON blob (e.g. "{ ... } auto-reply sent (text)")
+    // Try to extract just the JSON object portion by finding the last closing brace
+    const lastBrace = trimmed.lastIndexOf("}");
+    if (lastBrace > 0) {
+      try {
+        return JSON.parse(trimmed.slice(0, lastBrace + 1)) as Record<string, unknown>;
+      } catch {
+        // fall through
+      }
+    }
     return null;
   }
 }
