@@ -564,11 +564,14 @@ function formatCronLine(msg: string, hcolor: string): string | null {
     }
   }
 
-  const delayMs = obj["delayMs"];
-  if (typeof delayMs === "number" && delayMs > 0) {
-    const secs = delayMs / 1000;
-    const label = secs < 60 ? `${secs}s` : `${(secs / 60).toFixed(0)}m`;
-    parts.push(`${C_TOOL_META}(in ${label})${RST}`);
+  // Compute real time-until-fire from nextAt, not the internal delayMs (polling interval)
+  if (typeof tsField === "number" && tsField > 1e12) {
+    const diffMs = tsField - Date.now();
+    if (diffMs > 0) {
+      const secs = diffMs / 1000;
+      const label = secs < 90 ? `${Math.round(secs)}s` : `${Math.round(secs / 60)}m`;
+      parts.push(`${C_TOOL_META}(in ${label})${RST}`);
+    }
   }
 
   // Job count for "cron: started"
