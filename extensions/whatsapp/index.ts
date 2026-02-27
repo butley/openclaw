@@ -11,17 +11,8 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     setWhatsAppRuntime(api.runtime);
     api.registerChannel({ plugin: whatsappPlugin });
-    // Expose whatsapp_login as an HTTP-callable gateway tool so the backend
-    // orchestrator can initiate QR login via POST /tools/invoke.
-    // The tool is in the default HTTP deny list; operators must add it to
-    // gateway.tools.allow in openclaw.json to enable it.
-    api.registerTool((_ctx) => {
-      try {
-        return getWhatsAppRuntime().channel.whatsapp.createLoginTool();
-      } catch {
-        return null;
-      }
-    });
+    // Note: whatsapp_login tool is registered natively by OpenClaw >= 2026.2.26.
+    // Do NOT call api.registerTool() here — it would cause duplicate tool names.
   },
 };
 
