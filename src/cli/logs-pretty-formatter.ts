@@ -118,6 +118,37 @@ const C_TIME = fg256(240);
 const C_BODY = fg256(252);
 const C_SEP = fg256(236);
 
+// ─── Tool display ───────────────────────────────────────────────
+const TOOL_EMOJI: Record<string, string> = {
+  exec: "🛠️",
+  process: "🧰",
+  read: "📖",
+  write: "✍️",
+  edit: "📝",
+  apply_patch: "🩹",
+  attach: "📎",
+  browser: "🌐",
+  canvas: "🖼️",
+  web_search: "🔍",
+  web_fetch: "🌐",
+  image: "🖼️",
+  message: "💬",
+  tts: "🔊",
+  cron: "⏱",
+  gateway: "⚙",
+  memory_search: "🧠",
+  memory_get: "🧠",
+  nodes: "📡",
+  sessions_spawn: "🚀",
+  sessions_send: "📨",
+  sessions_list: "📋",
+  sessions_history: "📜",
+  session_status: "📊",
+  subagents: "🤖",
+  whatsapp_login: "📱",
+  agents_list: "👥",
+};
+
 // ─── Utilities ──────────────────────────────────────────────────
 
 function getTermWidth(): number {
@@ -346,6 +377,28 @@ function formatJsonBlob(msg: string, ccolor: string): string {
   return parts.join(" ");
 }
 
+// ─── Tool call formatting ───────────────────────────────────────
+
+const TOOL_RE =
+  /^embedded run tool (start|end): runId=\S+ tool=(\S+) toolCallId=(\S+)(?:\s+meta=(.+))?$/;
+
+function formatToolLine(msg: string): string | null {
+  const m = TOOL_RE.exec(msg);
+  if (!m) {
+    return null;
+  }
+  const phase = m[1]; // start | end
+  const toolName = m[2];
+  const meta = m[4]?.trim();
+  const emoji = TOOL_EMOJI[toolName] ?? "🧩";
+  const C_TOOL_NAME = fg256(183, true);
+  const C_TOOL_META = fg256(248);
+  const C_TOOL_PHASE = fg256(243);
+  const phaseLabel = phase === "start" ? "→" : "✓";
+  const metaPart = meta ? ` ${C_TOOL_META}${meta}${RST}` : "";
+  return `${C_TOOL_PHASE}${phaseLabel}${RST} ${emoji} ${C_TOOL_NAME}${toolName}${RST}${metaPart}`;
+}
+
 // ─── Main entry point ───────────────────────────────────────────
 
 export interface PrettyFormatOptions {
@@ -411,6 +464,13 @@ export function formatPrettyLine(rawLine: string, _opts?: PrettyFormatOptions): 
   // Format message content
   msg = stripSubsystemPrefix(msg);
   const trimmed = msg.trim();
+
+  // Tool call lines get special formatting
+  const toolFormatted = formatToolLine(trimmed);
+  if (toolFormatted) {
+    return `${separator}${prefix}${toolFormatted}`;
+  }
+
   let content: string;
 
   if (trimmed.startsWith("{")) {
