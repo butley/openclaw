@@ -49,3 +49,7 @@ WhatsApp periodically bumps the minimum protocol version. When pinned, this caus
 **Fix:** Fetch current version from https://raw.githubusercontent.com/WhiskeySockets/Baileys/refs/heads/master/src/Defaults/baileys-version.json and update the array in `src/web/session.ts`.
 
 **Long-term:** Consider reverting to dynamic `fetchLatestBaileysVersion()` if Baileys rc.9 compatibility is confirmed with newer protocol versions.
+
+## Status
+
+**REVERTED** (2026-02-27). Dynamic `fetchLatestBaileysVersion()` restored — matches upstream behavior. Pin caused more problems than it solved.
