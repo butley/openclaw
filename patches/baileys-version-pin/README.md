@@ -8,7 +8,7 @@ The version mismatch causes WhatsApp to send protocol messages that rc.9 cannot 
 
 ## Solution
 
-Pin the protocol version to `[2, 3000, 1027934701]`, which is the version bundled with rc.9, instead of fetching from GitHub.
+Pin to a hardcoded version array instead of fetching from GitHub.
 
 ## Files
 
@@ -17,7 +17,7 @@ Pin the protocol version to `[2, 3000, 1027934701]`, which is the version bundle
 ## Key Grep Pattern
 
 ```bash
-grep -q '1027934701' src/web/session.ts
+grep -qE '\[2, 3000, [0-9]+\]' src/web/session.ts
 ```
 
 ## Upstream Issues
@@ -33,6 +33,19 @@ Guilherme Ramos (`guiramos@gmail.com`) — 2026-02-27
 
 `9520469` on `dev`
 
-## Notes
+## Version History
 
-This pin must be updated if OpenClaw upgrades Baileys beyond rc.9. When that happens, check the new bundled version and update the array accordingly.
+| Date | Version | Notes |
+|------|---------|-------|
+| 2026-02-27 | `1027934701` | Original pin (rc.9 bundled). Broke same day — WhatsApp bumped minimum. |
+| 2026-02-27 | `1033846690` | Updated after 405 "Method Not Allowed" (location: "frc") on connect. |
+
+## ⚠️ KNOWN MAINTENANCE BURDEN
+
+WhatsApp periodically bumps the minimum protocol version. When pinned, this causes **silent connection failure** (405, zero events after QR/reconnect).
+
+**Symptoms:** `channel exited` with `statusCode: 405`, `location: "frc"`.
+
+**Fix:** Fetch current version from https://raw.githubusercontent.com/WhiskeySockets/Baileys/refs/heads/master/src/Defaults/baileys-version.json and update the array in `src/web/session.ts`.
+
+**Long-term:** Consider reverting to dynamic `fetchLatestBaileysVersion()` if Baileys rc.9 compatibility is confirmed with newer protocol versions.

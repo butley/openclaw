@@ -107,7 +107,7 @@ export async function createWaSocket(
   // fetchLatestBaileysVersion() fetches from Baileys master which returns a newer
   // protocol version incompatible with rc.9, causing silent pairing failure.
   // See: openclaw/openclaw#20157, #24947
-  const version: [number, number, number] = [2, 3000, 1027934701];
+  const version: [number, number, number] = [2, 3000, 1033846690];
   const sock = makeWASocket({
     auth: {
       creds: state.creds,

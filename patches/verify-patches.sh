@@ -36,7 +36,7 @@ check "7. TUI Dark Theme"    "grep -q '236' src/tui/theme/theme.ts"
 check "8. Status Card"        "grep -q 'padLabel' src/auto-reply/status.ts"
 check "9. QMD Output Limit"  "grep -q 'maxOutputChars' src/memory/qmd-manager.ts"
 check "10. Logs Pretty"       "test -f src/cli/logs-pretty-formatter.ts && grep -q 'pretty' src/cli/logs-cli.ts"
-check "11. Baileys Version Pin" "grep -q '1027934701' src/web/session.ts"
+check "11. Baileys Version Pin" "grep -qE '\[2, 3000, [0-9]+\]' src/web/session.ts"
 check "12. WA Login Tool Dedup" "grep -q 'natively by OpenClaw' extensions/whatsapp/index.ts"
 
 echo ""
