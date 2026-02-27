@@ -527,6 +527,45 @@ export interface PrettyFormatOptions {
 
 let prevTimeStr = "";
 
+/** Format cron log lines: extracts trailing tag + nextAt timestamp. */
+function formatCronLine(msg: string, hcolor: string): string | null {
+  // Only handle lines with a JSON blob + trailing cron tag
+  const m = msg.match(/^(\{.*?\})\s+(cron:\s*.+)$/s);
+  if (!m) {
+    return null;
+  }
+  const obj = tryParseJson(m[1]);
+  if (!obj) {
+    return null;
+  }
+
+  const tag = m[2].replace(/^cron:\s*/, "").trim(); // e.g. "timer armed"
+  const parts: string[] = [`${hcolor}CRON${RST}`];
+
+  if (tag) {
+    parts.push(`${C_TOOL_META}${tag}${RST}`);
+  }
+
+  const nextAt = obj["nextAt"];
+  if (typeof nextAt === "number" && nextAt > 1e12) {
+    try {
+      const time = new Date(nextAt).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo" });
+      parts.push(`${hcolor}→ ${time}${RST}`);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const delayMs = obj["delayMs"];
+  if (typeof delayMs === "number" && delayMs > 0) {
+    const secs = delayMs / 1000;
+    const label = secs < 60 ? `${secs}s` : `${(secs / 60).toFixed(0)}m`;
+    parts.push(`${C_TOOL_META}(in ${label})${RST}`);
+  }
+
+  return parts.join(" ");
+}
+
 export function resetPrettyState(): void {
   prevTimeStr = "";
 }
@@ -585,6 +624,14 @@ export function formatPrettyLine(rawLine: string, _opts?: PrettyFormatOptions): 
   msg = stripSubsystemPrefix(msg);
   const trimmed = msg.trim();
   let content: string;
+
+  // Cron line formatting
+  if (subsystem.includes("cron")) {
+    const cronFmt = formatCronLine(trimmed, cat.headerColor);
+    if (cronFmt) {
+      return `${separator}${prefix}${cronFmt}`;
+    }
+  }
 
   // Agent run lifecycle + tool call formatting (highest priority)
   const runFmt = formatRunLine(trimmed);
