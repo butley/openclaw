@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import {
   DisconnectReason,
+  fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   makeWASocket,
   useMultiFileAuthState,
@@ -103,11 +104,7 @@ export async function createWaSocket(
   const sessionLogger = getChildLogger({ module: "web-session" });
   maybeRestoreCredsFromBackup(authDir);
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
-  // Pin to version bundled with @whiskeysockets/baileys@7.0.0-rc.9
-  // fetchLatestBaileysVersion() fetches from Baileys master which returns a newer
-  // protocol version incompatible with rc.9, causing silent pairing failure.
-  // See: openclaw/openclaw#20157, #24947
-  const version: [number, number, number] = [2, 3000, 1033846690];
+  const { version } = await fetchLatestBaileysVersion();
   const sock = makeWASocket({
     auth: {
       creds: state.creds,
