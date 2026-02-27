@@ -527,10 +527,10 @@ export interface PrettyFormatOptions {
 
 let prevTimeStr = "";
 
-/** Format cron log lines: extracts trailing tag + nextAt timestamp. */
+/** Format cron log lines: extracts trailing tag + timestamps. */
 function formatCronLine(msg: string, hcolor: string): string | null {
-  // Only handle lines with a JSON blob + trailing cron tag
-  const m = msg.match(/^(\{.*?\})\s+(cron:\s*.+)$/s);
+  // Match: {json blob} trailing-tag (e.g. "cron: timer armed", "cron-reaper: ...")
+  const m = msg.match(/^(\{.*?\})\s+((?:cron|cron-reaper)[\s:].+)$/s);
   if (!m) {
     return null;
   }
@@ -539,17 +539,25 @@ function formatCronLine(msg: string, hcolor: string): string | null {
     return null;
   }
 
-  const tag = m[2].replace(/^cron:\s*/, "").trim(); // e.g. "timer armed"
+  // Normalize tag: strip "cron: " / "cron-reaper: " prefix
+  const tag = m[2].replace(/^cron(?:-reaper)?:\s*/, "").trim();
   const parts: string[] = [`${hcolor}CRON${RST}`];
 
   if (tag) {
     parts.push(`${C_TOOL_META}${tag}${RST}`);
   }
 
-  const nextAt = obj["nextAt"];
-  if (typeof nextAt === "number" && nextAt > 1e12) {
+  // Job name if present (e.g. job failed lines)
+  const jobName = obj["jobName"];
+  if (typeof jobName === "string" && jobName) {
+    parts.push(`${C_TOOL_NAME}${jobName}${RST}`);
+  }
+
+  // nextAt (timer armed) or nextWakeAtMs (cron: started)
+  const tsField = (obj["nextAt"] ?? obj["nextWakeAtMs"]) as number | undefined;
+  if (typeof tsField === "number" && tsField > 1e12) {
     try {
-      const time = new Date(nextAt).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo" });
+      const time = new Date(tsField).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo" });
       parts.push(`${hcolor}→ ${time}${RST}`);
     } catch {
       /* ignore */
@@ -563,9 +571,14 @@ function formatCronLine(msg: string, hcolor: string): string | null {
     parts.push(`${C_TOOL_META}(in ${label})${RST}`);
   }
 
+  // Job count for "cron: started"
+  const jobs = obj["jobs"];
+  if (typeof jobs === "number") {
+    parts.push(`${C_TOOL_META}${jobs} jobs${RST}`);
+  }
+
   return parts.join(" ");
 }
-
 export function resetPrettyState(): void {
   prevTimeStr = "";
 }
