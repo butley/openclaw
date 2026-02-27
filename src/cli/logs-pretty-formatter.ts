@@ -334,6 +334,8 @@ function formatTimeBRT(ts: string): string {
 function stripSubsystemPrefix(msg: string): string {
   msg = msg.replace(/^\{"subsystem":"[^"]*"\}\s*/, "");
   msg = msg.replace(/^\{"module":"[^"]*"(?:,"runId":"[^"]*")?\}\s*/, "");
+  // Handle module meta with extra fields (e.g. cron's storePath)
+  msg = msg.replace(/^\{[^{}]*"module":"[^"]*"[^{}]*\}\s*(?=\{)/, "");
   msg = msg.replace(/^\[(?:WARN|INFO|ERROR|DEBUG)\]\s*/, "");
   return msg;
 }
