@@ -289,6 +289,13 @@ export async function monitorWebInbox(options: {
           logVerbose(`Presence update failed: ${String(err)}`);
         }
       };
+      const sendAvailable = async () => {
+        try {
+          await sock.sendPresenceUpdate("available", chatJid);
+        } catch (err) {
+          logVerbose(`Presence available update failed: ${String(err)}`);
+        }
+      };
       const reply = async (text: string) => {
         const { processOutboundMentions } = await import("./send-api.js");
         const processed = processOutboundMentions(text);
@@ -338,6 +345,7 @@ export async function monitorWebInbox(options: {
         selfE164,
         location: location ?? undefined,
         sendComposing,
+        sendAvailable,
         reply,
         sendMedia,
         mediaPath,
