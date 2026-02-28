@@ -51,6 +51,22 @@ export type GroupHistoryEntry = {
   senderJid?: string;
 };
 
+function resolveWhatsAppToolNarrationEnabled(params: {
+  cfg: ReturnType<typeof loadConfig>;
+  accountId: string;
+}): boolean {
+  const account = resolveWhatsAppAccount({ cfg: params.cfg, accountId: params.accountId });
+  return account.toolNarration ?? false;
+}
+
+function resolveWhatsAppBlockStreamingEnabled(params: {
+  cfg: ReturnType<typeof loadConfig>;
+  accountId: string;
+}): boolean {
+  const account = resolveWhatsAppAccount({ cfg: params.cfg, accountId: params.accountId });
+  return account.blockStreaming ?? false;
+}
+
 async function resolveWhatsAppCommandAuthorized(params: {
   cfg: ReturnType<typeof loadConfig>;
   msg: WebInboundMsg;
@@ -359,6 +375,14 @@ export async function processMessage(params: {
   });
   trackBackgroundTask(params.backgroundTasks, metaTask);
 
+  const blockStreamingEnabled = resolveWhatsAppBlockStreamingEnabled({
+    cfg: params.cfg,
+    accountId: params.route.accountId,
+  });
+  const toolNarrationEnabled = resolveWhatsAppToolNarrationEnabled({
+    cfg: params.cfg,
+    accountId: params.route.accountId,
+  });
   const { queuedFinal } = await dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload,
     cfg: params.cfg,
@@ -373,10 +397,18 @@ export async function processMessage(params: {
         }
       },
       deliver: async (payload: ReplyPayload, info) => {
-        if (info.kind !== "final") {
-          // Only deliver final replies to external messaging channels (WhatsApp).
-          // Block (reasoning/thinking) and tool updates are meant for the internal
-          // web UI only; sending them here leaks chain-of-thought to end users.
+        if (info.kind === "block" && !blockStreamingEnabled) {
+          // When block streaming is disabled (default), suppress block payloads
+          // so that ACP-backed replies don't leak intermediate text to end users.
+          return;
+        }
+        if (info.kind === "tool" && !toolNarrationEnabled) {
+          // Suppress tool summaries unless toolNarration is explicitly enabled.
+          return;
+        }
+        if (info.kind !== "final" && info.kind !== "block" && info.kind !== "tool") {
+          // Only deliver final, block-streaming, and (optionally) tool replies.
+          // Reasoning/thinking is for the internal web UI only.
           return;
         }
         await deliverWebReply({
@@ -421,9 +453,7 @@ export async function processMessage(params: {
       onReplyStart: params.msg.sendComposing,
     },
     replyOptions: {
-      // WhatsApp delivery intentionally suppresses non-final payloads.
-      // Keep block streaming disabled so final replies are still produced.
-      disableBlockStreaming: true,
+      disableBlockStreaming: !blockStreamingEnabled,
       onModelSelected,
     },
   });
