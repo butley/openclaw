@@ -872,7 +872,23 @@ export const chatHandlers: GatewayRequestHandlers = {
             agentRunStarted = true;
             // Propagate mirror flag to agent run context so emitChatFinal mirrors to WhatsApp
             if (p.mirror) {
-              registerAgentRunContext(runId, { mirror: true });
+              // Parse session key to extract WA peer ID for real-time paragraph delivery.
+              // Format: agent:{agentId}:{channel}:{peerKind}:{peerId}
+              const keyParts = p.sessionKey.split(":").filter(Boolean);
+              const mirrorChannel =
+                keyParts.length >= 5 && keyParts[0] === "agent" ? keyParts[2] : "";
+              const mirrorPeerId = keyParts.length >= 5 ? keyParts.slice(4).join(":") : "";
+              const onMirrorParagraph =
+                mirrorChannel === "whatsapp" && mirrorPeerId
+                  ? (text: string) => {
+                      void import("../../web/outbound.js").then(({ sendMessageWhatsApp }) => {
+                        sendMessageWhatsApp(mirrorPeerId, text, { verbose: false }).catch((err) =>
+                          context.logGateway.warn(`[mirror-stream] failed: ${String(err)}`),
+                        );
+                      });
+                    }
+                  : undefined;
+              registerAgentRunContext(runId, { mirror: true, onMirrorParagraph });
             }
             const connId = typeof client?.connId === "string" ? client.connId : undefined;
             const wantsToolEvents = hasGatewayClientCap(

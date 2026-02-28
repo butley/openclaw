@@ -16,6 +16,8 @@ export type AgentRunContext = {
   verboseLevel?: VerboseLevel;
   isHeartbeat?: boolean;
   mirror?: boolean;
+  /** Called with each complete paragraph during streaming (for real-time WA delivery). */
+  onMirrorParagraph?: (text: string) => void;
 };
 
 // Keep per-run counters so streams stay strictly monotonic per runId.
@@ -43,6 +45,9 @@ export function registerAgentRunContext(runId: string, context: AgentRunContext)
   }
   if (context.mirror !== undefined && existing.mirror !== context.mirror) {
     existing.mirror = context.mirror;
+  }
+  if (context.onMirrorParagraph !== undefined) {
+    existing.onMirrorParagraph = context.onMirrorParagraph;
   }
 }
 

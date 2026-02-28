@@ -145,6 +145,8 @@ export type ChatRunState = {
   buffers: Map<string, string>;
   deltaSentAt: Map<string, number>;
   abortedRuns: Map<string, number>;
+  /** Paragraph accumulation buffers for real-time WA mirror streaming. */
+  mirrorBuffers: Map<string, string>;
   clear: () => void;
 };
 
@@ -153,12 +155,14 @@ export function createChatRunState(): ChatRunState {
   const buffers = new Map<string, string>();
   const deltaSentAt = new Map<string, number>();
   const abortedRuns = new Map<string, number>();
+  const mirrorBuffers = new Map<string, string>();
 
   const clear = () => {
     registry.clear();
     buffers.clear();
     deltaSentAt.clear();
     abortedRuns.clear();
+    mirrorBuffers.clear();
   };
 
   return {
@@ -166,6 +170,7 @@ export function createChatRunState(): ChatRunState {
     buffers,
     deltaSentAt,
     abortedRuns,
+    mirrorBuffers,
     clear,
   };
 }
@@ -314,6 +319,26 @@ export function createAgentEventHandler({
     };
     broadcast("chat", payload, { dropIfSlow: true });
     nodeSendToSession(sessionKey, "chat", payload);
+
+    // Real-time paragraph streaming for WA mirror (Step 3).
+    // When mirror is enabled, accumulate text and flush complete paragraphs
+    // to WA immediately as the LLM streams, instead of waiting for emitChatFinal.
+    const mirrorCtx = getAgentRunContext(sourceRunId);
+    if (mirrorCtx?.onMirrorParagraph) {
+      const prev = chatRunState.mirrorBuffers.get(clientRunId) ?? "";
+      const accumulated = prev + cleaned;
+      const lastBreak = accumulated.lastIndexOf("\n\n");
+      if (lastBreak > 0) {
+        const toSend = accumulated.substring(0, lastBreak).trim();
+        const remaining = accumulated.substring(lastBreak + 2);
+        chatRunState.mirrorBuffers.set(clientRunId, remaining);
+        if (toSend) {
+          mirrorCtx.onMirrorParagraph(toSend);
+        }
+      } else {
+        chatRunState.mirrorBuffers.set(clientRunId, accumulated);
+      }
+    }
   };
 
   const emitChatFinal = (
@@ -357,23 +382,35 @@ export function createAgentEventHandler({
       // Mirror to original channel if requested
       const runContext = getAgentRunContext(clientRunId);
       if (runContext?.mirror && text) {
-        try {
-          const keyParts = sessionKey.split(":").filter(Boolean);
-          // Format: agent:{agentId}:{channel}:{peerKind}:{peerId}
-          if (keyParts.length >= 5 && keyParts[0] === "agent") {
-            const channel = keyParts[2];
-            const peerId = keyParts.slice(4).join(":");
-            if (channel === "whatsapp" && peerId) {
-              void import("../web/outbound.js").then(({ sendMessageWhatsApp }) => {
-                sendMessageWhatsApp(peerId, text, { verbose: false })
-                  .then(() => console.log(`[mirror] sent to ${channel}:${peerId}`))
-                  .catch((err) => console.warn(`[mirror] failed: ${String(err)}`));
-              });
-            }
+        const mirrorBufTail = chatRunState.mirrorBuffers.get(clientRunId)?.trim() ?? "";
+        chatRunState.mirrorBuffers.delete(clientRunId);
+        if (runContext.onMirrorParagraph) {
+          // Paragraphs were streamed in real-time via callback; only flush the remaining tail.
+          if (mirrorBufTail) {
+            runContext.onMirrorParagraph(mirrorBufTail);
           }
-        } catch (mirrorErr) {
-          console.warn(`[mirror] error: ${String(mirrorErr)}`);
+        } else {
+          // No paragraph streaming registered — send full text as a single message (legacy).
+          try {
+            const keyParts = sessionKey.split(":").filter(Boolean);
+            // Format: agent:{agentId}:{channel}:{peerKind}:{peerId}
+            if (keyParts.length >= 5 && keyParts[0] === "agent") {
+              const channel = keyParts[2];
+              const peerId = keyParts.slice(4).join(":");
+              if (channel === "whatsapp" && peerId) {
+                void import("../web/outbound.js").then(({ sendMessageWhatsApp }) => {
+                  sendMessageWhatsApp(peerId, text, { verbose: false })
+                    .then(() => console.log(`[mirror] sent to ${channel}:${peerId}`))
+                    .catch((err) => console.warn(`[mirror] failed: ${String(err)}`));
+                });
+              }
+            }
+          } catch (mirrorErr) {
+            console.warn(`[mirror] error: ${String(mirrorErr)}`);
+          }
         }
+      } else {
+        chatRunState.mirrorBuffers.delete(clientRunId);
       }
       return;
     }
