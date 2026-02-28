@@ -30,7 +30,7 @@ import {
   readStoreAllowFromForDmPolicy,
   resolveDmGroupAccessWithCommandGate,
 } from "../../../security/dm-policy-shared.js";
-import { jidToE164, normalizeE164 } from "../../../utils.js";
+import { jidToE164, normalizeE164, sleep } from "../../../utils.js";
 import { resolveWhatsAppAccount } from "../../accounts.js";
 import { newConnectionId } from "../../reconnect.js";
 import { formatError } from "../../session.js";
@@ -383,6 +383,7 @@ export async function processMessage(params: {
     cfg: params.cfg,
     accountId: params.route.accountId,
   });
+  let prevBlockText: string | null = null;
   const { queuedFinal } = await dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload,
     cfg: params.cfg,
@@ -397,6 +398,22 @@ export async function processMessage(params: {
         }
       },
       deliver: async (payload: ReplyPayload, info) => {
+        // Pre-delivery reading delay: show typing + wait before each block except the first.
+        // Based on PREVIOUS block length so no trailing typing after the last paragraph.
+        // Formula: max(2000, min(8000, chars * 20ms)) — 2s short, ~4s 200 chars, 8s max.
+        if (info.kind === "block" && prevBlockText !== null) {
+          const readDelayMs = Math.max(4000, Math.min(12000, prevBlockText.length * 50));
+          void params.msg.sendComposing?.();
+          let elapsed = 0;
+          while (elapsed < readDelayMs) {
+            const step = Math.min(3000, readDelayMs - elapsed);
+            await sleep(step);
+            elapsed += step;
+            if (elapsed < readDelayMs) {
+              void params.msg.sendComposing?.();
+            }
+          }
+        }
         if (info.kind === "block" && !blockStreamingEnabled) {
           // When block streaming is disabled (default), suppress block payloads
           // so that ACP-backed replies don't leak intermediate text to end users.
@@ -424,6 +441,10 @@ export async function processMessage(params: {
           tableMode,
         });
         didSendReply = true;
+        // Track last block text so next block can delay proportionally.
+        if (info.kind === "block" && payload.text) {
+          prevBlockText = payload.text;
+        }
         const shouldLog = payload.text ? true : undefined;
         params.rememberSentText(payload.text, {
           combinedBody,
@@ -457,6 +478,11 @@ export async function processMessage(params: {
       onModelSelected,
     },
   });
+
+  // Clear typing indicator after all deliveries complete.
+  if (queuedFinal) {
+    await params.msg.sendAvailable?.();
+  }
 
   if (!queuedFinal) {
     if (shouldClearGroupHistory) {

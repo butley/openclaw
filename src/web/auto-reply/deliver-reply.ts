@@ -93,6 +93,13 @@ export async function deliverWebReply(params: {
           `Sent chunk ${index + 1}/${totalChunks} to ${msg.from} (${durationMs.toFixed(0)}ms)`,
         );
       }
+      // Reading-time delay between paragraphs for natural WA cadence.
+      // Only applies when chunkMode='newline' (paragraph-split delivery) and not the last chunk.
+      // Formula: max(6000, min(20000, chars * 60ms)) — ~10s for 150 chars, ~18s for 300 chars.
+      if (chunkMode === "newline" && index < totalChunks - 1) {
+        const readDelayMs = Math.max(6000, Math.min(20000, chunk.length * 60));
+        await sleep(readDelayMs);
+      }
     }
     replyLogger.info(
       {
