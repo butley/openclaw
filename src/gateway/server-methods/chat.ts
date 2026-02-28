@@ -878,13 +878,27 @@ export const chatHandlers: GatewayRequestHandlers = {
               const mirrorChannel =
                 keyParts.length >= 5 && keyParts[0] === "agent" ? keyParts[2] : "";
               const mirrorPeerId = keyParts.length >= 5 ? keyParts.slice(4).join(":") : "";
+              // Reading-speed-proportional delay between paragraphs.
+              // After each paragraph is sent, we wait an amount of time proportional
+              // to its length before delivering the next — guiding the reader naturally.
+              // Formula: max(800ms, min(2500ms, chars * 6ms)) gives ~1.2s for 200 chars.
+              let mirrorSendChain = Promise.resolve();
               const onMirrorParagraph =
                 mirrorChannel === "whatsapp" && mirrorPeerId
                   ? (text: string) => {
-                      void import("../../web/outbound.js").then(({ sendMessageWhatsApp }) => {
-                        sendMessageWhatsApp(mirrorPeerId, text, { verbose: false }).catch((err) =>
-                          context.logGateway.warn(`[mirror-stream] failed: ${String(err)}`),
-                        );
+                      mirrorSendChain = mirrorSendChain.then(async () => {
+                        await import("../../web/outbound.js")
+                          .then(({ sendMessageWhatsApp }) =>
+                            sendMessageWhatsApp(mirrorPeerId, text, { verbose: false }),
+                          )
+                          .catch((err) =>
+                            context.logGateway.warn(`[mirror-stream] failed: ${String(err)}`),
+                          );
+                        // Wait proportional to reading time before next paragraph.
+                        // ~20ms/char gives ~4s for 200-char paragraph, ~6s for 300-char.
+                        // Clamped: min 3000ms (short lines), max 8000ms (very long paragraphs).
+                        const readDelayMs = Math.max(3000, Math.min(8000, text.length * 20));
+                        await new Promise<void>((resolve) => setTimeout(resolve, readDelayMs));
                       });
                     }
                   : undefined;
