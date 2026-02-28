@@ -230,6 +230,56 @@ function formatRunLine(msg: string): string | null {
   return null;
 }
 
+/**
+ * Format exec/write/edit meta: strip heredoc content lines, show compact summary.
+ *
+ * Raw meta looks like:
+ *   "create folder ~/x → show > → run import → run import → run ..."
+ *   "search \"foo\" in src/ -> show first 10 lines"
+ *
+ * Strategy:
+ *   1. Split on " → run " — first chunk is the command, rest are content lines.
+ *   2. If content lines present, replace with "[+N lines]".
+ *   3. Strip " → show >" heredoc marker.
+ *   4. Truncate to MAX_META_CHARS.
+ */
+const MAX_META_CHARS = 90;
+
+function formatToolMeta(toolName: string, raw: string): string {
+  // Take only the first real line (meta may span newlines in rare cases)
+  let meta = raw.replace(/\n[\s\S]*/s, "").trim().replace(/`$/, "").trim();
+
+  // Split off heredoc content lines ("→ run <code>")
+  const runParts = meta.split(/ → run /);
+  const command = runParts[0].trim();
+  const contentLineCount = runParts.length - 1;
+
+  // Also count content from "-> run" (arrow variants)
+  const altRunCount = (command.match(/ -> run /g) ?? []).length;
+  const totalLines = contentLineCount + altRunCount;
+
+  // Strip heredoc show marker "→ show >" and "-> show >"
+  let cmd = command
+    .replace(/ [→\->]+ show >.*$/, "")
+    .replace(/ -> show.*$/, "")
+    .trim();
+
+  // For write/edit, strip trailing heredoc echoes
+  if (toolName === "write" || toolName === "edit") {
+    cmd = cmd.replace(/\s+EOF\s*$/, "").trim();
+  }
+
+  // Truncate long commands
+  if (cmd.length > MAX_META_CHARS) {
+    cmd = cmd.slice(0, MAX_META_CHARS - 1) + "…";
+  }
+
+  if (totalLines > 0) {
+    return `${cmd} ${DIM}[+${totalLines} lines]${RST}`;
+  }
+  return cmd;
+}
+
 /** Format `embedded run tool start/end` lines. Returns null if not a tool line, '' to suppress. */
 function formatToolLine(msg: string, timeStr: string): string | null {
   const m = msg.match(
@@ -239,7 +289,11 @@ function formatToolLine(msg: string, timeStr: string): string | null {
     return null;
   }
   const [, phase, toolName, toolCallId, metaRaw] = m;
-  const meta = (metaRaw ?? "").replace(/\n.*/s, "").trim().replace(/`$/, "").trim();
+
+  // Format meta with tool-aware cleanup
+  const rawMeta = (metaRaw ?? "").trim();
+  const meta = rawMeta ? formatToolMeta(toolName, rawMeta) : "";
+
   const emoji = TOOL_EMOJI[toolName] ?? "🧩";
   const metaPart = meta ? ` ${C_TOOL_META}${meta}${RST}` : "";
   const core = `${emoji} ${C_TOOL_NAME}${toolName}${RST}${metaPart}`;
