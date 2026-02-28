@@ -42,8 +42,11 @@ function createVerboseGate(
   };
 }
 
-export const createShouldEmitToolResult = (params: VerboseGateParams): (() => boolean) => {
-  return createVerboseGate(params, (level) => level !== "off");
+export const createShouldEmitToolResult = (_params: VerboseGateParams): (() => boolean) => {
+  // Decouple tool summary emission from verbose mode.
+  // Tool summaries are gated at channel delivery level (e.g. toolNarration config flag).
+  // Previously gated on verbose != 'off', which prevented toolNarration from working.
+  return () => true;
 };
 
 export const createShouldEmitToolOutput = (params: VerboseGateParams): (() => boolean) => {
