@@ -71,8 +71,6 @@ type WhatsAppSharedConfig = {
   blockStreaming?: boolean;
   /** Merge streamed block replies before sending. */
   blockStreamingCoalesce?: BlockStreamingCoalesceConfig;
-  /** Deliver tool call summaries (e.g. "🔧 Exec: ...") as WhatsApp messages. Default: false. */
-  toolNarration?: boolean;
   groups?: Record<string, WhatsAppGroupConfig>;
   /** Acknowledgment reaction sent immediately upon message receipt. */
   ackReaction?: WhatsAppAckReactionConfig;

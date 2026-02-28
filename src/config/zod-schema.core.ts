@@ -329,7 +329,6 @@ export const ReplyRuntimeConfigSchemaShape = {
   chunkMode: z.enum(["length", "newline"]).optional(),
   blockStreaming: z.boolean().optional(),
   blockStreamingCoalesce: BlockStreamingCoalesceSchema.optional(),
-  toolNarration: z.boolean().optional(),
   responsePrefix: z.string().optional(),
   mediaMaxMb: z.number().positive().optional(),
 };

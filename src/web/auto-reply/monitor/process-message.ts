@@ -51,14 +51,6 @@ export type GroupHistoryEntry = {
   senderJid?: string;
 };
 
-function resolveWhatsAppToolNarrationEnabled(params: {
-  cfg: ReturnType<typeof loadConfig>;
-  accountId: string;
-}): boolean {
-  const account = resolveWhatsAppAccount({ cfg: params.cfg, accountId: params.accountId });
-  return account.toolNarration ?? false;
-}
-
 function resolveWhatsAppBlockStreamingEnabled(params: {
   cfg: ReturnType<typeof loadConfig>;
   accountId: string;
@@ -379,10 +371,6 @@ export async function processMessage(params: {
     cfg: params.cfg,
     accountId: params.route.accountId,
   });
-  const toolNarrationEnabled = resolveWhatsAppToolNarrationEnabled({
-    cfg: params.cfg,
-    accountId: params.route.accountId,
-  });
   const { queuedFinal } = await dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload,
     cfg: params.cfg,
@@ -402,11 +390,7 @@ export async function processMessage(params: {
           // so that ACP-backed replies don't leak intermediate text to end users.
           return;
         }
-        if (info.kind === "tool" && !toolNarrationEnabled) {
-          // Suppress tool summaries unless toolNarration is explicitly enabled.
-          return;
-        }
-        if (info.kind !== "final" && info.kind !== "block" && info.kind !== "tool") {
+        if (info.kind !== "final" && info.kind !== "block") {
           // Only deliver final, block-streaming, and (optionally) tool replies.
           // Reasoning/thinking is for the internal web UI only.
           return;
