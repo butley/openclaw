@@ -198,7 +198,7 @@ function formatToolNarrationForChannel(raw: string): string {
     if (!text.startsWith('"')) text = '"' + text + '"';
   }
   else if (toolType === "image") emoji = "🖼️";
-  else if (toolType === "message") emoji = "💬";
+  else if (toolType === "message") return "";
   else if (toolType === "process") emoji = "🧰";
   else if (toolType === "browser") emoji = "🌐";
   else if (toolType === "canvas") emoji = "🎨";

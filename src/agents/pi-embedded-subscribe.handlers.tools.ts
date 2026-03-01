@@ -419,7 +419,7 @@ export async function handleToolExecutionEnd(
     const durationMs = startData?.startTime != null ? Date.now() - startData.startTime : undefined;
     const durationStr = durationMs != null ? ` (${(durationMs / 1000).toFixed(1)}s)` : " (?)";
     const errorStr = isToolError ? " ❌" : "";
-    ctx.emitToolEndSummary?.(toolName, meta, sanitizedResult, durationStr, errorStr);
+    ctx.emitToolEndSummary?.(toolName, meta, sanitizedResult, durationStr, errorStr, startData?.args);
   }
 
   // Run after_tool_call plugin hook (fire-and-forget)

@@ -350,6 +350,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     result?: unknown,
     duration?: string,
     error?: string,
+    args?: unknown,
   ) => {
     const agg = formatToolAggregate(toolName, meta ? [meta] : undefined, {
       markdown: useMarkdown,
@@ -357,8 +358,36 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     // Extract result context for enrichment.
     let resultInfo = "";
     const name = (toolName ?? "").toLowerCase();
-    // memory_search: extract provider and result count.
-    if (name === "memory_search") {
+    // Enrich tool narrations with result context.
+    if (name === "edit") {
+      try {
+        const a = (args && typeof args === "object") ? args as Record<string, unknown> : null;
+        if (a) {
+          const oldStr = String(a.old_string || a.oldText || "");
+          const newStr = String(a.new_string || a.newText || "");
+          if (oldStr || newStr) {
+            const oldLines = oldStr ? oldStr.split("\n").length : 0;
+            const newLines = newStr ? newStr.split("\n").length : 0;
+            const added = Math.max(0, newLines - oldLines);
+            const removed = Math.max(0, oldLines - newLines);
+            const charDiff = newStr.length - oldStr.length;
+            const charStr = charDiff >= 0 ? `+${charDiff}` : `${charDiff}`;
+            resultInfo = ` +${added}/-${removed} lines, ${charStr} chars`;
+          }
+        }
+      } catch { /* ignore */ }
+    } else if (name === "web_search") {
+      try {
+        const obj = typeof result === "string" ? JSON.parse(result) : result;
+        if (obj && typeof obj === "object") {
+          const o = obj as Record<string, unknown>;
+          const results = Array.isArray(o.results) ? o.results : Array.isArray(o.web) ? o.web : null;
+          if (results) {
+            resultInfo = ` → ${results.length} result${results.length !== 1 ? "s" : ""}`;
+          }
+        }
+      } catch { /* ignore */ }
+    } else if (name === "memory_search") {
       try {
         const obj = typeof result === "string" ? JSON.parse(result)
           : (result && typeof result === "object") ? result : null;
