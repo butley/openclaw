@@ -92,6 +92,111 @@ export type DispatchFromConfigResult = {
   counts: Record<ReplyDispatchKind, number>;
 };
 
+
+/** Reformat upstream verbose tool narration into clean one-liner for messaging channels. */
+function formatToolNarrationForChannel(raw: string): string {
+  const firstLine = raw.split("\n\n")[0].split("\n")[0].trim();
+  let text = firstLine.replace(/^`+|`+$/g, "").trim();
+
+  // Strip upstream emoji prefix and tool label (e.g. "🛠️ Exec: ...", "🧩 Memory Search: ...")
+  const prefixMatch = text.match(/^[\p{Emoji}\p{Emoji_Presentation}\uFE0F\s]+(?:[A-Za-z_ ]+:\s*)?/u);
+  let toolType = "";
+  if (prefixMatch) {
+    const typeMatch = prefixMatch[0].match(/([A-Za-z_ ]+):/);
+    if (typeMatch) {
+      // "Memory Search" → "memory_search", "Web Fetch" → "web_fetch", "Exec" → "exec"
+      toolType = typeMatch[1].trim().toLowerCase().replace(/\s+/g, "_");
+    }
+    text = text.slice(prefixMatch[0].length).trim();
+  }
+
+  // Remove trailing "(in ~/...)" location hints.
+  text = text.replace(/\s*\(in [^)]+\)\s*$/, "");
+
+  // Shorten paths: ~/Projects/openclaw/src/web/foo.ts → foo.ts, ~/bob/TOOLS.md → TOOLS.md
+  text = text.replace(
+    /~\/[A-Za-z0-9_./-]+/g,
+    (match) => {
+      const parts = match.split("/");
+      if (parts.length <= 2) return match;
+      const last = parts[parts.length - 1];
+      return last.includes(".") ? last : parts.slice(-2).join("/");
+    },
+  );
+
+  // Collapse verbose exec chain verbs.
+  text = text
+    .replace(/\bprint text(?:\s*→\s*)?/g, "")
+    .replace(/\brun\s+/g, "")
+    .replace(/\bview\s+/gi, "")
+    .replace(/\bdate(?:\s*→\s*)?/g, "")
+    .replace(/\becho\s+\S+(?:\s*→\s*)?/g, "")
+    .replace(/\bsleep\s+\S+(?:\s*→\s*)?/g, "")
+    .replace(/\bshow last \d+ lines?/g, "")
+    .replace(/\bshow first \d+ lines?/g, "")
+    .replace(/→\s*→/g, "→")
+    .replace(/^\s*→\s*/, "")
+    .replace(/\s*→\s*$/, "")
+    .trim();
+
+  // Pick emoji based on tool type and command content.
+  let emoji = "🧩";
+  if (toolType === "exec" || toolType === "bash") {
+    if (/\blaunchctl|systemctl|restart|kill\b/.test(text)) emoji = "⚙️";
+    else if (/\bgit\b/.test(text)) emoji = "📦";
+    else if (/\bnpm|build|make\b/.test(text)) emoji = "🔨";
+    else if (/\bgrep|search|find\b/.test(text)) emoji = "🔍";
+    else if (/\bpython|node|bun\b/.test(text)) emoji = "🐍";
+    else if (/\bcat|head|tail|sed|awk\b/.test(text)) emoji = "📄";
+    else emoji = "🛠️";
+  } else if (toolType === "read") emoji = "📂";
+  else if (toolType === "write" || toolType === "edit") emoji = "✏️";
+  else if (toolType === "web_search" || toolType === "web_fetch") emoji = "🌐";
+  else if (toolType === "memory_search" || toolType === "memory_get") emoji = "🧠";
+  else if (toolType === "image") emoji = "🖼️";
+  else if (toolType === "message") emoji = "💬";
+
+  // Extract duration suffix (e.g. "(0.1s)") to reposition at end.
+  let durationSuffix = "";
+  const durMatch = text.match(/\s*\((\d+\.\d+s|\?)\)/);
+  if (durMatch) {
+    durationSuffix = " " + durMatch[0].trim();
+    text = text.replace(durMatch[0], "").trim();
+  }
+
+  // Extract error/result info suffixes.
+  let resultSuffix = "";
+  const resMatch = text.match(/\s*(\[(?:qmd|local)\]\s*→\s*\d+ results?)\s*/i);
+  if (resMatch) {
+    resultSuffix = " " + resMatch[1].trim();
+    text = text.replace(resMatch[0], "").trim();
+  }
+  const errMatch = text.match(/\s*❌\s*/);
+  if (errMatch) {
+    resultSuffix = " ❌" + resultSuffix;
+    text = text.replace(errMatch[0], "").trim();
+  }
+
+  // Clean up Read tool: "first N lines of FILE" → "FILE (1-N)"
+  if (toolType === "read") {
+    const readMatch = text.match(/^first (\d+) lines of (.+)/i);
+    if (readMatch) {
+      text = readMatch[2] + " (1-" + readMatch[1] + ")";
+    }
+    const rangeMatch = text.match(/^lines? (\d+)[-–](\d+) of (.+)/i);
+    if (rangeMatch) {
+      text = rangeMatch[3] + " (" + rangeMatch[1] + "-" + rangeMatch[2] + ")";
+    }
+  }
+
+  if (text.length > 80) text = text.slice(0, 77) + "...";
+
+  // Append result info and duration at the end.
+  const suffix = resultSuffix + durationSuffix;
+
+  return text ? emoji + " " + text + suffix : firstLine.slice(0, 80);
+}
+
 export async function dispatchReplyFromConfig(params: {
   ctx: FinalizedMsgContext;
   cfg: OpenClawConfig;
@@ -441,10 +546,14 @@ export async function dispatchReplyFromConfig(params: {
             if (!deliveryPayload) {
               return;
             }
+            // Format tool narration for messaging channels: clean one-liner with emoji.
+            const formattedPayload = deliveryPayload.text
+              ? { ...deliveryPayload, text: formatToolNarrationForChannel(deliveryPayload.text) }
+              : deliveryPayload;
             if (shouldRouteToOriginating) {
-              await sendPayloadAsync(deliveryPayload, undefined, false);
+              await sendPayloadAsync(formattedPayload, undefined, false);
             } else {
-              dispatcher.sendToolResult(deliveryPayload);
+              dispatcher.sendToolResult(formattedPayload);
             }
           };
           return run();

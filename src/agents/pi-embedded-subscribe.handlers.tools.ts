@@ -231,7 +231,10 @@ export async function handleToolExecutionStart(
     !ctx.state.toolSummaryById.has(toolCallId)
   ) {
     ctx.state.toolSummaryById.add(toolCallId);
-    ctx.emitToolSummary(toolName, meta);
+    // In "light" mode, defer narration to tool END (where duration is available).
+    if (!ctx.isLightVerbose?.()) {
+      ctx.emitToolSummary(toolName, meta);
+    }
   }
 
   // Track messaging tool sends (pending until confirmed in tool_execution_end).
@@ -410,6 +413,14 @@ export async function handleToolExecutionEnd(
   );
 
   emitToolResultOutput({ ctx, toolName, meta, isToolError, result, sanitizedResult });
+
+  // Light mode: emit end-of-tool narration with duration.
+  if (ctx.isLightVerbose?.() && ctx.params.onToolResult) {
+    const durationMs = startData?.startTime != null ? Date.now() - startData.startTime : undefined;
+    const durationStr = durationMs != null ? ` (${(durationMs / 1000).toFixed(1)}s)` : " (?)";
+    const errorStr = isToolError ? " ❌" : "";
+    ctx.emitToolEndSummary?.(toolName, meta, sanitizedResult, durationStr, errorStr);
+  }
 
   // Run after_tool_call plugin hook (fire-and-forget)
   const hookRunnerAfter = ctx.hookRunner ?? getGlobalHookRunner();

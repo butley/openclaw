@@ -305,6 +305,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       : params.verboseLevel === "light" ||
         params.verboseLevel === "on" ||
         params.verboseLevel === "full";
+  const isLightVerbose = () => params.verboseLevel === "light";
   const shouldEmitToolOutput = () =>
     typeof params.shouldEmitToolOutput === "function"
       ? params.shouldEmitToolOutput()
@@ -342,6 +343,33 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       markdown: useMarkdown,
     });
     emitToolResultMessage(toolName, agg);
+  };
+  const emitToolEndSummary = (
+    toolName?: string,
+    meta?: string,
+    result?: unknown,
+    duration?: string,
+    error?: string,
+  ) => {
+    const agg = formatToolAggregate(toolName, meta ? [meta] : undefined, {
+      markdown: useMarkdown,
+    });
+    // Extract result context for enrichment.
+    let resultInfo = "";
+    const name = (toolName ?? "").toLowerCase();
+    if (result && typeof result === "string") {
+      // memory_search: extract provider and result count
+      if (name === "memory_search") {
+        try {
+          const parsed = JSON.parse(result);
+          const provider = parsed.provider ?? "local";
+          const count = Array.isArray(parsed.results) ? parsed.results.length : 0;
+          resultInfo = ` [${provider}] → ${count} result${count !== 1 ? "s" : ""}`;
+        } catch { /* ignore */ }
+      }
+    }
+    const suffix = [error, resultInfo, duration].filter(Boolean).join("");
+    emitToolResultMessage(toolName, suffix ? `${agg}${suffix}` : agg);
   };
   const emitToolOutput = (toolName?: string, meta?: string, output?: string) => {
     if (!output) {
@@ -608,6 +636,8 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     shouldEmitToolResult,
     shouldEmitToolOutput,
     emitToolSummary,
+    emitToolEndSummary,
+    isLightVerbose,
     emitToolOutput,
     stripBlockTags,
     emitBlockChunk,
