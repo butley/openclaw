@@ -131,9 +131,12 @@ function formatToolNarrationForChannel(raw: string): string {
       .replace(/2>&1/g, "")
       .replace(/\s*\(\d+\.\d+s\)/, "")
       .trim();
-    // Take first command in a chain (before && or ;)
-    const chainSplit = text.match(/^([^&;]+)/);
-    if (chainSplit) text = chainSplit[1].trim();
+    // Take first meaningful command in chain (skip leading "cd ...")
+    const chainParts = text.split(/\s*&&\s*|\s*;\s*/).filter(Boolean);
+    if (chainParts.length > 1) {
+      const meaningful = chainParts.find(p => !/^cd\s/.test(p.trim())) || chainParts[chainParts.length - 1];
+      text = meaningful.trim();
+    }
   }
 
   // Remove trailing "(in ~/...)" location hints.
