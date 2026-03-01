@@ -3,7 +3,7 @@ import { listChatCommands, listChatCommandsForConfig } from "../auto-reply/comma
 import { formatThinkingLevels, listThinkingLevelLabels } from "../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../config/types.js";
 
-const VERBOSE_LEVELS = ["on", "off"];
+const VERBOSE_LEVELS = ["on", "off", "light", "full"];
 const REASONING_LEVELS = ["on", "off"];
 const ELEVATED_LEVELS = ["on", "off", "ask", "full"];
 const ACTIVATION_LEVELS = ["mention", "always"];
@@ -78,7 +78,7 @@ export function getSlashCommands(options: SlashCommandOptions = {}): SlashComman
     },
     {
       name: "verbose",
-      description: "Set verbose on/off",
+      description: "Set verbose level (off/light/on/full)",
       getArgumentCompletions: verboseCompletions,
     },
     {
@@ -142,7 +142,7 @@ export function helpText(options: SlashCommandOptions = {}): string {
     "/session <key> (or /sessions)",
     "/model <provider/model> (or /models)",
     `/think <${thinkLevels}>`,
-    "/verbose <on|off>",
+    "/verbose <off|light|on|full>",
     "/reasoning <on|off>",
     "/usage <off|tokens|full>",
     "/elevated <on|off|ask|full>",

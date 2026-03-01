@@ -12,6 +12,7 @@ import {
 } from "../../../auto-reply/reply/history.js";
 import { finalizeInboundContext } from "../../../auto-reply/reply/inbound-context.js";
 import { dispatchReplyWithBufferedBlockDispatcher } from "../../../auto-reply/reply/provider-dispatcher.js";
+import { normalizeStreamLevel } from "../../../auto-reply/thinking.js";
 import type { ReplyPayload } from "../../../auto-reply/types.js";
 import { toLocationContext } from "../../../channels/location.js";
 import { createReplyPrefixOptions } from "../../../channels/reply-prefix.js";
@@ -22,6 +23,7 @@ import {
   recordSessionMetaFromInbound,
   resolveStorePath,
 } from "../../../config/sessions.js";
+import { loadSessionStore } from "../../../config/sessions.js";
 import { logVerbose, shouldLogVerbose } from "../../../globals.js";
 import type { getChildLogger } from "../../../logging.js";
 import { getAgentScopedMediaLocalRoots } from "../../../media/local-roots.js";
@@ -30,7 +32,7 @@ import {
   readStoreAllowFromForDmPolicy,
   resolveDmGroupAccessWithCommandGate,
 } from "../../../security/dm-policy-shared.js";
-import { jidToE164, normalizeE164 } from "../../../utils.js";
+import { jidToE164, normalizeE164, sleep } from "../../../utils.js";
 import { resolveWhatsAppAccount } from "../../accounts.js";
 import { newConnectionId } from "../../reconnect.js";
 import { formatError } from "../../session.js";
@@ -119,6 +121,48 @@ async function resolveWhatsAppCommandAuthorized(params: {
     },
   });
   return access.commandAuthorized;
+}
+
+/** Resolve paragraph delay in ms for a given stream level and text length. */
+function resolveStreamDelayMs(streamLevel: string, charCount: number): number {
+  switch (streamLevel) {
+    case "fast":
+      return Math.max(2000, Math.min(6000, charCount * 20));
+    case "on":
+      return Math.max(4000, Math.min(10000, charCount * 40));
+    case "slow":
+      return Math.max(6000, Math.min(15000, charCount * 70));
+    case "off":
+      return 0;
+    default: {
+      // Support "custom:XX" where XX is ms per character
+      if (streamLevel.startsWith("custom:")) {
+        const msPerChar = parseInt(streamLevel.slice(7), 10);
+        if (!isNaN(msPerChar) && msPerChar > 0) {
+          return Math.max(1000, Math.min(20000, charCount * msPerChar));
+        }
+      }
+      return 0;
+    }
+  }
+}
+
+function readSessionStreamLevel(sessionKey: string, storePath: string): string {
+  try {
+    const store = loadSessionStore(storePath);
+    const entry = store[sessionKey];
+    const raw = entry?.streamLevel;
+    if (!raw) {
+      return "off";
+    }
+    // Already normalized (e.g. "custom:55") — return as-is if valid, otherwise re-normalize.
+    if (raw.startsWith("custom:")) {
+      return raw;
+    }
+    return normalizeStreamLevel(raw) ?? "off";
+  } catch {
+    return "off";
+  }
 }
 
 export async function processMessage(params: {
@@ -371,6 +415,14 @@ export async function processMessage(params: {
     cfg: params.cfg,
     accountId: params.route.accountId,
   });
+
+  // Resolve stream level once for the session — controls delivery behavior.
+  // When stream is "off", override chunkMode to "length" so delivery sends as one message.
+  const sessionStreamLevel = readSessionStreamLevel(params.route.sessionKey, storePath);
+  // When streaming is off, send as one message. When on, use newline splitting in delivery layer.
+  const effectiveChunkMode = sessionStreamLevel === "off" ? ("length" as const) : chunkMode;
+
+  let prevBlockText: string | null = null;
   const { queuedFinal } = await dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload,
     cfg: params.cfg,
@@ -385,12 +437,38 @@ export async function processMessage(params: {
         }
       },
       deliver: async (payload: ReplyPayload, info) => {
-        if (info.kind === "block" && !blockStreamingEnabled) {
+        if (info.kind === "block" && (!blockStreamingEnabled || sessionStreamLevel === "off")) {
           // When block streaming is disabled (default), suppress block payloads
           // so that ACP-backed replies don't leak intermediate text to end users.
           return;
         }
-        if (info.kind !== "final" && info.kind !== "block") {
+        // Pre-delivery reading delay: based on PREVIOUS block length.
+        // First block: no delay (prevBlockText is null). Last block: no trailing delay.
+        // Only runs when block streaming is enabled — otherwise blocks are suppressed above.
+        if (info.kind === "block" && prevBlockText !== null) {
+          const sessionStream = sessionStreamLevel;
+          const readDelayMs = resolveStreamDelayMs(sessionStream, prevBlockText.length);
+          if (readDelayMs > 0) {
+            void params.msg.sendComposing?.();
+            let elapsed = 0;
+            while (elapsed < readDelayMs) {
+              const step = Math.min(3000, readDelayMs - elapsed);
+              await sleep(step);
+              elapsed += step;
+              if (elapsed < readDelayMs) {
+                void params.msg.sendComposing?.();
+              }
+            }
+          }
+        }
+        // Tool narration: format inline mono, suppress code block details.
+        if (info.kind === "tool") {
+          if (payload.text) {
+            const firstLine = payload.text.split("\n\n")[0].trim();
+            payload = { ...payload, text: "`" + firstLine + "`" };
+          }
+        }
+        if (info.kind !== "final" && info.kind !== "block" && info.kind !== "tool") {
           // Only deliver final, block-streaming, and (optionally) tool replies.
           // Reasoning/thinking is for the internal web UI only.
           return;
@@ -401,13 +479,20 @@ export async function processMessage(params: {
           mediaLocalRoots,
           maxMediaBytes: params.maxMediaBytes,
           textLimit,
-          chunkMode,
+          chunkMode: effectiveChunkMode,
+          streamDelayMs:
+            sessionStreamLevel !== "off"
+              ? (chars: number) => resolveStreamDelayMs(sessionStreamLevel, chars)
+              : undefined,
           replyLogger: params.replyLogger,
           connectionId: params.connectionId,
           skipLog: false,
           tableMode,
         });
         didSendReply = true;
+        if (info.kind === "block" && payload.text) {
+          prevBlockText = payload.text;
+        }
         const shouldLog = payload.text ? true : undefined;
         params.rememberSentText(payload.text, {
           combinedBody,
@@ -437,10 +522,15 @@ export async function processMessage(params: {
       onReplyStart: params.msg.sendComposing,
     },
     replyOptions: {
-      disableBlockStreaming: !blockStreamingEnabled,
+      disableBlockStreaming: !blockStreamingEnabled || sessionStreamLevel === "off",
       onModelSelected,
     },
   });
+
+  // Clear typing indicator after all deliveries complete.
+  if (queuedFinal) {
+    await params.msg.sendAvailable?.();
+  }
 
   if (!queuedFinal) {
     if (shouldClearGroupHistory) {

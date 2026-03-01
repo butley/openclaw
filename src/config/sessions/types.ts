@@ -95,6 +95,7 @@ export type SessionEntry = {
   chatType?: SessionChatType;
   thinkingLevel?: string;
   verboseLevel?: string;
+  streamLevel?: string;
   reasoningLevel?: string;
   elevatedLevel?: string;
   ttsAuto?: TtsAutoMode;

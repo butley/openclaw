@@ -5,8 +5,10 @@ import {
   normalizeElevatedLevel,
   normalizeNoticeLevel,
   normalizeReasoningLevel,
+  normalizeStreamLevel,
   normalizeThinkLevel,
   normalizeVerboseLevel,
+  type StreamLevel,
   type ThinkLevel,
   type VerboseLevel,
 } from "../thinking.js";
@@ -40,7 +42,7 @@ const matchLevelDirective = (
     }
   }
   const argStart = i;
-  while (i < body.length && /[A-Za-z-]/.test(body[i])) {
+  while (i < body.length && /[A-Za-z0-9-]/.test(body[i])) {
     i += 1;
   }
   const rawLevel = i > argStart ? body.slice(argStart, i) : undefined;
@@ -101,6 +103,21 @@ export function extractThinkDirective(body?: string): {
   return {
     cleaned: extracted.cleaned,
     thinkLevel: extracted.level,
+    rawLevel: extracted.rawLevel,
+    hasDirective: extracted.hasDirective,
+  };
+}
+
+export function extractStreamDirective(body?: string): {
+  cleaned: string;
+  streamLevel?: StreamLevel;
+  rawLevel?: string;
+  hasDirective: boolean;
+} {
+  const extracted = extractLevelDirective(body ?? "", ["stream", "str"], normalizeStreamLevel);
+  return {
+    cleaned: extracted.cleaned,
+    streamLevel: extracted.level,
     rawLevel: extracted.rawLevel,
     hasDirective: extracted.hasDirective,
   };
@@ -188,5 +205,5 @@ export function extractStatusDirective(body?: string): {
   return extractSimpleDirective(body, ["status"]);
 }
 
-export type { ElevatedLevel, NoticeLevel, ReasoningLevel, ThinkLevel, VerboseLevel };
+export type { ElevatedLevel, NoticeLevel, ReasoningLevel, StreamLevel, ThinkLevel, VerboseLevel };
 export { extractExecDirective } from "./exec/directive.js";

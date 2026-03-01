@@ -380,13 +380,29 @@ export async function handleDirectiveOnly(
         : `Thinking level set to ${directives.thinkLevel}.`,
     );
   }
+  if (directives.hasStreamDirective && directives.streamLevel) {
+    const streamAcks: Record<string, string> = {
+      off: "Paragraph streaming disabled.",
+      fast: "Paragraph streaming: fast (20ms/char).",
+      on: "Paragraph streaming: normal (40ms/char).",
+      slow: "Paragraph streaming: slow (70ms/char).",
+    };
+    let streamAck = streamAcks[directives.streamLevel];
+    if (!streamAck && directives.streamLevel.startsWith("custom:")) {
+      const ms = directives.streamLevel.slice(7);
+      streamAck = `Paragraph streaming: custom (${ms}ms/char).`;
+    }
+    parts.push(formatDirectiveAck(streamAck ?? "Paragraph streaming updated."));
+  }
   if (directives.hasVerboseDirective && directives.verboseLevel) {
     parts.push(
       directives.verboseLevel === "off"
         ? formatDirectiveAck("Verbose logging disabled.")
         : directives.verboseLevel === "full"
           ? formatDirectiveAck("Verbose logging set to full.")
-          : formatDirectiveAck("Verbose logging enabled."),
+          : directives.verboseLevel === "light"
+            ? formatDirectiveAck("Tool narration enabled (light mode).")
+            : formatDirectiveAck("Verbose logging enabled."),
     );
   }
   if (directives.hasReasoningDirective && directives.reasoningLevel) {

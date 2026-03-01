@@ -544,7 +544,13 @@ export function buildStatusMessage(args: StatusArgs): string {
   const queueMode = args.queue?.mode ?? "unknown";
   const queueDetails = formatQueueDetails(args.queue);
   const verboseLabel =
-    verboseLevel === "full" ? "verbose:full" : verboseLevel === "on" ? "verbose" : null;
+    verboseLevel === "full"
+      ? "verbose:full"
+      : verboseLevel === "on"
+        ? "verbose"
+        : verboseLevel === "light"
+          ? "verbose:light"
+          : null;
   const elevatedLabel =
     elevatedLevel && elevatedLevel !== "off"
       ? elevatedLevel === "on"
@@ -781,7 +787,7 @@ export function buildHelpMessage(cfg?: OpenClawConfig): string {
   lines.push("  /new  |  /reset  |  /compact [instructions]  |  /stop");
   lines.push("");
 
-  const optionParts = ["/think <level>", "/model <id>", "/verbose on|off"];
+  const optionParts = ["/think <level>", "/model <id>", "/verbose off|light|on|full"];
   if (isCommandFlagEnabled(cfg, "config")) {
     optionParts.push("/config");
   }
