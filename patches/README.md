@@ -1,11 +1,10 @@
 # Custom Patches — butley/openclaw
 
-14 custom patches on top of upstream openclaw/openclaw.
+13 custom patches on top of upstream openclaw/openclaw.
 
 ## Patch Registry
 
 | # | Name | Dir | Scope | Verify |
-| 1 | Opus TTS | `wa-opus/` | WA | `grep -q "opus" src/web/outbound.ts` |
 | 2 | Brazil JID Resolution | `brazil-jid-resolution/` | WA | `grep -q "resolveJidWithBrazil" src/web/outbound.ts` |
 | 3 | Audio Transcript Hook | `audio-transcript-hook/` | Shared | `grep -q "🎤" src/auto-reply/reply/get-reply.ts` |
 | 4 | Chat Mirror | `chat-mirror/` | Gateway | `grep -rq "mirror" src/gateway/server-chat.ts` |

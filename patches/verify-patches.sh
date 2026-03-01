@@ -25,7 +25,6 @@ check() {
   fi
 }
 
-check "1. Opus TTS"           "grep -q 'opus' src/web/outbound.ts"
 check "2. Brazil JID"         "grep -q 'resolveJidWithBrazil' src/web/outbound.ts"
 check "3. Audio Transcript"   "grep -q '🎤' src/auto-reply/reply/get-reply.ts"
 check "4. Chat Mirror"        "grep -rq 'mirror' src/gateway/server-chat.ts"
