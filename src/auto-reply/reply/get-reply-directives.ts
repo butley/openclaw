@@ -355,10 +355,6 @@ export async function resolveReplyDirectives(params: {
     directives.verboseLevel ??
     (sessionEntry?.verboseLevel as VerboseLevel | undefined) ??
     (agentCfg?.verboseDefault as VerboseLevel | undefined);
-  const _resolvedStreamLevel: StreamLevel =
-    directives.streamLevel ??
-    (sessionEntry?.streamLevel as StreamLevel | undefined) ??
-    ("off" as StreamLevel);
   let resolvedReasoningLevel: ReasoningLevel =
     directives.reasoningLevel ??
     (sessionEntry?.reasoningLevel as ReasoningLevel | undefined) ??

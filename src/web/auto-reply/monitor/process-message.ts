@@ -446,7 +446,7 @@ export async function processMessage(params: {
         // First block: no delay (prevBlockText is null). Last block: no trailing delay.
         // Only runs when block streaming is enabled — otherwise blocks are suppressed above.
         if (info.kind === "block" && prevBlockText !== null) {
-          const sessionStream = readSessionStreamLevel(params.route.sessionKey, storePath);
+          const sessionStream = sessionStreamLevel;
           const readDelayMs = resolveStreamDelayMs(sessionStream, prevBlockText.length);
           if (readDelayMs > 0) {
             void params.msg.sendComposing?.();
