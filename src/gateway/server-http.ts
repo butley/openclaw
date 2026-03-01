@@ -514,6 +514,47 @@ export function createGatewayHttpServer(opts: {
       if (await handleHooksRequest(req, res)) {
         return;
       }
+      // Serve TTS audio files via GET /media/{filename}
+      if (req.method === "GET" && requestPath.startsWith("/media/")) {
+        const filename = requestPath.slice("/media/".length);
+        // Security: only allow simple filenames (no path traversal)
+        if (filename && /^[\w.-]+$/.test(filename)) {
+          const fs = await import("node:fs");
+          const path = await import("node:path");
+          const os = await import("node:os");
+          const tmpDir = os.tmpdir();
+          // Search for the file in any TTS output directory
+          const ttsBaseDir = path.join(tmpDir, "openclaw");
+          try {
+            const entries = fs.readdirSync(ttsBaseDir);
+            for (const entry of entries) {
+              if (!entry.startsWith("tts-")) continue;
+              const filePath = path.join(ttsBaseDir, entry, filename);
+              if (fs.existsSync(filePath)) {
+                const stat = fs.statSync(filePath);
+                const ext = path.extname(filename).toLowerCase();
+                const mimeMap: Record<string, string> = {
+                  ".mp3": "audio/mpeg",
+                  ".ogg": "audio/ogg",
+                  ".opus": "audio/opus",
+                  ".wav": "audio/wav",
+                  ".webm": "audio/webm",
+                };
+                res.setHeader("Content-Type", mimeMap[ext] ?? "application/octet-stream");
+                res.setHeader("Content-Length", stat.size);
+                res.setHeader("Cache-Control", "public, max-age=86400");
+                fs.createReadStream(filePath).pipe(res);
+                return;
+              }
+            }
+          } catch {
+            // ttsBaseDir doesn't exist or not readable — fall through to 404
+          }
+        }
+        res.statusCode = 404;
+        res.end("Not Found");
+        return;
+      }
       if (
         await handleToolsInvokeHttpRequest(req, res, {
           auth: resolvedAuth,

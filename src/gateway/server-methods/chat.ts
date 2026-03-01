@@ -883,12 +883,21 @@ export const chatHandlers: GatewayRequestHandlers = {
         channel: INTERNAL_MESSAGE_CHANNEL,
       });
       const finalReplyParts: string[] = [];
+      const collectedMediaUrls: string[] = [];
       const dispatcher = createReplyDispatcher({
         ...prefixOptions,
         onError: (err) => {
           context.logGateway.warn(`webchat dispatch failed: ${formatForLog(err)}`);
         },
         deliver: async (payload, info) => {
+          // Capture media URLs from tool results (e.g. TTS audio files)
+          if (payload.mediaUrls) {
+            for (const url of payload.mediaUrls) {
+              if (url && !collectedMediaUrls.includes(url)) {
+                collectedMediaUrls.push(url);
+              }
+            }
+          }
           if (info.kind !== "final") {
             return;
           }
@@ -968,6 +977,17 @@ export const chatHandlers: GatewayRequestHandlers = {
                   usage: { input: 0, output: 0, totalTokens: 0 },
                 };
               }
+            }
+            // If TTS audio was generated, extract the filename for the /media/ endpoint
+            // and attach it to the broadcast so the frontend can play it without regeneration.
+            const audioUrls = collectedMediaUrls
+              .filter((u) => /\.(mp3|opus|ogg|wav|webm)$/i.test(u))
+              .map((u) => {
+                const parts = u.split("/");
+                return `/media/${parts[parts.length - 1]}`;
+              });
+            if (audioUrls.length > 0 && message) {
+              (message as Record<string, unknown>).audioUrl = audioUrls[0];
             }
             broadcastChatFinal({
               context,
