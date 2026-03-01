@@ -750,6 +750,28 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
     const rawSessionKey = p.sessionKey;
     const { cfg, entry, canonicalKey: sessionKey } = loadSessionEntry(rawSessionKey);
+
+    // Transcribe audio attachments via tools.media.audio pipeline (e.g. ElevenLabs Scribe)
+    // and replace the body with the transcript so the agent receives text, not a file path.
+    if (parsedAudioPaths.length > 0 && !parsedMessage) {
+      try {
+        const { transcribeFirstAudio } = await import("../../media-understanding/audio-preflight.js");
+        const audioCtx = {
+          MediaPath: parsedAudioPaths[0],
+          MediaPaths: parsedAudioPaths,
+          MediaUrl: parsedAudioPaths[0],
+          MediaUrls: parsedAudioPaths,
+          MediaTypes: ["audio/webm"],
+        };
+        const transcript = await transcribeFirstAudio({ ctx: audioCtx, cfg });
+        if (transcript) {
+          parsedMessage = transcript;
+        }
+      } catch (err) {
+        context.logGateway.warn(`chat.send: audio transcription failed: ${String(err)}`);
+      }
+    }
+
     const timeoutMs = resolveAgentTimeoutMs({
       cfg,
       overrideMs: p.timeoutMs,
