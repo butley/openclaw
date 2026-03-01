@@ -103,3 +103,19 @@ Stream level is stored per-session in `sessions.json` as `streamLevel` field. Va
 - [ ] Per-group stream level overrides
 - [ ] Upstream PR (clean version without fork-specific code)
 - [ ] Agent-to-agent bypass (skip delays when bot @mentions another agent)
+
+## Upstream Block Streaming Override
+
+**Upstream behavior:** `disableBlockStreaming: true` (hardcoded in `process-message.ts`) — block streaming is always OFF for WhatsApp.
+
+**Fork behavior:** `disableBlockStreaming: !blockStreamingEnabled || sessionStreamLevel === "off"`
+
+| Condition | `disableBlockStreaming` | Effect |
+|-----------|----------------------|--------|
+| `blockStreaming: false` in config | `true` | Same as upstream — blocks suppressed |
+| `blockStreaming: true` + `/str off` | `true` | Same as upstream — blocks suppressed |
+| `blockStreaming: true` + `/str on/fast/slow/custom` | `false` | Block streaming enabled |
+
+When streaming is off, the fork behaves identically to upstream (blocks suppressed, only `final` delivered).
+
+**Note:** Even when block streaming is enabled, the actual paragraph delivery is done by the delivery layer (`deliver-reply.ts`), not by agent runner block events. The block streaming enable/disable mainly affects whether the agent runner emits block events at all — in practice, the text arrives too fast for the block chunker to split meaningfully, so the `final` payload is what gets split by the delivery layer.
