@@ -196,6 +196,20 @@ function formatToolNarrationForChannel(raw: string): string {
   }
   else if (toolType === "image") emoji = "🖼️";
   else if (toolType === "message") emoji = "💬";
+  else if (toolType === "process") emoji = "🧰";
+  else if (toolType === "browser") emoji = "🌐";
+  else if (toolType === "canvas") emoji = "🎨";
+  else if (toolType === "nodes") emoji = "📱";
+  else if (toolType === "cron") emoji = "⏰";
+  else if (toolType === "gateway") emoji = "🔌";
+  else if (toolType === "sessions_spawn") emoji = "🚀";
+  else if (toolType === "subagents") emoji = "🤖";
+  else if (toolType === "session_status") emoji = "📊";
+  else if (toolType === "whatsapp_login") emoji = "🟢";
+  else if (toolType === "sessions_list" || toolType === "sessions_history" || toolType === "sessions_send") emoji = "🗂️";
+  else if (toolType === "agents_list") emoji = "🧭";
+  else if (toolType === "tts") emoji = "🔊";
+  else if (toolType === "apply_patch") emoji = "🩹";
 
   // Extract duration suffix (e.g. "(0.1s)") to reposition at end.
   let durationSuffix = "";
