@@ -17,6 +17,8 @@
 | 9 | QMD Output Limit Fix | `src/memory/qmd-manager.ts`, `src/config/zod-schema.ts` | `grep -q "maxOutputChars" src/memory/qmd-manager.ts` |
 | 10 | Logs Pretty Formatter | `src/cli/logs-cli.ts`, `src/cli/logs-pretty-formatter.ts` (NEW) | `test -f src/cli/logs-pretty-formatter.ts` |
 
+| 13 | Verbose Light | `patches/verbose-light/README.md` | `grep -q '"light"' src/auto-reply/thinking.ts` |
+
 ## Verification
 
 ```bash

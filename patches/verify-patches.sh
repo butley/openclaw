@@ -38,6 +38,8 @@ check "10. Logs Pretty"       "test -f src/cli/logs-pretty-formatter.ts && grep 
 check "12. WA Login Tool Dedup" "grep -q 'natively by OpenClaw' extensions/whatsapp/index.ts"
 check "11. Paragraph Streaming" "grep -q 'streamDelayMs' src/web/auto-reply/deliver-reply.ts && grep -q 'effectiveChunkMode' src/web/auto-reply/monitor/process-message.ts"
 
+check "13. Verbose Light"      "grep -q '\"light\"' src/auto-reply/thinking.ts && grep -q 'verbose:light' src/auto-reply/status.ts"
+
 echo ""
 echo "Results: $pass passed, $fail failed"
 [[ $fail -eq 0 ]] && echo "All patches intact." || echo "⚠ Some patches may be missing. Review before pushing."
