@@ -112,12 +112,12 @@ function formatToolNarrationForChannel(raw: string): string {
   let text = firstLine.replace(/^`+|`+$/g, "").trim();
 
   // Strip upstream emoji prefix and tool label (e.g. "🛠️ Exec: ...", "🧩 Memory Search: ...")
-  const prefixMatch = text.match(/^[\p{Emoji}\p{Emoji_Presentation}\uFE0F\s]+(?:[A-Za-z_ ]+:\s*)?/u);
+  const prefixMatch = text.match(/^[\p{Emoji}\p{Emoji_Presentation}\uFE0F\s]+(?:[A-Za-z_ ]+:?\s*)?/u);
   let toolType = "";
   if (prefixMatch) {
-    const typeMatch = prefixMatch[0].match(/([A-Za-z_ ]+):/);
+    // Try "Label:" first (e.g. "Exec:"), then bare "Label" (e.g. "Message")
+    const typeMatch = prefixMatch[0].match(/([A-Za-z_ ]+):/) || prefixMatch[0].match(/\s([A-Za-z_]{2,})\s*$/);
     if (typeMatch) {
-      // "Memory Search" → "memory_search", "Web Fetch" → "web_fetch", "Exec" → "exec"
       toolType = typeMatch[1].trim().toLowerCase().replace(/\s+/g, "_");
     }
     text = text.slice(prefixMatch[0].length).trim();
