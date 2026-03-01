@@ -29,7 +29,6 @@ check "2. Brazil JID"         "grep -q 'resolveJidWithBrazil' src/web/outbound.t
 check "3. Audio Transcript"   "grep -q '🎤' src/auto-reply/reply/get-reply.ts"
 check "4. Chat Mirror"        "grep -rq 'mirror' src/gateway/server-chat.ts"
 check "5. WS Inbound Push"   "test -f src/infra/inbound-events.ts"
-check "6. TTS Caption"        "grep -q 'caption' src/web/outbound.ts"
 check "7. TUI Dark Theme"    "grep -q '236' src/tui/theme/theme.ts"
 check "8. Status Card"        "grep -q 'padLabel' src/auto-reply/status.ts"
 check "9. QMD Output Limit"  "grep -q 'maxOutputChars' src/memory/qmd-manager.ts"

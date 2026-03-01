@@ -1,6 +1,6 @@
 # Custom Patches — butley/openclaw
 
-13 custom patches on top of upstream openclaw/openclaw.
+12 custom patches on top of upstream openclaw/openclaw.
 
 ## Patch Registry
 
@@ -9,7 +9,6 @@
 | 3 | Audio Transcript Hook | `audio-transcript-hook/` | Shared | `grep -q "🎤" src/auto-reply/reply/get-reply.ts` |
 | 4 | Chat Mirror | `chat-mirror/` | Gateway | `grep -rq "mirror" src/gateway/server-chat.ts` |
 | 5 | WS Inbound Push | `message-inbound-push/` | Infra | `test -f src/infra/inbound-events.ts` |
-| 6 | TTS Caption Logging | `tts-caption/` | WA | `grep -q "caption" src/web/outbound.ts` |
 | 7 | TUI Dark Theme | `tui-dark-theme/` | TUI | `grep -q "236" src/tui/theme/theme.ts` |
 | 8 | Status Card Redesign | `status-card/` | Shared | `grep -q "padLabel" src/auto-reply/status.ts` |
 | 9 | QMD Output Limit Fix | `qmd-output-limit/` | Memory | `grep -q "maxOutputChars" src/memory/qmd-manager.ts` |
