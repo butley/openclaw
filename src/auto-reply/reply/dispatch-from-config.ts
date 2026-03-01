@@ -126,6 +126,7 @@ function formatToolNarrationForChannel(raw: string): string {
   // For exec: prefer actual command from raw when available.
   if ((toolType === "exec" || toolType === "bash") && actualCmd) {
     text = actualCmd
+      .replace(/#[^\n]*/g, "")
       .replace(/-C\s+~?\/[^\s]+\s*/g, "")
       .replace(/2>&1/g, "")
       .replace(/\s*\(\d+\.\d+s\)/, "")
@@ -186,7 +187,7 @@ function formatToolNarrationForChannel(raw: string): string {
   else if (toolType === "write" || toolType === "edit") {
     emoji = "✏️";
     // Clean "in filename (N chars)" → "filename (N chars)"
-    text = text.replace(/^ins+/, "");
+    text = text.replace(/^in\s+/, "");
   }
   else if (toolType === "web_search" || toolType === "web_fetch") emoji = "🌐";
   else if (toolType === "memory_search" || toolType === "memory_get") {
@@ -595,7 +596,7 @@ export async function dispatchReplyFromConfig(params: {
             }
             // Format tool narration for messaging channels: clean one-liner with emoji.
             const formattedPayload = deliveryPayload.text
-              ? (() => { const _raw = deliveryPayload.text; const _fmt = formatToolNarrationForChannel(_raw); console.log("[narration-transform]", JSON.stringify({ raw: _raw, formatted: _fmt })); return { ...deliveryPayload, text: _fmt }; })()
+              ? { ...deliveryPayload, text: formatToolNarrationForChannel(deliveryPayload.text) }
               : deliveryPayload;
             if (shouldRouteToOriginating) {
               await sendPayloadAsync(formattedPayload, undefined, false);

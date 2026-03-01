@@ -415,7 +415,6 @@ export async function handleToolExecutionEnd(
   emitToolResultOutput({ ctx, toolName, meta, isToolError, result, sanitizedResult });
 
   // Light mode: emit end-of-tool narration with duration.
-  ctx.log.debug(`[LIGHT-DEBUG] tool=${toolName} isLightVerbose=${typeof ctx.isLightVerbose} val=${ctx.isLightVerbose?.()} hasOnToolResult=${!!ctx.params.onToolResult} hasDuration=${startData?.startTime != null}`);
   if (ctx.isLightVerbose?.() && ctx.params.onToolResult) {
     const durationMs = startData?.startTime != null ? Date.now() - startData.startTime : undefined;
     const durationStr = durationMs != null ? ` (${(durationMs / 1000).toFixed(1)}s)` : " (?)";
