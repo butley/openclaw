@@ -129,6 +129,8 @@ function formatToolNarrationForChannel(raw: string): string {
       .replace(/#[^\n]*/g, "")
       .replace(/-C\s+~?\/[^\s]+\s*/g, "")
       .replace(/2>&1/g, "")
+      .replace(/2>\/dev\/null/g, "")
+      .replace(/>\/dev\/null/g, "")
       .replace(/\s*\(\d+\.\d+s\)/, "")
       .trim();
     // Truncate heredocs: "cat > file << 'EOF' ..." → "cat > file"
@@ -172,6 +174,8 @@ function formatToolNarrationForChannel(raw: string): string {
     .replace(/\bsleep\s+\S+(?:\s*→\s*)?/g, "")
     .replace(/\bshow last \d+ lines?/g, "")
     .replace(/\bshow first \d+ lines?/g, "")
+    .replace(/2>\/dev\/null/g, "")
+    .replace(/>\/dev\/null/g, "")
     .replace(/->/g, "→")
     .replace(/→\s*→/g, "→")
     .replace(/→\s*(?:first \d+ lines?|last \d+ lines?)/gi, "")
