@@ -357,16 +357,19 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     // Extract result context for enrichment.
     let resultInfo = "";
     const name = (toolName ?? "").toLowerCase();
-    if (result && typeof result === "string") {
-      // memory_search: extract provider and result count
-      if (name === "memory_search") {
-        try {
-          const parsed = JSON.parse(result);
-          const provider = parsed.provider ?? "local";
-          const count = Array.isArray(parsed.results) ? parsed.results.length : 0;
+    // memory_search: extract provider and result count.
+    if (name === "memory_search") {
+      try {
+        const obj = typeof result === "string" ? JSON.parse(result)
+          : (result && typeof result === "object") ? result : null;
+        if (obj) {
+          const o = obj as Record<string, unknown>;
+          const provider = o.provider ?? "local";
+          const results = o.results;
+          const count = Array.isArray(results) ? results.length : 0;
           resultInfo = ` [${provider}] → ${count} result${count !== 1 ? "s" : ""}`;
-        } catch { /* ignore */ }
-      }
+        }
+      } catch { /* ignore */ }
     }
     const suffix = [error, resultInfo, duration].filter(Boolean).join("");
     emitToolResultMessage(toolName, suffix ? `${agg}${suffix}` : agg);

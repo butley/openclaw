@@ -95,6 +95,19 @@ export type DispatchFromConfigResult = {
 
 /** Reformat upstream verbose tool narration into clean one-liner for messaging channels. */
 function formatToolNarrationForChannel(raw: string): string {
+  // Extract duration from ANYWHERE in the raw text before truncating to first line.
+  let rawDuration = "";
+  const rawDurMatch = raw.match(/\((\d+\.\d+s|\?)\)/);
+  if (rawDurMatch) rawDuration = " " + rawDurMatch[0];
+
+  // Extract actual command from second paragraph (after \n\n).
+  let actualCmd = "";
+  const paragraphs = raw.split("\n\n");
+  if (paragraphs.length > 1) {
+    const cmdMatch = paragraphs.slice(1).join(" ").match(/\`([^\`]+)\`/);
+    if (cmdMatch) actualCmd = cmdMatch[1].trim();
+  }
+
   const firstLine = raw.split("\n\n")[0].split("\n")[0].trim();
   let text = firstLine.replace(/^`+|`+$/g, "").trim();
 
@@ -108,6 +121,18 @@ function formatToolNarrationForChannel(raw: string): string {
       toolType = typeMatch[1].trim().toLowerCase().replace(/\s+/g, "_");
     }
     text = text.slice(prefixMatch[0].length).trim();
+  }
+
+  // For exec: prefer actual command from raw when available.
+  if ((toolType === "exec" || toolType === "bash") && actualCmd) {
+    text = actualCmd
+      .replace(/-C\s+~?\/[^\s]+\s*/g, "")
+      .replace(/2>&1/g, "")
+      .replace(/\s*\(\d+\.\d+s\)/, "")
+      .trim();
+    // Take first command in a chain (before && or ;)
+    const chainSplit = text.match(/^([^&;]+)/);
+    if (chainSplit) text = chainSplit[1].trim();
   }
 
   // Remove trailing "(in ~/...)" location hints.
@@ -124,6 +149,11 @@ function formatToolNarrationForChannel(raw: string): string {
     },
   );
 
+  // Shorten known verbose commands.
+  text = text
+    .replace(/launchctl list \S+/g, "launchctl list")
+    .replace(/systemctl \S+ (\S+)\.service/g, "systemctl $1");
+
   // Collapse verbose exec chain verbs.
   text = text
     .replace(/\bprint text(?:\s*→\s*)?/g, "")
@@ -134,9 +164,12 @@ function formatToolNarrationForChannel(raw: string): string {
     .replace(/\bsleep\s+\S+(?:\s*→\s*)?/g, "")
     .replace(/\bshow last \d+ lines?/g, "")
     .replace(/\bshow first \d+ lines?/g, "")
+    .replace(/->/g, "→")
     .replace(/→\s*→/g, "→")
+    .replace(/→\s*(?:first \d+ lines?|last \d+ lines?)/gi, "")
     .replace(/^\s*→\s*/, "")
     .replace(/\s*→\s*$/, "")
+    .replace(/\(\+\d+ steps?\)/g, "")
     .trim();
 
   // Pick emoji based on tool type and command content.
@@ -150,9 +183,16 @@ function formatToolNarrationForChannel(raw: string): string {
     else if (/\bcat|head|tail|sed|awk\b/.test(text)) emoji = "📄";
     else emoji = "🛠️";
   } else if (toolType === "read") emoji = "📂";
-  else if (toolType === "write" || toolType === "edit") emoji = "✏️";
+  else if (toolType === "write" || toolType === "edit") {
+    emoji = "✏️";
+    // Clean "in filename (N chars)" → "filename (N chars)"
+    text = text.replace(/^ins+/, "");
+  }
   else if (toolType === "web_search" || toolType === "web_fetch") emoji = "🌐";
-  else if (toolType === "memory_search" || toolType === "memory_get") emoji = "🧠";
+  else if (toolType === "memory_search" || toolType === "memory_get") {
+    emoji = "🧠";
+    if (!text.startsWith('"')) text = '"' + text + '"';
+  }
   else if (toolType === "image") emoji = "🖼️";
   else if (toolType === "message") emoji = "💬";
 
@@ -162,6 +202,8 @@ function formatToolNarrationForChannel(raw: string): string {
   if (durMatch) {
     durationSuffix = " " + durMatch[0].trim();
     text = text.replace(durMatch[0], "").trim();
+  } else if (rawDuration) {
+    durationSuffix = rawDuration;
   }
 
   // Extract error/result info suffixes.
@@ -189,6 +231,11 @@ function formatToolNarrationForChannel(raw: string): string {
     }
   }
 
+  // For exec chains, take first meaningful command
+  if ((toolType === "exec" || toolType === "bash") && /&&|;/.test(text)) {
+    const first = text.split(/\s*&&\s*|\s*;\s*/)[0].trim();
+    if (first.length > 5) text = first;
+  }
   if (text.length > 80) text = text.slice(0, 77) + "...";
 
   // Append result info and duration at the end.
@@ -548,7 +595,7 @@ export async function dispatchReplyFromConfig(params: {
             }
             // Format tool narration for messaging channels: clean one-liner with emoji.
             const formattedPayload = deliveryPayload.text
-              ? { ...deliveryPayload, text: formatToolNarrationForChannel(deliveryPayload.text) }
+              ? (() => { const _raw = deliveryPayload.text; const _fmt = formatToolNarrationForChannel(_raw); console.log("[narration-transform]", JSON.stringify({ raw: _raw, formatted: _fmt })); return { ...deliveryPayload, text: _fmt }; })()
               : deliveryPayload;
             if (shouldRouteToOriginating) {
               await sendPayloadAsync(formattedPayload, undefined, false);
