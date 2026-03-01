@@ -1,6 +1,6 @@
 # Custom Patches — butley/openclaw
 
-10 custom patches on top of upstream openclaw/openclaw.
+11 custom patches on top of upstream openclaw/openclaw.
 
 ## Patch Registry
 
@@ -16,6 +16,8 @@
 | 8 | Status Card Redesign | `src/auto-reply/status.ts` | `grep -q "padLabel" src/auto-reply/status.ts` |
 | 9 | QMD Output Limit Fix | `src/memory/qmd-manager.ts`, `src/config/zod-schema.ts` | `grep -q "maxOutputChars" src/memory/qmd-manager.ts` |
 | 10 | Logs Pretty Formatter | `src/cli/logs-cli.ts`, `src/cli/logs-pretty-formatter.ts` (NEW) | `test -f src/cli/logs-pretty-formatter.ts` |
+
+| 11 | Streaming + /stream Command | `src/web/auto-reply/deliver-reply.ts`, `src/web/auto-reply/monitor/process-message.ts`, +15 files | `grep -q "streamDelayMs" src/web/auto-reply/deliver-reply.ts` |
 
 ## Verification
 

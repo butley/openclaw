@@ -37,6 +37,7 @@ check "8. Status Card"        "grep -q 'padLabel' src/auto-reply/status.ts"
 check "9. QMD Output Limit"  "grep -q 'maxOutputChars' src/memory/qmd-manager.ts"
 check "10. Logs Pretty"       "test -f src/cli/logs-pretty-formatter.ts && grep -q 'pretty' src/cli/logs-cli.ts"
 check "12. WA Login Tool Dedup" "grep -q 'natively by OpenClaw' extensions/whatsapp/index.ts"
+check "11. Streaming + /stream" "grep -q 'streamDelayMs' src/web/auto-reply/deliver-reply.ts && grep -q 'effectiveChunkMode' src/web/auto-reply/monitor/process-message.ts"
 
 echo ""
 echo "Results: $pass passed, $fail failed"
