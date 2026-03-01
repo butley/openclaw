@@ -9,6 +9,7 @@ import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.j
 import type { MsgContext } from "../../auto-reply/templating.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
 import { resolveSessionFilePath } from "../../config/sessions.js";
+import { saveMediaBuffer } from "../../media/store.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import {
   stripInlineDirectiveTagsForDisplay,
@@ -23,7 +24,11 @@ import {
   isChatStopCommandText,
   resolveChatRunExpiresAtMs,
 } from "../chat-abort.js";
-import { type ChatImageContent, parseMessageWithAttachments } from "../chat-attachments.js";
+import {
+  extractAudioAttachments,
+  type ChatImageContent,
+  parseMessageWithAttachments,
+} from "../chat-attachments.js";
 import { stripEnvelopeFromMessage, stripEnvelopeFromMessages } from "../chat-sanitize.js";
 import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
 import {
@@ -719,6 +724,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
     let parsedMessage = inboundMessage;
     let parsedImages: ChatImageContent[] = [];
+    let parsedAudioPaths: string[] = [];
     if (normalizedAttachments.length > 0) {
       try {
         const parsed = await parseMessageWithAttachments(inboundMessage, normalizedAttachments, {
@@ -727,6 +733,16 @@ export const chatHandlers: GatewayRequestHandlers = {
         });
         parsedMessage = parsed.message;
         parsedImages = parsed.images;
+
+        const audio = await extractAudioAttachments(normalizedAttachments, {
+          maxBytes: 20_000_000,
+          log: context.logGateway,
+        });
+        for (const item of audio) {
+          const buffer = Buffer.from(item.data, "base64");
+          const saved = await saveMediaBuffer(buffer, item.mimeType, "inbound", 20_000_000, item.fileName);
+          parsedAudioPaths.push(saved.path);
+        }
       } catch (err) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, String(err)));
         return;
@@ -829,6 +845,10 @@ export const chatHandlers: GatewayRequestHandlers = {
         SenderName: clientInfo?.displayName,
         SenderUsername: clientInfo?.displayName,
         GatewayClientScopes: client?.connect?.scopes,
+        MediaPath: parsedAudioPaths[0],
+        MediaUrl: parsedAudioPaths[0],
+        MediaPaths: parsedAudioPaths.length > 0 ? parsedAudioPaths : undefined,
+        MediaUrls: parsedAudioPaths.length > 0 ? parsedAudioPaths : undefined,
       };
 
       const agentId = resolveSessionAgentId({
