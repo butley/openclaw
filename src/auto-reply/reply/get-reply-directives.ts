@@ -7,7 +7,13 @@ import type { SessionEntry } from "../../config/sessions.js";
 import { listChatCommands, shouldHandleTextCommands } from "../commands-registry.js";
 import { listSkillCommandsForWorkspace } from "../skill-commands.js";
 import type { MsgContext, TemplateContext } from "../templating.js";
-import type { ElevatedLevel, ReasoningLevel, ThinkLevel, VerboseLevel } from "../thinking.js";
+import type {
+  ElevatedLevel,
+  ReasoningLevel,
+  StreamLevel,
+  ThinkLevel,
+  VerboseLevel,
+} from "../thinking.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import { resolveBlockStreamingChunking } from "./block-streaming.js";
 import { buildCommandContext } from "./commands.js";
@@ -227,6 +233,7 @@ export async function resolveReplyDirectives(params: {
   }
   const hasInlineDirective =
     parsedDirectives.hasThinkDirective ||
+    parsedDirectives.hasStreamDirective ||
     parsedDirectives.hasVerboseDirective ||
     parsedDirectives.hasReasoningDirective ||
     parsedDirectives.hasElevatedDirective ||
@@ -259,6 +266,7 @@ export async function resolveReplyDirectives(params: {
     : {
         ...parsedDirectives,
         hasThinkDirective: false,
+        hasStreamDirective: false,
         hasVerboseDirective: false,
         hasReasoningDirective: false,
         hasStatusDirective: false,
@@ -347,6 +355,10 @@ export async function resolveReplyDirectives(params: {
     directives.verboseLevel ??
     (sessionEntry?.verboseLevel as VerboseLevel | undefined) ??
     (agentCfg?.verboseDefault as VerboseLevel | undefined);
+  const _resolvedStreamLevel: StreamLevel =
+    directives.streamLevel ??
+    (sessionEntry?.streamLevel as StreamLevel | undefined) ??
+    ("off" as StreamLevel);
   let resolvedReasoningLevel: ReasoningLevel =
     directives.reasoningLevel ??
     (sessionEntry?.reasoningLevel as ReasoningLevel | undefined) ??

@@ -85,6 +85,10 @@ export async function persistInlineDirectives(params: {
       sessionEntry.thinkingLevel = directives.thinkLevel;
       updated = true;
     }
+    if (directives.hasStreamDirective && directives.streamLevel) {
+      sessionEntry.streamLevel = directives.streamLevel;
+      updated = true;
+    }
     if (directives.hasVerboseDirective && directives.verboseLevel) {
       applyVerboseOverride(sessionEntry, directives.verboseLevel);
       updated = true;

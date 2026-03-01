@@ -302,7 +302,9 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   const shouldEmitToolResult = () =>
     typeof params.shouldEmitToolResult === "function"
       ? params.shouldEmitToolResult()
-      : params.verboseLevel === "on" || params.verboseLevel === "full";
+      : params.verboseLevel === "light" ||
+        params.verboseLevel === "on" ||
+        params.verboseLevel === "full";
   const shouldEmitToolOutput = () =>
     typeof params.shouldEmitToolOutput === "function"
       ? params.shouldEmitToolOutput()

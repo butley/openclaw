@@ -1,5 +1,6 @@
 export type ThinkLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-export type VerboseLevel = "off" | "on" | "full";
+export type VerboseLevel = "off" | "light" | "on" | "full";
+export type StreamLevel = "off" | "fast" | "on" | "slow" | `custom:${number}`;
 export type NoticeLevel = "off" | "on" | "full";
 export type ElevatedLevel = "off" | "on" | "ask" | "full";
 export type ElevatedMode = "off" | "ask" | "full";
@@ -142,8 +143,37 @@ function normalizeOnOffFullLevel(raw?: string | null): OnOffFullLevel | undefine
   return undefined;
 }
 
+// Normalize stream level for paragraph delivery delay.
+export function normalizeStreamLevel(raw?: string | null): StreamLevel | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  const key = raw.toLowerCase();
+  if (["off", "false", "no", "0"].includes(key)) {
+    return "off";
+  }
+  if (["fast", "quick", "rapid"].includes(key)) {
+    return "fast";
+  }
+  if (["slow", "relaxed"].includes(key)) {
+    return "slow";
+  }
+  if (["on", "true", "yes", "1", "normal", "medium", "default"].includes(key)) {
+    return "on";
+  }
+  // Support numeric ms/char values (e.g. "/stream 35" → "custom:35")
+  const num = parseInt(key, 10);
+  if (!isNaN(num) && num > 0 && num <= 200) {
+    return `custom:${num}` as StreamLevel;
+  }
+  return undefined;
+}
+
 // Normalize verbose flags used to toggle agent verbosity.
 export function normalizeVerboseLevel(raw?: string | null): VerboseLevel | undefined {
+  if (raw && ["light", "narration", "narrate"].includes(raw.toLowerCase())) {
+    return "light";
+  }
   return normalizeOnOffFullLevel(raw);
 }
 
