@@ -189,10 +189,19 @@ function formatToolNarrationForChannel(raw: string): string {
   } else if (toolType === "read") emoji = "📂";
   else if (toolType === "write" || toolType === "edit") {
     emoji = "✏️";
-    // Clean "in filename (N chars)" → "filename (N chars)"
     text = text.replace(/^in\s+/, "");
+    // Strip upstream "(N chars)" — our enrichment adds line/char diff
+    text = text.replace(/\s*\(\d+ chars?\)/, "");
   }
-  else if (toolType === "web_search" || toolType === "web_fetch") emoji = "🌐";
+  else if (toolType === "web_search" || toolType === "web_fetch") {
+    emoji = "🌐";
+    // Clean "for "query" (top N)" → "query"
+    text = text.replace(/^for\s+/, "");
+    if (!text.startsWith('"')) {
+      const qMatch = text.match(/^"[^"]+"/);
+      if (!qMatch) text = '"' + text.replace(/\s*\(top \d+\)/, "") + '"';
+    }
+  }
   else if (toolType === "memory_search" || toolType === "memory_get") {
     emoji = "🧠";
     if (!text.startsWith('"')) text = '"' + text + '"';

@@ -378,10 +378,26 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       } catch { /* ignore */ }
     } else if (name === "web_search") {
       try {
-        const obj = typeof result === "string" ? JSON.parse(result) : result;
-        if (obj && typeof obj === "object") {
-          const o = obj as Record<string, unknown>;
-          const results = Array.isArray(o.results) ? o.results : Array.isArray(o.web) ? o.web : null;
+        // Result is { content: [{ type: "text", text: "<json>" }] } — extract text then parse
+        let parsed: Record<string, unknown> | null = null;
+        if (result && typeof result === "object") {
+          const r = result as Record<string, unknown>;
+          const content = Array.isArray(r.content) ? r.content : null;
+          if (content) {
+            const textBlock = content.find((c: unknown) => c && typeof c === "object" && (c as Record<string, unknown>).type === "text");
+            if (textBlock) {
+              const t = (textBlock as Record<string, unknown>).text;
+              if (typeof t === "string") {
+                try { parsed = JSON.parse(t); } catch { /* not JSON */ }
+              }
+            }
+          }
+          if (!parsed) parsed = r;
+        } else if (typeof result === "string") {
+          parsed = JSON.parse(result);
+        }
+        if (parsed) {
+          const results = Array.isArray(parsed.results) ? parsed.results : Array.isArray(parsed.web) ? parsed.web : null;
           if (results) {
             resultInfo = ` → ${results.length} result${results.length !== 1 ? "s" : ""}`;
           }
