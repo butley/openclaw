@@ -131,6 +131,10 @@ function formatToolNarrationForChannel(raw: string): string {
       .replace(/2>&1/g, "")
       .replace(/\s*\(\d+\.\d+s\)/, "")
       .trim();
+    // Truncate heredocs: "cat > file << 'EOF' ..." → "cat > file"
+    text = text.replace(/(<<-?\s*'?\w+'?).*/, "$1").trim();
+    // Truncate after pipe: "npm run build | tail -3" → "npm run build"
+    text = text.replace(/\s*\|\s*.+$/, "").trim();
     // Take first meaningful command in chain (skip leading "cd ...")
     const chainParts = text.split(/\s*&&\s*|\s*;\s*/).filter(Boolean);
     if (chainParts.length > 1) {
