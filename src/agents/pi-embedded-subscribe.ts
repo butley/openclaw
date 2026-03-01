@@ -372,7 +372,11 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
             const removed = Math.max(0, oldLines - newLines);
             const charDiff = newStr.length - oldStr.length;
             const charStr = charDiff >= 0 ? `+${charDiff}` : `${charDiff}`;
-            resultInfo = ` +${added}/-${removed} lines, ${charStr} chars`;
+            // Only show diff if something actually changed
+            const parts: string[] = [];
+            if (added || removed) parts.push(`+${added}/-${removed} lines`);
+            if (charDiff !== 0) parts.push(`${charStr} chars`);
+            if (parts.length) resultInfo = " " + parts.join(", ");
           }
         }
       } catch { /* ignore */ }

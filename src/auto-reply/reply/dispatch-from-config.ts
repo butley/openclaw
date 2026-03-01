@@ -197,9 +197,10 @@ function formatToolNarrationForChannel(raw: string): string {
     emoji = "🌐";
     // Clean "for "query" (top N)" → "query"
     text = text.replace(/^for\s+/, "");
+    text = text.replace(/\s*\(top \d+\)/, "");
     if (!text.startsWith('"')) {
       const qMatch = text.match(/^"[^"]+"/);
-      if (!qMatch) text = '"' + text.replace(/\s*\(top \d+\)/, "") + '"';
+      if (!qMatch) text = '"' + text + '"';
     }
   }
   else if (toolType === "memory_search" || toolType === "memory_get") {
