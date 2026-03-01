@@ -5,7 +5,6 @@
 ## Patch Registry
 
 | # | Name | Dir | Scope | Verify |
-|---|------|-----|-------|--------|
 | 1 | Opus TTS | `wa-opus/` | WA | `grep -q "opus" src/web/outbound.ts` |
 | 2 | Brazil JID Resolution | `brazil-jid-resolution/` | WA | `grep -q "resolveJidWithBrazil" src/web/outbound.ts` |
 | 3 | Audio Transcript Hook | `audio-transcript-hook/` | Shared | `grep -q "🎤" src/auto-reply/reply/get-reply.ts` |
@@ -21,12 +20,7 @@
 | 13 | Verbose Light | `verbose-light/` | Shared | `grep -q '"light"' src/auto-reply/thinking.ts` |
 | 14 | WA Outbound Mentions | `wa-outbound-mentions/` | WA | `grep -q "processOutboundMentions" src/web/inbound/send-api.ts` |
 
-### Inactive / Historical
 
-| Dir | Status |
-|-----|--------|
-| `baileys-version-pin/` | Reverted — now uses dynamic `fetchLatestBaileysVersion()` |
-| `wa-bold-normalize/` | Superseded by upstream `markdownToWhatsApp()` |
 
 ## Scope Legend
 
