@@ -561,24 +561,30 @@ export const chatHandlers: GatewayRequestHandlers = {
     const max = Math.min(hardMax, requested);
     const sliced = rawMessages.length > max ? rawMessages.slice(-max) : rawMessages;
     const sanitized = stripEnvelopeFromMessages(sliced);
-    const normalized = sanitizeChatHistoryMessages(sanitized);
-    // Propagate audioUrl from toolResult details to the next assistant message
-    // so the webchat frontend can render a play button without regenerating TTS.
+    // Extract audioUrl mapping BEFORE sanitize (which deletes `details`).
+    // Maps message index → audioUrl for assistant messages that follow a TTS toolResult.
+    const audioUrlByIndex = new Map<number, string>();
     {
       let pendingAudioUrl: string | undefined;
-      for (const msg of normalized) {
-        const role = (msg as Record<string, unknown>).role as string | undefined;
-        const details = (msg as Record<string, unknown>).details as
-          | Record<string, unknown>
-          | undefined;
+      for (let i = 0; i < sanitized.length; i++) {
+        const msg = sanitized[i] as Record<string, unknown>;
+        const role = msg.role as string | undefined;
+        const details = msg.details as Record<string, unknown> | undefined;
         if (role === "toolResult" && details?.audioUrl) {
           pendingAudioUrl = details.audioUrl as string;
         } else if (role === "assistant" && pendingAudioUrl) {
-          (msg as Record<string, unknown>).audioUrl = pendingAudioUrl;
+          audioUrlByIndex.set(i, pendingAudioUrl);
           pendingAudioUrl = undefined;
         } else if (role !== "toolResult") {
           pendingAudioUrl = undefined;
         }
+      }
+    }
+    const normalized = sanitizeChatHistoryMessages(sanitized);
+    // Apply audioUrl to the sanitized (normalized) messages.
+    for (const [idx, url] of audioUrlByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).audioUrl = url;
       }
     }
     const maxHistoryBytes = getMaxChatHistoryMessagesBytes();
