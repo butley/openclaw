@@ -374,9 +374,9 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
             const charStr = charDiff >= 0 ? `+${charDiff}` : `${charDiff}`;
             // Only show diff if something actually changed
             const parts: string[] = [];
-            if (added || removed) parts.push(`+${added}/-${removed} lines`);
-            if (charDiff !== 0) parts.push(`${charStr} chars`);
-            if (parts.length) resultInfo = " " + parts.join(", ");
+            if (added || removed) {parts.push(`+${added}/-${removed} lines`);}
+            if (charDiff !== 0) {parts.push(`${charStr} chars`);}
+            if (parts.length) {resultInfo = " " + parts.join(", ");}
           }
         }
       } catch { /* ignore */ }
@@ -396,7 +396,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
               }
             }
           }
-          if (!parsed) parsed = r;
+          if (!parsed) {parsed = r;}
         } else if (typeof result === "string") {
           parsed = JSON.parse(result);
         }
@@ -409,12 +409,27 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       } catch { /* ignore */ }
     } else if (name === "memory_search") {
       try {
-        const obj = typeof result === "string" ? JSON.parse(result)
-          : (result && typeof result === "object") ? result : null;
-        if (obj) {
-          const o = obj as Record<string, unknown>;
-          const provider = o.provider ?? "local";
-          const results = o.results;
+        // Result may be wrapped in { content: [{ type: "text", text: "<json>" }] }
+        let parsed: Record<string, unknown> | null = null;
+        if (result && typeof result === "object") {
+          const r = result as Record<string, unknown>;
+          const content = Array.isArray(r.content) ? r.content : null;
+          if (content) {
+            const textBlock = content.find((c: unknown) => c && typeof c === "object" && (c as Record<string, unknown>).type === "text");
+            if (textBlock) {
+              const t = (textBlock as Record<string, unknown>).text;
+              if (typeof t === "string") {
+                try { parsed = JSON.parse(t); } catch { /* not JSON */ }
+              }
+            }
+          }
+          if (!parsed) {parsed = r;}
+        } else if (typeof result === "string") {
+          try { parsed = JSON.parse(result); } catch { /* ignore */ }
+        }
+        if (parsed) {
+          const provider = String(parsed.provider ?? "local");
+          const results = parsed.results;
           const count = Array.isArray(results) ? results.length : 0;
           resultInfo = ` [${provider}] → ${count} result${count !== 1 ? "s" : ""}`;
         }
