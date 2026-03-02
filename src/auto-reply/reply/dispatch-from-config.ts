@@ -92,31 +92,40 @@ export type DispatchFromConfigResult = {
   counts: Record<ReplyDispatchKind, number>;
 };
 
-
 /** Reformat upstream verbose tool narration into clean one-liner for messaging channels. */
 function formatToolNarrationForChannel(raw: string): string {
   // Extract duration from ANYWHERE in the raw text before truncating to first line.
   let rawDuration = "";
   const rawDurMatch = raw.match(/\((\d+\.\d+s|\?)\)/);
-  if (rawDurMatch) rawDuration = " " + rawDurMatch[0];
+  if (rawDurMatch) {
+    rawDuration = " " + rawDurMatch[0];
+  }
 
   // Extract actual command from second paragraph (after \n\n).
   let actualCmd = "";
   const paragraphs = raw.split("\n\n");
   if (paragraphs.length > 1) {
-    const cmdMatch = paragraphs.slice(1).join(" ").match(/\`([^\`]+)\`/);
-    if (cmdMatch) actualCmd = cmdMatch[1].trim();
+    const cmdMatch = paragraphs
+      .slice(1)
+      .join(" ")
+      .match(/`([^`]+)`/);
+    if (cmdMatch) {
+      actualCmd = cmdMatch[1].trim();
+    }
   }
 
   const firstLine = raw.split("\n\n")[0].split("\n")[0].trim();
   let text = firstLine.replace(/^`+|`+$/g, "").trim();
 
   // Strip upstream emoji prefix and tool label (e.g. "🛠️ Exec: ...", "🧩 Memory Search: ...")
-  const prefixMatch = text.match(/^[\p{Emoji}\p{Emoji_Presentation}\uFE0F\s]+(?:[A-Za-z_ ]+:?\s*)?/u);
+  const prefixMatch = text.match(
+    /^[\p{Emoji}\p{Emoji_Presentation}\uFE0F\s]+(?:[A-Za-z_ ]+:?\s*)?/u,
+  );
   let toolType = "";
   if (prefixMatch) {
     // Try "Label:" first (e.g. "Exec:"), then bare "Label" (e.g. "Message")
-    const typeMatch = prefixMatch[0].match(/([A-Za-z_ ]+):/) || prefixMatch[0].match(/\s([A-Za-z_]{2,})\s*$/);
+    const typeMatch =
+      prefixMatch[0].match(/([A-Za-z_ ]+):/) || prefixMatch[0].match(/\s([A-Za-z_]{2,})\s*$/);
     if (typeMatch) {
       toolType = typeMatch[1].trim().toLowerCase().replace(/\s+/g, "_");
     }
@@ -140,7 +149,8 @@ function formatToolNarrationForChannel(raw: string): string {
     // Take first meaningful command in chain (skip leading "cd ...")
     const chainParts = text.split(/\s*&&\s*|\s*;\s*/).filter(Boolean);
     if (chainParts.length > 1) {
-      const meaningful = chainParts.find(p => !/^cd\s/.test(p.trim())) || chainParts[chainParts.length - 1];
+      const meaningful =
+        chainParts.find((p) => !/^cd\s/.test(p.trim())) || chainParts[chainParts.length - 1];
       text = meaningful.trim();
     }
   }
@@ -149,15 +159,14 @@ function formatToolNarrationForChannel(raw: string): string {
   text = text.replace(/\s*\(in [^)]+\)\s*$/, "");
 
   // Shorten paths: ~/Projects/openclaw/src/web/foo.ts → foo.ts, ~/bob/TOOLS.md → TOOLS.md
-  text = text.replace(
-    /~\/[A-Za-z0-9_./-]+/g,
-    (match) => {
-      const parts = match.split("/");
-      if (parts.length <= 2) return match;
-      const last = parts[parts.length - 1];
-      return last.includes(".") ? last : parts.slice(-2).join("/");
-    },
-  );
+  text = text.replace(/~\/[A-Za-z0-9_./-]+/g, (match) => {
+    const parts = match.split("/");
+    if (parts.length <= 2) {
+      return match;
+    }
+    const last = parts[parts.length - 1];
+    return last.includes(".") ? last : parts.slice(-2).join("/");
+  });
 
   // Shorten known verbose commands.
   text = text
@@ -187,50 +196,81 @@ function formatToolNarrationForChannel(raw: string): string {
   // Pick emoji based on tool type and command content.
   let emoji = "🧩";
   if (toolType === "exec" || toolType === "bash") {
-    if (/\blaunchctl|systemctl|restart|kill\b/.test(text)) emoji = "⚙️";
-    else if (/\bgit\b/.test(text)) emoji = "📦";
-    else if (/\bnpm|build|make\b/.test(text)) emoji = "🔨";
-    else if (/\bgrep|search|find\b/.test(text)) emoji = "🔍";
-    else if (/\bpython|node|bun\b/.test(text)) emoji = "🐍";
-    else if (/\bcat|head|tail|sed|awk\b/.test(text)) emoji = "📄";
-    else emoji = "🛠️";
-  } else if (toolType === "read") emoji = "📂";
-  else if (toolType === "write" || toolType === "edit") {
+    if (/\blaunchctl|systemctl|restart|kill\b/.test(text)) {
+      emoji = "⚙️";
+    } else if (/\bgit\b/.test(text)) {
+      emoji = "📦";
+    } else if (/\bnpm|build|make\b/.test(text)) {
+      emoji = "🔨";
+    } else if (/\bgrep|search|find\b/.test(text)) {
+      emoji = "🔍";
+    } else if (/\bpython|node|bun\b/.test(text)) {
+      emoji = "🐍";
+    } else if (/\bcat|head|tail|sed|awk\b/.test(text)) {
+      emoji = "📄";
+    } else {
+      emoji = "🛠️";
+    }
+  } else if (toolType === "read") {
+    emoji = "📂";
+  } else if (toolType === "write" || toolType === "edit") {
     emoji = "✏️";
     text = text.replace(/^in\s+/, "");
     // Strip upstream "(N chars)" — our enrichment adds line/char diff
     text = text.replace(/\s*\(\d+ chars?\)/, "");
-  }
-  else if (toolType === "web_search" || toolType === "web_fetch") {
+  } else if (toolType === "web_search" || toolType === "web_fetch") {
     emoji = "🌐";
     // Clean "for "query" (top N)" → "query"
     text = text.replace(/^for\s+/, "");
     text = text.replace(/\s*\(top \d+\)/, "");
     if (!text.startsWith('"')) {
       const qMatch = text.match(/^"[^"]+"/);
-      if (!qMatch) text = '"' + text + '"';
+      if (!qMatch) {
+        text = '"' + text + '"';
+      }
     }
-  }
-  else if (toolType === "memory_search" || toolType === "memory_get") {
+  } else if (toolType === "memory_search" || toolType === "memory_get") {
     emoji = "🧠";
-    if (!text.startsWith('"')) text = '"' + text + '"';
+    if (!text.startsWith('"')) {
+      text = '"' + text + '"';
+    }
+  } else if (toolType === "image") {
+    emoji = "🖼️";
+  } else if (toolType === "message") {
+    return "";
+  } else if (toolType === "process") {
+    emoji = "🧰";
+  } else if (toolType === "browser") {
+    emoji = "🌐";
+  } else if (toolType === "canvas") {
+    emoji = "🎨";
+  } else if (toolType === "nodes") {
+    emoji = "📱";
+  } else if (toolType === "cron") {
+    emoji = "⏰";
+  } else if (toolType === "gateway") {
+    emoji = "🔌";
+  } else if (toolType === "sessions_spawn") {
+    emoji = "🚀";
+  } else if (toolType === "subagents") {
+    emoji = "🤖";
+  } else if (toolType === "session_status") {
+    emoji = "📊";
+  } else if (toolType === "whatsapp_login") {
+    emoji = "🟢";
+  } else if (
+    toolType === "sessions_list" ||
+    toolType === "sessions_history" ||
+    toolType === "sessions_send"
+  ) {
+    emoji = "🗂️";
+  } else if (toolType === "agents_list") {
+    emoji = "🧭";
+  } else if (toolType === "tts") {
+    emoji = "🔊";
+  } else if (toolType === "apply_patch") {
+    emoji = "🩹";
   }
-  else if (toolType === "image") emoji = "🖼️";
-  else if (toolType === "message") return "";
-  else if (toolType === "process") emoji = "🧰";
-  else if (toolType === "browser") emoji = "🌐";
-  else if (toolType === "canvas") emoji = "🎨";
-  else if (toolType === "nodes") emoji = "📱";
-  else if (toolType === "cron") emoji = "⏰";
-  else if (toolType === "gateway") emoji = "🔌";
-  else if (toolType === "sessions_spawn") emoji = "🚀";
-  else if (toolType === "subagents") emoji = "🤖";
-  else if (toolType === "session_status") emoji = "📊";
-  else if (toolType === "whatsapp_login") emoji = "🟢";
-  else if (toolType === "sessions_list" || toolType === "sessions_history" || toolType === "sessions_send") emoji = "🗂️";
-  else if (toolType === "agents_list") emoji = "🧭";
-  else if (toolType === "tts") emoji = "🔊";
-  else if (toolType === "apply_patch") emoji = "🩹";
 
   // Extract duration suffix (e.g. "(0.1s)") to reposition at end.
   let durationSuffix = "";
@@ -270,9 +310,13 @@ function formatToolNarrationForChannel(raw: string): string {
   // For exec chains, take first meaningful command
   if ((toolType === "exec" || toolType === "bash") && /&&|;/.test(text)) {
     const first = text.split(/\s*&&\s*|\s*;\s*/)[0].trim();
-    if (first.length > 5) text = first;
+    if (first.length > 5) {
+      text = first;
+    }
   }
-  if (text.length > 80) text = text.slice(0, 77) + "...";
+  if (text.length > 80) {
+    text = text.slice(0, 77) + "...";
+  }
 
   // Append result info and duration at the end.
   const suffix = resultSuffix + durationSuffix;
