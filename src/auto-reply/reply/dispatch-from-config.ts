@@ -577,6 +577,7 @@ export async function dispatchReplyFromConfig(params: {
       originatingTo,
       shouldSendToolSummaries,
       bypassForCommand: bypassAcpForCommand,
+      onReplyStart: params.replyOptions?.onReplyStart,
       recordProcessed,
       markIdle,
     });
