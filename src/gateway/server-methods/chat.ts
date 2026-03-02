@@ -562,6 +562,25 @@ export const chatHandlers: GatewayRequestHandlers = {
     const sliced = rawMessages.length > max ? rawMessages.slice(-max) : rawMessages;
     const sanitized = stripEnvelopeFromMessages(sliced);
     const normalized = sanitizeChatHistoryMessages(sanitized);
+    // Propagate audioUrl from toolResult details to the next assistant message
+    // so the webchat frontend can render a play button without regenerating TTS.
+    {
+      let pendingAudioUrl: string | undefined;
+      for (const msg of normalized) {
+        const role = (msg as Record<string, unknown>).role as string | undefined;
+        const details = (msg as Record<string, unknown>).details as
+          | Record<string, unknown>
+          | undefined;
+        if (role === "toolResult" && details?.audioUrl) {
+          pendingAudioUrl = details.audioUrl as string;
+        } else if (role === "assistant" && pendingAudioUrl) {
+          (msg as Record<string, unknown>).audioUrl = pendingAudioUrl;
+          pendingAudioUrl = undefined;
+        } else if (role !== "toolResult") {
+          pendingAudioUrl = undefined;
+        }
+      }
+    }
     const maxHistoryBytes = getMaxChatHistoryMessagesBytes();
     const perMessageHardCap = Math.min(CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES, maxHistoryBytes);
     const replaced = replaceOversizedChatHistoryMessages({
@@ -1016,6 +1035,28 @@ export const chatHandlers: GatewayRequestHandlers = {
               } catch (mirrorErr) {
                 context.logGateway.warn(`[mirror] error: ${String(mirrorErr)}`);
               }
+            }
+          } else if (collectedMediaUrls.length > 0) {
+            // Agent run handled its own broadcast, but we still need to notify
+            // the frontend about any TTS audio URLs so it can show play buttons.
+            const audioUrls = collectedMediaUrls
+              .filter((u) => /\.(mp3|opus|ogg|wav|webm)$/i.test(u))
+              .map((u) => {
+                const parts = u.split("/");
+                return `/media/${parts[parts.length - 1]}`;
+              });
+            if (audioUrls.length > 0) {
+              const seq = nextChatSeq(
+                { agentRunSeq: context.agentRunSeq },
+                clientRunId,
+              );
+              context.broadcast("chat", {
+                runId: clientRunId,
+                sessionKey: rawSessionKey,
+                seq,
+                state: "audioReady" as const,
+                audioUrl: audioUrls[0],
+              });
             }
           }
           context.dedupe.set(`chat:${clientRunId}`, {
