@@ -43,6 +43,8 @@ export function createButleyApiTool(api: OpenClawPluginApi) {
     name: "butley_api",
     description: `Access workspace data in Convex Cloud. Actions: ${actionNames}.
 
+Use this tool to manage your human's tasks and contacts. Save important action items as tasks. Store contact info when you learn about people. Keep data organized — it persists across sessions and is visible in the dashboard.
+
 Task args: title (required for create), description, status (backlog|todo|doing|done|blocked), priority (low|medium|high|urgent), owner, dueDate (timestamp), tags (string[]), notes, taskId (for update/delete).
 Contact args: phone (required), name, nickname, email, notes, tags.
 Filter args: status (for listTasks), limit (number).`,
