@@ -562,7 +562,8 @@ export const chatHandlers: GatewayRequestHandlers = {
     const sliced = rawMessages.length > max ? rawMessages.slice(-max) : rawMessages;
     const sanitized = stripEnvelopeFromMessages(sliced);
     // Extract audioUrl mapping BEFORE sanitize (which deletes `details`).
-    // Maps message index → audioUrl for assistant messages that follow a TTS toolResult.
+    // Maps message index → audioUrl for the final assistant message after a TTS toolResult.
+    // Skips intermediate assistant messages with stopReason="toolUse" (still in tool-call loop).
     const audioUrlByIndex = new Map<number, string>();
     {
       let pendingAudioUrl: string | undefined;
@@ -571,11 +572,18 @@ export const chatHandlers: GatewayRequestHandlers = {
         const role = msg.role as string | undefined;
         const details = msg.details as Record<string, unknown> | undefined;
         if (role === "toolResult" && details?.audioUrl) {
+          // TTS tool completed — hold the audioUrl until final assistant message
           pendingAudioUrl = details.audioUrl as string;
-        } else if (role === "assistant" && pendingAudioUrl) {
-          audioUrlByIndex.set(i, pendingAudioUrl);
-          pendingAudioUrl = undefined;
-        } else if (role !== "toolResult") {
+        } else if (role === "assistant") {
+          const stopReason = msg.stopReason as string | undefined;
+          if (pendingAudioUrl && stopReason !== "toolUse") {
+            // Final assistant message (stop/end-turn) — attach audioUrl here
+            audioUrlByIndex.set(i, pendingAudioUrl);
+            pendingAudioUrl = undefined;
+          }
+          // If stopReason=toolUse, keep pendingAudioUrl for the next assistant
+        } else if (role === "user") {
+          // User message resets state (new turn)
           pendingAudioUrl = undefined;
         }
       }
