@@ -10,10 +10,42 @@ const ACTIONS: Record<
   string,
   { method: "query" | "mutation"; path: string; requiredArgs?: string[] }
 > = {
+  // Tasks
   listTasks: { method: "query", path: "agentApi:listTasks" },
+  getTask: { method: "query", path: "agentApi:getTask", requiredArgs: ["taskId"] },
   createTask: { method: "mutation", path: "agentApi:createTask", requiredArgs: ["title"] },
   updateTask: { method: "mutation", path: "agentApi:updateTask", requiredArgs: ["taskId"] },
   deleteTask: { method: "mutation", path: "agentApi:deleteTask", requiredArgs: ["taskId"] },
+  // Projects
+  listProjects: { method: "query", path: "agentApi:listProjects" },
+  createProject: { method: "mutation", path: "agentApi:createProject", requiredArgs: ["name"] },
+  updateProject: {
+    method: "mutation",
+    path: "agentApi:updateProject",
+    requiredArgs: ["projectId"],
+  },
+  deleteProject: {
+    method: "mutation",
+    path: "agentApi:deleteProject",
+    requiredArgs: ["projectId"],
+  },
+  // Task Comments
+  listTaskComments: {
+    method: "query",
+    path: "agentApi:listTaskComments",
+    requiredArgs: ["taskId"],
+  },
+  addTaskComment: {
+    method: "mutation",
+    path: "agentApi:addTaskComment",
+    requiredArgs: ["taskId", "body"],
+  },
+  deleteTaskComment: {
+    method: "mutation",
+    path: "agentApi:deleteTaskComment",
+    requiredArgs: ["commentId"],
+  },
+  // Contacts
   listContacts: { method: "query", path: "agentApi:listContacts" },
   findOrCreateContact: {
     method: "mutation",
@@ -43,11 +75,30 @@ export function createButleyApiTool(api: OpenClawPluginApi) {
     name: "butley_api",
     description: `Access workspace data in Convex Cloud. Actions: ${actionNames}.
 
-Use this tool to manage your human's tasks and contacts. Save important action items as tasks. Store contact info when you learn about people. Keep data organized — it persists across sessions and is visible in the dashboard.
+Use this tool to manage tasks, projects, comments, and contacts. Data persists across sessions and is visible in the Butley dashboard.
 
-Task args: title (required for create), description, status (backlog|todo|doing|done|blocked), priority (low|medium|high|urgent), owner, dueDate (timestamp), tags (string[]), notes, taskId (for update/delete).
-Contact args: phone (required), name, nickname, email, notes, tags.
-Filter args: status (for listTasks), limit (number).`,
+## Tasks
+- listTasks: optional filters: status (backlog|todo|doing|done|blocked), projectId, limit
+- getTask: taskId (required)
+- createTask: title (required), description, body (markdown content), status, priority (low|medium|high|urgent), owner, dueDate (timestamp ms), tags (string[]), notes, category, projectId, position
+- updateTask: taskId (required), + any fields above to update
+- deleteTask: taskId (required)
+
+## Projects
+- listProjects: no args
+- createProject: name (required), description, status (active|paused|completed|archived), color (hex)
+- updateProject: projectId (required), + name, description, status, color
+- deleteProject: projectId (required)
+
+## Task Comments
+- listTaskComments: taskId (required) — returns comments on a task
+- addTaskComment: taskId (required), body (required), author (optional, defaults to "Bob")
+- deleteTaskComment: commentId (required)
+
+## Contacts
+- listContacts: no args
+- findOrCreateContact: phone (required), name, nickname, email, notes, tags
+- getContactByPhone: phone (required)`,
     parameters: {
       type: "object" as const,
       properties: {
