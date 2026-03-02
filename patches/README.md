@@ -1,6 +1,13 @@
 # Custom Patches — butley/openclaw
 
-12 custom patches on top of upstream openclaw/openclaw.
+11 active custom patches on top of upstream openclaw/openclaw.
+
+## Absorbed by Upstream (no longer maintained)
+
+| # | Name | Absorbed in | Notes |
+|---|------|-------------|-------|
+| 1 | WhatsApp Opus TTS | v2026.3.1 | Upstream added `VOICE_BUBBLE_CHANNELS` Set including `"whatsapp"` in `src/tts/tts.ts` |
+| 6 | TTS Caption Logging | v2026.2.26 | Upstream included equivalent logging |
 
 ## Patch Registry
 
