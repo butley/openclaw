@@ -33,9 +33,13 @@ export function formatToolNarration(raw: string): string {
   // Shorten home paths: ~/Projects/openclaw/src/web/foo.ts → foo.ts
   text = text.replace(/~\/[A-Za-z0-9_./-]+/g, (match) => {
     const parts = match.split("/");
-    if (parts.length <= 3) return match;
+    if (parts.length <= 3) {
+      return match;
+    }
     const last = parts[parts.length - 1];
-    if (last.includes(".")) return last;
+    if (last.includes(".")) {
+      return last;
+    }
     return parts.slice(-2).join("/");
   });
 
@@ -54,13 +58,21 @@ export function formatToolNarration(raw: string): string {
   // Pick emoji based on tool type and command content
   let emoji = "🧩";
   if (toolType === "exec" || toolType === "bash") {
-    if (/\bgit\b/.test(text)) emoji = "📦";
-    else if (/\bnpm|build|make\b/.test(text)) emoji = "🔨";
-    else if (/\bgrep|search|find\b/.test(text)) emoji = "🔍";
-    else if (/\bpython|node|bun\b/.test(text)) emoji = "🐍";
-    else if (/\blaunchctl|systemctl|restart|kill\b/.test(text)) emoji = "⚙️";
-    else if (/\bcat|head|tail|sed|awk\b/.test(text)) emoji = "📄";
-    else emoji = "🛠️";
+    if (/\bgit\b/.test(text)) {
+      emoji = "📦";
+    } else if (/\bnpm|build|make\b/.test(text)) {
+      emoji = "🔨";
+    } else if (/\bgrep|search|find\b/.test(text)) {
+      emoji = "🔍";
+    } else if (/\bpython|node|bun\b/.test(text)) {
+      emoji = "🐍";
+    } else if (/\blaunchctl|systemctl|restart|kill\b/.test(text)) {
+      emoji = "⚙️";
+    } else if (/\bcat|head|tail|sed|awk\b/.test(text)) {
+      emoji = "📄";
+    } else {
+      emoji = "🛠️";
+    }
   } else if (toolType === "read") {
     emoji = "📂";
   } else if (toolType === "write") {
