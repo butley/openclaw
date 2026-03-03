@@ -50,6 +50,8 @@ const BASE_METHODS = [
   "update.run",
   "voicewake.get",
   "voicewake.set",
+  "secrets.reload",
+  "secrets.resolve",
   "sessions.list",
   "sessions.preview",
   "sessions.patch",

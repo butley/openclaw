@@ -1,10 +1,7 @@
 import { resolveIdentityNamePrefix } from "../../../agents/identity.js";
 import { resolveChunkMode, resolveTextChunkLimit } from "../../../auto-reply/chunk.js";
 import { shouldComputeCommandAuthorized } from "../../../auto-reply/command-detection.js";
-import {
-  formatInboundEnvelope,
-  resolveEnvelopeFormatOptions,
-} from "../../../auto-reply/envelope.js";
+import { formatInboundEnvelope } from "../../../auto-reply/envelope.js";
 import type { getReplyFromConfig } from "../../../auto-reply/reply.js";
 import {
   buildHistoryContextFromEntries,
@@ -12,24 +9,23 @@ import {
 } from "../../../auto-reply/reply/history.js";
 import { finalizeInboundContext } from "../../../auto-reply/reply/inbound-context.js";
 import { dispatchReplyWithBufferedBlockDispatcher } from "../../../auto-reply/reply/provider-dispatcher.js";
-import { normalizeStreamLevel } from "../../../auto-reply/thinking.js";
 import type { ReplyPayload } from "../../../auto-reply/types.js";
 import { toLocationContext } from "../../../channels/location.js";
 import { createReplyPrefixOptions } from "../../../channels/reply-prefix.js";
+import { resolveInboundSessionEnvelopeContext } from "../../../channels/session-envelope.js";
 import type { loadConfig } from "../../../config/config.js";
 import { resolveMarkdownTableMode } from "../../../config/markdown-tables.js";
-import {
-  readSessionUpdatedAt,
-  recordSessionMetaFromInbound,
-  resolveStorePath,
-} from "../../../config/sessions.js";
-import { loadSessionStore } from "../../../config/sessions.js";
+import { recordSessionMetaFromInbound } from "../../../config/sessions.js";
+// Butley patches: WA Streaming (extracted to avoid upstream conflicts)
+// formatToolNarration available via ../wa-verbose-utils.js when needed
+import { readSessionStreamLevel, resolveStreamDelayMs } from "../wa-streaming-utils.js";
 import { logVerbose, shouldLogVerbose } from "../../../globals.js";
 import type { getChildLogger } from "../../../logging.js";
 import { getAgentScopedMediaLocalRoots } from "../../../media/local-roots.js";
 import type { resolveAgentRoute } from "../../../routing/resolve-route.js";
 import {
   readStoreAllowFromForDmPolicy,
+  resolvePinnedMainDmOwnerFromAllowlist,
   resolveDmGroupAccessWithCommandGate,
 } from "../../../security/dm-policy-shared.js";
 import { jidToE164, normalizeE164, sleep } from "../../../utils.js";
@@ -123,130 +119,16 @@ async function resolveWhatsAppCommandAuthorized(params: {
   return access.commandAuthorized;
 }
 
-/** Resolve paragraph delay in ms for a given stream level and text length. */
-function resolveStreamDelayMs(streamLevel: string, charCount: number): number {
-  switch (streamLevel) {
-    case "fast":
-      return Math.max(2000, Math.min(6000, charCount * 20));
-    case "on":
-      return Math.max(4000, Math.min(10000, charCount * 40));
-    case "slow":
-      return Math.max(6000, Math.min(15000, charCount * 70));
-    case "off":
-      return 0;
-    default: {
-      // Support "custom:XX" where XX is ms per character
-      if (streamLevel.startsWith("custom:")) {
-        const msPerChar = parseInt(streamLevel.slice(7), 10);
-        if (!isNaN(msPerChar) && msPerChar > 0) {
-          return Math.max(1000, Math.min(20000, charCount * msPerChar));
-        }
-      }
-      return 0;
-    }
-  }
-}
-
-
-/** Reformat upstream verbose tool narration into clean one-liners for WhatsApp. */
-function formatToolNarration(raw: string): string {
-  // Take first line only (upstream may include code blocks after).
-  const firstLine = raw.split("\n\n")[0].split("\n")[0].trim();
-
-  // Strip surrounding backticks/code fences if present.
-  let text = firstLine.replace(/^`+|`+$/g, "").trim();
-
-  // Strip upstream emoji prefix and tool label (e.g. "🛠️ Exec: ..." → "...")
-  // Common patterns: "🛠️ Exec: cmd", "📖 Read: path", "✍️ Write: path", "📝 Edit: path"
-  const prefixMatch = text.match(/^[\p{Emoji}\p{Emoji_Presentation}\uFE0F\s]+(?:[A-Za-z_]+:\s*)?/u);
-  let toolType = "";
-  if (prefixMatch) {
-    // Extract tool type from prefix (e.g. "Exec", "Read", "Edit")
-    const typeMatch = prefixMatch[0].match(/([A-Za-z_]+):/);
-    toolType = typeMatch ? typeMatch[1].toLowerCase() : "";
-    text = text.slice(prefixMatch[0].length).trim();
-  }
-
-  // Remove trailing "(in ~/...)" location hints.
-  text = text.replace(/\s*\(in [^)]+\)\s*$/, "");
-
-  // Shorten home paths: ~/Projects/openclaw/src/web/foo.ts → foo.ts
-  text = text.replace(
-    /~\/[A-Za-z0-9_./-]+/g,
-    (match) => {
-      const parts = match.split("/");
-      if (parts.length <= 3) return match;
-      const last = parts[parts.length - 1];
-      if (last.includes(".")) return last;
-      return parts.slice(-2).join("/");
-    },
-  );
-
-  // Collapse verbose exec chains
-  text = text
-    .replace(/\bprint text(?:\s*→\s*)?/g, "")
-    .replace(/\brun\s+/g, "")
-    .replace(/\bshow last \d+ lines?/g, "")
-    .replace(/\bshow first \d+ lines?/g, "")
-    .replace(/\bview\s+/gi, "")
-    .replace(/→\s*→/g, "→")
-    .replace(/^\s*→\s*/, "")
-    .replace(/\s*→\s*$/, "")
-    .trim();
-
-  // Pick emoji based on tool type and command content
-  let emoji = "🧩";
-  if (toolType === "exec" || toolType === "bash") {
-    if (/\bgit\b/.test(text)) emoji = "📦";
-    else if (/\bnpm|build|make\b/.test(text)) emoji = "🔨";
-    else if (/\bgrep|search|find\b/.test(text)) emoji = "🔍";
-    else if (/\bpython|node|bun\b/.test(text)) emoji = "🐍";
-    else if (/\blaunchctl|systemctl|restart|kill\b/.test(text)) emoji = "⚙️";
-    else if (/\bcat|head|tail|sed|awk\b/.test(text)) emoji = "📄";
-    else emoji = "🛠️";
-  } else if (toolType === "read") {
-    emoji = "📂";
-  } else if (toolType === "write") {
-    emoji = "✏️";
-  } else if (toolType === "edit") {
-    emoji = "✏️";
-  } else if (toolType === "web_search") {
-    emoji = "🌐";
-  } else if (toolType === "web_fetch") {
-    emoji = "🌐";
-  } else if (toolType === "memory_search") {
-    emoji = "🧠";
-  } else if (toolType === "image") {
-    emoji = "🖼️";
-  } else if (toolType === "message") {
-    emoji = "💬";
-  }
-
-  // Truncate to 80 chars
-  if (text.length > 80) {
-    text = text.slice(0, 77) + "...";
-  }
-
-  const result = text ? `${emoji} ${text}` : firstLine.slice(0, 80);
-  return result;
-}
-
-function readSessionStreamLevel(sessionKey: string, storePath: string): string {
-  try {
-    const store = loadSessionStore(storePath);
-    const entry = store[sessionKey];
-    const raw = entry?.streamLevel;
-    if (!raw) {
-      return "off";
-    }
-    // Already normalized (e.g. "custom:55") — return as-is if valid, otherwise re-normalize.
-    if (raw.startsWith("custom:")) {
-      return raw;
-    }
-    return normalizeStreamLevel(raw) ?? "off";
-  } catch {
-    return "off";
-  }
+function resolvePinnedMainDmRecipient(params: {
+  cfg: ReturnType<typeof loadConfig>;
+  msg: WebInboundMsg;
+}): string | null {
+  const account = resolveWhatsAppAccount({ cfg: params.cfg, accountId: params.msg.accountId });
+  return resolvePinnedMainDmOwnerFromAllowlist({
+    dmScope: params.cfg.session?.dmScope,
+    allowFrom: account.allowFrom,
+    normalizeEntry: (entry) => normalizeE164(entry),
+  });
 }
 
 export async function processMessage(params: {
@@ -278,12 +160,9 @@ export async function processMessage(params: {
   suppressGroupHistoryClear?: boolean;
 }) {
   const conversationId = params.msg.conversationId ?? params.msg.from;
-  const storePath = resolveStorePath(params.cfg.session?.store, {
+  const { storePath, envelopeOptions, previousTimestamp } = resolveInboundSessionEnvelopeContext({
+    cfg: params.cfg,
     agentId: params.route.agentId,
-  });
-  const envelopeOptions = resolveEnvelopeFormatOptions(params.cfg);
-  const previousTimestamp = readSessionUpdatedAt({
-    storePath,
     sessionKey: params.route.sessionKey,
   });
   let combinedBody = buildInboundLine({
@@ -465,7 +344,17 @@ export async function processMessage(params: {
   // Only update main session's lastRoute when DM actually IS the main session.
   // When dmScope="per-channel-peer", the DM uses an isolated sessionKey,
   // and updating mainSessionKey would corrupt routing for the session owner.
-  if (dmRouteTarget && params.route.sessionKey === params.route.mainSessionKey) {
+  const pinnedMainDmRecipient = resolvePinnedMainDmRecipient({
+    cfg: params.cfg,
+    msg: params.msg,
+  });
+  const shouldUpdateMainLastRoute =
+    !pinnedMainDmRecipient || pinnedMainDmRecipient === dmRouteTarget;
+  if (
+    dmRouteTarget &&
+    params.route.sessionKey === params.route.mainSessionKey &&
+    shouldUpdateMainLastRoute
+  ) {
     updateLastRouteInBackground({
       cfg: params.cfg,
       backgroundTasks: params.backgroundTasks,
@@ -477,6 +366,14 @@ export async function processMessage(params: {
       ctx: ctxPayload,
       warn: params.replyLogger.warn.bind(params.replyLogger),
     });
+  } else if (
+    dmRouteTarget &&
+    params.route.sessionKey === params.route.mainSessionKey &&
+    pinnedMainDmRecipient
+  ) {
+    logVerbose(
+      `Skipping main-session last route update for ${dmRouteTarget} (pinned owner ${pinnedMainDmRecipient})`,
+    );
   }
 
   const metaTask = recordSessionMetaFromInbound({
