@@ -1153,6 +1153,50 @@ export const chatHandlers: GatewayRequestHandlers = {
                 imageUrl: imageUrls[0],
               });
             }
+          } else if (agentRunStarted) {
+            // Fallback: ACP dispatch path doesn't forward MEDIA markers through
+            // the deliver callback (tool results are formatted as summaries).
+            // Scan the session transcript for tool results with imageUrl in details.
+            try {
+              const { storePath: postRunStorePath, entry: postRunEntry } =
+                loadSessionEntry(sessionKey);
+              const postRunSessionId = postRunEntry?.sessionId ?? entry?.sessionId;
+              if (postRunSessionId && postRunStorePath) {
+                const recentMsgs = readSessionMessages(
+                  postRunSessionId,
+                  postRunStorePath,
+                  postRunEntry?.sessionFile,
+                );
+                // Look for the last toolResult with details.imageUrl
+                for (let i = recentMsgs.length - 1; i >= 0; i--) {
+                  const msg = recentMsgs[i] as Record<string, unknown>;
+                  if (msg.role !== "toolResult") continue;
+                  const details = msg.details as Record<string, unknown> | undefined;
+                  if (details?.imageUrl) {
+                    const imageUrl = details.imageUrl as string;
+                    context.logGateway.info(
+                      `[media-emit] extracted imageUrl from session transcript: ${imageUrl}`,
+                    );
+                    const seq = nextChatSeq(
+                      { agentRunSeq: context.agentRunSeq },
+                      clientRunId,
+                    );
+                    context.broadcast("chat", {
+                      runId: clientRunId,
+                      sessionKey: rawSessionKey,
+                      seq,
+                      state: "imageReady" as const,
+                      imageUrl,
+                    });
+                    break;
+                  }
+                }
+              }
+            } catch (scanErr) {
+              context.logGateway.warn(
+                `[media-emit] session transcript scan failed: ${String(scanErr)}`,
+              );
+            }
           }
           context.dedupe.set(`chat:${clientRunId}`, {
             ts: Date.now(),
