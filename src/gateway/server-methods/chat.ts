@@ -946,12 +946,7 @@ export const chatHandlers: GatewayRequestHandlers = {
               }
             }
           }
-          // Diagnostic logging (temporary)
-          if (payloadText.includes("MEDIA:") || payload.mediaUrl || payload.mediaUrls) {
-            context.logGateway.info(
-              `[media-debug] deliver: info.kind=${info.kind} text=${payloadText.slice(0, 120)} mediaUrl=${payload.mediaUrl} mediaUrls=${JSON.stringify(payload.mediaUrls)} collected=${JSON.stringify(collectedMediaUrls)}`,
-            );
-          }
+
 
           if (info.kind !== "final") {
             return;
@@ -965,6 +960,30 @@ export const chatHandlers: GatewayRequestHandlers = {
       });
 
       let agentRunStarted = false;
+      const agentEventHandler = (evt: { stream: string; data?: Record<string, unknown> }) => {
+        // Capture media URLs from tool result events during agent runs
+        if (evt.stream === "tool" && evt.data?.kind === "result") {
+          const result = evt.data.result as Record<string, unknown> | undefined;
+          const content = result?.content;
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (typeof block === "object" && block && block.type === "text") {
+                const text = (block as Record<string, unknown>).text;
+                if (typeof text === "string") {
+                  const mediaMatches = text.match(/MEDIA:\/[^\s`]+/g) ?? [];
+                  for (const marker of mediaMatches) {
+                    const mediaPath = marker.slice("MEDIA:".length).trim();
+                    if (mediaPath && !collectedMediaUrls.includes(mediaPath)) {
+                      collectedMediaUrls.push(mediaPath);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      };
+
       void dispatchInboundMessage({
         ctx,
         cfg,
@@ -973,6 +992,7 @@ export const chatHandlers: GatewayRequestHandlers = {
           runId: clientRunId,
           abortSignal: abortController.signal,
           images: parsedImages.length > 0 ? parsedImages : undefined,
+          onAgentEvent: agentEventHandler,
           onAgentRunStart: (runId) => {
             agentRunStarted = true;
             const connId = typeof client?.connId === "string" ? client.connId : undefined;
