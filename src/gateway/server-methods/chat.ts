@@ -1056,14 +1056,15 @@ export const chatHandlers: GatewayRequestHandlers = {
               }
             }
           } else if (collectedMediaUrls.length > 0) {
-            // Agent run handled its own broadcast, but we still need to notify
-            // the frontend about any TTS audio URLs so it can show play buttons.
-            const audioUrls = collectedMediaUrls
-              .filter((u) => /\.(mp3|opus|ogg|wav|webm)$/i.test(u))
-              .map((u) => {
-                const parts = u.split("/");
-                return `/media/${parts[parts.length - 1]}`;
-              });
+            // Agent run handled its own broadcast. Emit structured media hints so
+            // the frontend can classify/render message cards without parsing paths.
+            const mediaUrls = collectedMediaUrls.map((u) => {
+              const parts = u.split("/");
+              return `/media/${parts[parts.length - 1]}`;
+            });
+            const audioUrls = mediaUrls.filter((u) => /\.(mp3|opus|ogg|wav|webm)$/i.test(u));
+            const imageUrls = mediaUrls.filter((u) => /\.(png|jpe?g|gif|webp)$/i.test(u));
+
             if (audioUrls.length > 0) {
               const seq = nextChatSeq(
                 { agentRunSeq: context.agentRunSeq },
@@ -1075,6 +1076,20 @@ export const chatHandlers: GatewayRequestHandlers = {
                 seq,
                 state: "audioReady" as const,
                 audioUrl: audioUrls[0],
+              });
+            }
+
+            if (imageUrls.length > 0) {
+              const seq = nextChatSeq(
+                { agentRunSeq: context.agentRunSeq },
+                clientRunId,
+              );
+              context.broadcast("chat", {
+                runId: clientRunId,
+                sessionKey: rawSessionKey,
+                seq,
+                state: "mediaReady" as const,
+                mediaUrl: imageUrls[0],
               });
             }
           }
