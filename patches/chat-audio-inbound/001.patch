@@ -1,0 +1,191 @@
+From 5d19700bc2da60ef454030d233c0bdc0deb32243 Mon Sep 17 00:00:00 2001
+From: Guilherme Ramos <guiramos@gmail.com>
+Date: Wed, 4 Mar 2026 17:44:33 -0500
+Subject: [PATCH 7/8] patch-17: Chat Audio Inbound
+
+Accept audio attachments in webchat chat.send, save via saveMediaBuffer,
+transcribe via audio-preflight pipeline, and pass MediaPath/MediaUrl
+in MsgContext so the agent receives the transcript as text input.
+
+Adds extractAudioAttachments() to chat-attachments.ts with audio/*
+MIME detection and browser video/webm alias handling.
+---
+ src/gateway/chat-attachments.ts    | 57 ++++++++++++++++++++++++++++++
+ src/gateway/server-methods/chat.ts | 44 ++++++++++++++++++++++-
+ 2 files changed, 100 insertions(+), 1 deletion(-)
+
+diff --git a/src/gateway/chat-attachments.ts b/src/gateway/chat-attachments.ts
+index 53dcf6a28..759c73ce6 100644
+--- a/src/gateway/chat-attachments.ts
++++ b/src/gateway/chat-attachments.ts
+@@ -14,6 +14,13 @@ export type ChatImageContent = {
+   mimeType: string;
+ };
+ 
++export type ChatAudioAttachment = {
++  label: string;
++  fileName?: string;
++  mimeType: string;
++  data: string;
++};
++
+ export type ParsedMessageWithImages = {
+   message: string;
+   images: ChatImageContent[];
+@@ -41,6 +48,10 @@ function isImageMime(mime?: string): boolean {
+   return typeof mime === "string" && mime.startsWith("image/");
+ }
+ 
++function isAudioMime(mime?: string): boolean {
++  return typeof mime === "string" && mime.startsWith("audio/");
++}
++
+ function isValidBase64(value: string): boolean {
+   // Minimal validation; avoid full decode allocations for large payloads.
+   return value.length > 0 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+@@ -144,6 +155,52 @@ export async function parseMessageWithAttachments(
+   return { message, images };
+ }
+ 
++export async function extractAudioAttachments(
++  attachments: ChatAttachment[] | undefined,
++  opts?: { maxBytes?: number; log?: AttachmentLog },
++): Promise<ChatAudioAttachment[]> {
++  const maxBytes = opts?.maxBytes ?? 20_000_000;
++  const log = opts?.log;
++  if (!attachments || attachments.length === 0) {
++    return [];
++  }
++  const audio: ChatAudioAttachment[] = [];
++  for (const [idx, att] of attachments.entries()) {
++    if (!att) continue;
++    const normalized = normalizeAttachment(att, idx, {
++      stripDataUrlPrefix: true,
++      requireImageMime: false,
++    });
++    validateAttachmentBase64OrThrow(normalized, { maxBytes });
++    const { base64: b64, label, mime } = normalized;
++    const providedMime = normalizeMime(mime);
++    const sniffedMime = normalizeMime(await sniffMimeFromBase64(b64));
++    // Browsers record audio as video/webm (webm is a container that can hold audio-only
++    // streams). If the caller explicitly provided an audio/* MIME type but the sniffer
++    // returns the equivalent video/* type, trust the provided MIME so the attachment
++    // is routed to the audio transcription pipeline rather than silently dropped.
++    const isAudioVideoAlias =
++      providedMime &&
++      isAudioMime(providedMime) &&
++      sniffedMime &&
++      sniffedMime.replace("video/", "audio/") === providedMime;
++    const finalMime = isAudioVideoAlias ? providedMime : (sniffedMime ?? providedMime);
++    if (!finalMime || !isAudioMime(finalMime)) {
++      continue;
++    }
++    if (sniffedMime && providedMime && sniffedMime !== providedMime && !isAudioVideoAlias) {
++      log?.warn(`attachment ${label}: mime mismatch (${providedMime} -> ${sniffedMime}), using sniffed`);
++    }
++    audio.push({
++      label,
++      fileName: att.fileName,
++      mimeType: finalMime,
++      data: b64,
++    });
++  }
++  return audio;
++}
++
+ /**
+  * @deprecated Use parseMessageWithAttachments instead.
+  * This function converts images to markdown data URLs which Claude API cannot process as images.
+diff --git a/src/gateway/server-methods/chat.ts b/src/gateway/server-methods/chat.ts
+index 9775431a8..7a09ce74c 100644
+--- a/src/gateway/server-methods/chat.ts
++++ b/src/gateway/server-methods/chat.ts
+@@ -9,6 +9,7 @@ import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.j
+ import type { MsgContext } from "../../auto-reply/templating.js";
+ import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
+ import { resolveSessionFilePath } from "../../config/sessions.js";
++import { saveMediaBuffer } from "../../media/store.js";
+ import { resolveSendPolicy } from "../../sessions/send-policy.js";
+ import {
+   stripInlineDirectiveTagsForDisplay,
+@@ -23,7 +24,11 @@ import {
+   isChatStopCommandText,
+   resolveChatRunExpiresAtMs,
+ } from "../chat-abort.js";
+-import { type ChatImageContent, parseMessageWithAttachments } from "../chat-attachments.js";
++import {
++  extractAudioAttachments,
++  type ChatImageContent,
++  parseMessageWithAttachments,
++} from "../chat-attachments.js";
+ import { stripEnvelopeFromMessage, stripEnvelopeFromMessages } from "../chat-sanitize.js";
+ import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
+ import {
+@@ -719,6 +724,7 @@ export const chatHandlers: GatewayRequestHandlers = {
+     }
+     let parsedMessage = inboundMessage;
+     let parsedImages: ChatImageContent[] = [];
++    let parsedAudioPaths: string[] = [];
+     if (normalizedAttachments.length > 0) {
+       try {
+         const parsed = await parseMessageWithAttachments(inboundMessage, normalizedAttachments, {
+@@ -727,6 +733,16 @@ export const chatHandlers: GatewayRequestHandlers = {
+         });
+         parsedMessage = parsed.message;
+         parsedImages = parsed.images;
++
++        const audio = await extractAudioAttachments(normalizedAttachments, {
++          maxBytes: 20_000_000,
++          log: context.logGateway,
++        });
++        for (const item of audio) {
++          const buffer = Buffer.from(item.data, "base64");
++          const saved = await saveMediaBuffer(buffer, item.mimeType, "inbound", 20_000_000, item.fileName);
++          parsedAudioPaths.push(saved.path);
++        }
+       } catch (err) {
+         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, String(err)));
+         return;
+@@ -734,6 +750,28 @@ export const chatHandlers: GatewayRequestHandlers = {
+     }
+     const rawSessionKey = p.sessionKey;
+     const { cfg, entry, canonicalKey: sessionKey } = loadSessionEntry(rawSessionKey);
++
++    // Transcribe audio attachments via tools.media.audio pipeline (e.g. ElevenLabs Scribe)
++    // and replace the body with the transcript so the agent receives text, not a file path.
++    if (parsedAudioPaths.length > 0 && !parsedMessage) {
++      try {
++        const { transcribeFirstAudio } = await import("../../media-understanding/audio-preflight.js");
++        const audioCtx = {
++          MediaPath: parsedAudioPaths[0],
++          MediaPaths: parsedAudioPaths,
++          MediaUrl: parsedAudioPaths[0],
++          MediaUrls: parsedAudioPaths,
++          MediaTypes: ["audio/webm"],
++        };
++        const transcript = await transcribeFirstAudio({ ctx: audioCtx, cfg });
++        if (transcript) {
++          parsedMessage = transcript;
++        }
++      } catch (err) {
++        context.logGateway.warn(`chat.send: audio transcription failed: ${String(err)}`);
++      }
++    }
++
+     const timeoutMs = resolveAgentTimeoutMs({
+       cfg,
+       overrideMs: p.timeoutMs,
+@@ -829,6 +867,10 @@ export const chatHandlers: GatewayRequestHandlers = {
+         SenderName: clientInfo?.displayName,
+         SenderUsername: clientInfo?.displayName,
+         GatewayClientScopes: client?.connect?.scopes,
++        MediaPath: parsedAudioPaths[0],
++        MediaUrl: parsedAudioPaths[0],
++        MediaPaths: parsedAudioPaths.length > 0 ? parsedAudioPaths : undefined,
++        MediaUrls: parsedAudioPaths.length > 0 ? parsedAudioPaths : undefined,
+       };
+ 
+       const agentId = resolveSessionAgentId({
+-- 
+2.53.0
+

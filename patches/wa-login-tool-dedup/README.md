@@ -17,7 +17,7 @@ Removed the `api.registerTool()` call from `extensions/whatsapp/index.ts` and ad
 ## Key Grep Pattern
 
 ```bash
-grep -q 'natively by OpenClaw' extensions/whatsapp/index.ts
+grep -q 'provided by core' extensions/whatsapp/index.ts
 ```
 
 ## History
