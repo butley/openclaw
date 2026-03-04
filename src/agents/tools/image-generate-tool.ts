@@ -110,11 +110,14 @@ export function createImageGenerateTool(opts?: { config?: OpenClawConfig }): Any
         };
       }
 
+      // Save to /root/clawd — the gateway's custom media handler (server-http.ts)
+      // already searches this directory when serving GET /media/<filename>.
       const workspaceDir = "/root/clawd";
       await fs.mkdir(workspaceDir, { recursive: true });
       const outPath = path.join(workspaceDir, fileName);
       const buffer = Buffer.from(inlineData.data, "base64");
       await fs.writeFile(outPath, buffer);
+      const imageUrl = `/media/${fileName}`;
 
       return await imageResultFromFile({
         label: "image_generate",
@@ -125,6 +128,7 @@ export function createImageGenerateTool(opts?: { config?: OpenClawConfig }): Any
           model,
           mimeType: inlineData.mimeType || "image/png",
           bytes: buffer.byteLength,
+          imageUrl,
         },
       });
     },

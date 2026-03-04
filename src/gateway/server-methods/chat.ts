@@ -588,11 +588,38 @@ export const chatHandlers: GatewayRequestHandlers = {
         }
       }
     }
+    // Same pattern for imageUrl (image_generate tool result → final assistant message).
+    const imageUrlByIndex = new Map<number, string>();
+    {
+      let pendingImageUrl: string | undefined;
+      for (let i = 0; i < sanitized.length; i++) {
+        const msg = sanitized[i] as Record<string, unknown>;
+        const role = msg.role as string | undefined;
+        const details = msg.details as Record<string, unknown> | undefined;
+        if (role === "toolResult" && details?.imageUrl) {
+          pendingImageUrl = details.imageUrl as string;
+        } else if (role === "assistant") {
+          const stopReason = msg.stopReason as string | undefined;
+          if (pendingImageUrl && stopReason !== "toolUse") {
+            imageUrlByIndex.set(i, pendingImageUrl);
+            pendingImageUrl = undefined;
+          }
+        } else if (role === "user") {
+          pendingImageUrl = undefined;
+        }
+      }
+    }
     const normalized = sanitizeChatHistoryMessages(sanitized);
     // Apply audioUrl to the sanitized (normalized) messages.
     for (const [idx, url] of audioUrlByIndex) {
       if (idx < normalized.length) {
         (normalized[idx] as Record<string, unknown>).audioUrl = url;
+      }
+    }
+    // Apply imageUrl to the sanitized (normalized) messages.
+    for (const [idx, url] of imageUrlByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).imageUrl = url;
       }
     }
     const maxHistoryBytes = getMaxChatHistoryMessagesBytes();
@@ -927,29 +954,9 @@ export const chatHandlers: GatewayRequestHandlers = {
           context.logGateway.info(
             `[media-deliver] kind=${info.kind} hasMediaUrls=${Array.isArray(payload.mediaUrls)} mediaUrl=${payload.mediaUrl} text=${(payload.text ?? "").slice(0, 80)}`,
           );
-          // Capture media URLs from tool results (e.g. TTS audio / generated images)
-          if (payload.mediaUrls) {
-            for (const url of payload.mediaUrls) {
-              if (url && !collectedMediaUrls.includes(url)) {
-                collectedMediaUrls.push(url);
-              }
-            }
-          }
-          if (payload.mediaUrl && !collectedMediaUrls.includes(payload.mediaUrl)) {
-            collectedMediaUrls.push(payload.mediaUrl);
-          }
-          // Capture MEDIA:/... from tool result text BEFORE early return
+          // Capture media hints from every payload BEFORE any early-return.
+          captureMediaFromPayload(payload);
           const payloadText = payload.text?.trim() ?? "";
-          if (payloadText) {
-            const mediaMatches = payloadText.match(/MEDIA:\/[^\s`]+/g) ?? [];
-            for (const marker of mediaMatches) {
-              const mediaPath = marker.slice("MEDIA:".length).trim();
-              if (mediaPath && !collectedMediaUrls.includes(mediaPath)) {
-                context.logGateway.info(`[media-deliver] captured from text: ${mediaPath}`);
-                collectedMediaUrls.push(mediaPath);
-              }
-            }
-          }
 
           // Only accumulate final text for the chat response
           if (info.kind !== "final") {
@@ -963,38 +970,30 @@ export const chatHandlers: GatewayRequestHandlers = {
       });
 
       let agentRunStarted = false;
-      const agentEventHandler = (evt: { stream: string; data?: Record<string, unknown> }) => {
-        context.logGateway.info(
-          `[media-capture] agentEvent: stream=${evt.stream} kind=${evt.data?.kind}`,
-        );
-        // Capture media URLs from tool result events during agent runs
-        if (evt.stream === "tool" && evt.data?.kind === "result") {
-          const result = evt.data.result as Record<string, unknown> | undefined;
-          const content = result?.content;
-          context.logGateway.info(
-            `[media-capture] tool result content type=${Array.isArray(content) ? "array" : typeof content} length=${Array.isArray(content) ? content.length : "n/a"}`,
-          );
-          if (Array.isArray(content)) {
-            for (const block of content) {
-              if (typeof block === "object" && block && block.type === "text") {
-                const text = (block as Record<string, unknown>).text;
-                if (typeof text === "string") {
-                  context.logGateway.info(
-                    `[media-capture] text block: ${text.slice(0, 200)}`,
-                  );
-                  const mediaMatches = text.match(/MEDIA:\/[^\s`]+/g) ?? [];
-                  for (const marker of mediaMatches) {
-                    const mediaPath = marker.slice("MEDIA:".length).trim();
-                    if (mediaPath && !collectedMediaUrls.includes(mediaPath)) {
-                      collectedMediaUrls.push(mediaPath);
-                      context.logGateway.info(
-                        `[media-capture] ADDED: ${mediaPath} collected=${JSON.stringify(collectedMediaUrls)}`,
-                      );
-                    }
-                  }
-                }
-              }
+      const captureMediaFromPayload = (payload: {
+        text?: string;
+        mediaUrl?: string;
+        mediaUrls?: string[];
+      }) => {
+        if (Array.isArray(payload.mediaUrls)) {
+          for (const url of payload.mediaUrls) {
+            if (url && !collectedMediaUrls.includes(url)) {
+              collectedMediaUrls.push(url);
             }
+          }
+        }
+        if (payload.mediaUrl && !collectedMediaUrls.includes(payload.mediaUrl)) {
+          collectedMediaUrls.push(payload.mediaUrl);
+        }
+        const text = payload.text?.trim() ?? "";
+        if (!text) {
+          return;
+        }
+        const mediaMatches = text.match(/MEDIA:\/[^\s`]+/g) ?? [];
+        for (const marker of mediaMatches) {
+          const mediaPath = marker.slice("MEDIA:".length).trim();
+          if (mediaPath && !collectedMediaUrls.includes(mediaPath)) {
+            collectedMediaUrls.push(mediaPath);
           }
         }
       };
@@ -1007,7 +1006,6 @@ export const chatHandlers: GatewayRequestHandlers = {
           runId: clientRunId,
           abortSignal: abortController.signal,
           images: parsedImages.length > 0 ? parsedImages : undefined,
-          onAgentEvent: agentEventHandler,
           onAgentRunStart: (runId) => {
             agentRunStarted = true;
             const connId = typeof client?.connId === "string" ? client.connId : undefined;
@@ -1081,7 +1079,7 @@ export const chatHandlers: GatewayRequestHandlers = {
                 (message as Record<string, unknown>).audioUrl = audioUrls[0];
               }
               if (imageUrls.length > 0) {
-                (message as Record<string, unknown>).mediaUrl = imageUrls[0];
+                (message as Record<string, unknown>).imageUrl = imageUrls[0];
               }
             }
             broadcastChatFinal({
@@ -1151,8 +1149,8 @@ export const chatHandlers: GatewayRequestHandlers = {
                 runId: clientRunId,
                 sessionKey: rawSessionKey,
                 seq,
-                state: "mediaReady" as const,
-                mediaUrl: imageUrls[0],
+                state: "imageReady" as const,
+                imageUrl: imageUrls[0],
               });
             }
           }
