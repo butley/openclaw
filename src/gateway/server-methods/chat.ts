@@ -946,6 +946,12 @@ export const chatHandlers: GatewayRequestHandlers = {
               }
             }
           }
+          // Diagnostic logging (temporary)
+          if (payloadText.includes("MEDIA:") || payload.mediaUrl || payload.mediaUrls) {
+            context.logGateway.info(
+              `[media-debug] deliver: info.kind=${info.kind} text=${payloadText.slice(0, 120)} mediaUrl=${payload.mediaUrl} mediaUrls=${JSON.stringify(payload.mediaUrls)} collected=${JSON.stringify(collectedMediaUrls)}`,
+            );
+          }
 
           if (info.kind !== "final") {
             return;
