@@ -329,7 +329,7 @@ export function createCommandHandlers(context: CommandHandlerContext) {
         break;
       case "verbose":
         if (!args) {
-          chatLog.addSystem("usage: /verbose <on|off>");
+          chatLog.addSystem("usage: /verbose <off|light|on|full>");
           break;
         }
         try {

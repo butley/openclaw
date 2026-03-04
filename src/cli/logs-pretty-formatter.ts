@@ -247,7 +247,11 @@ const MAX_META_CHARS = 90;
 
 function formatToolMeta(toolName: string, raw: string): string {
   // Take only the first real line (meta may span newlines in rare cases)
-  let meta = raw.replace(/\n[\s\S]*/s, "").trim().replace(/`$/, "").trim();
+  let meta = raw
+    .replace(/\n[\s\S]*/s, "")
+    .trim()
+    .replace(/`$/, "")
+    .trim();
 
   // Split off heredoc content lines ("→ run <code>")
   const runParts = meta.split(/ → run /);
@@ -753,6 +757,24 @@ export function formatPrettyLine(rawLine: string, _opts?: PrettyFormatOptions): 
   const trimmed = msg.trim();
   let content: string;
 
+  // ── Fix A: Suppress plugin startup table ──────────────────────
+  // The gateway logs a full plugin table on every startup via console.log.
+  // It's noisy in the pretty formatter — run `openclaw plugins list` instead.
+  // The table is logged as a single multi-line string (one console.log call),
+  // so we only need to match the first line (starts with ┌) plus the
+  // surrounding metadata lines logged as separate calls.
+  if (
+    /^Plugins \(\d+\/\d+ loaded\)/.test(trimmed) ||
+    trimmed === "Source roots:" ||
+    /^\s*(stock|workspace|global):\s/.test(trimmed) ||
+    // Full plugin table (renderTable output — single multi-line log entry)
+    (trimmed.startsWith("┌") && trimmed.includes("┬") && trimmed.includes("Status")) ||
+    // Fallback: individual header/footer rows if logged separately
+    (trimmed.startsWith("│") && trimmed.includes("Status") && trimmed.includes("Source"))
+  ) {
+    return null;
+  }
+
   // Session-memory hook formatting
   if (subsystem.includes("session-memory")) {
     const sessFmt = formatSessionLine(trimmed);
@@ -786,6 +808,23 @@ export function formatPrettyLine(rawLine: string, _opts?: PrettyFormatOptions): 
       return null;
     } // suppress
     return `${separator}${prefix}${wrapText(`${cat.headerColor}${toolFmt}${RST}`, indent, cat.headerColor)}`;
+  }
+
+  // ── Fix B: Multi-line content (tables, tool output, etc.) ───────
+  // When a single log entry contains embedded newlines (e.g. ASCII tables
+  // from `console.log(renderTable(...))`), render each line with proper
+  // indentation instead of collapsing everything into one mangled line.
+  if (trimmed.includes("\n")) {
+    const lines = trimmed.split("\n");
+    const pad = " ".repeat(indent);
+    const renderedLines = lines
+      .filter((_, i) => i > 0 || lines[0].trim() !== "") // skip leading blank
+      .map((line, i) =>
+        i === 0 ? `${cat.contentColor}${line}${RST}` : `${pad}${cat.contentColor}${line}${RST}`,
+      )
+      .join("\n");
+    // Trim trailing blank lines
+    return `${separator}${prefix}${renderedLines.trimEnd()}`;
   }
 
   if (trimmed.startsWith("{")) {

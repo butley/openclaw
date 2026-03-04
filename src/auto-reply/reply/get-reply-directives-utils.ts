@@ -24,6 +24,7 @@ export function clearInlineDirectives(cleaned: string): InlineDirectives {
     thinkLevel: undefined,
     rawThinkLevel: undefined,
     hasVerboseDirective: false,
+    hasStreamDirective: false,
     verboseLevel: undefined,
     rawVerboseLevel: undefined,
     hasReasoningDirective: false,

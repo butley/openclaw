@@ -302,7 +302,10 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   const shouldEmitToolResult = () =>
     typeof params.shouldEmitToolResult === "function"
       ? params.shouldEmitToolResult()
-      : params.verboseLevel === "on" || params.verboseLevel === "full";
+      : params.verboseLevel === "light" ||
+        params.verboseLevel === "on" ||
+        params.verboseLevel === "full";
+  const isLightVerbose = () => params.verboseLevel === "light";
   const shouldEmitToolOutput = () =>
     typeof params.shouldEmitToolOutput === "function"
       ? params.shouldEmitToolOutput()
@@ -340,6 +343,100 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       markdown: useMarkdown,
     });
     emitToolResultMessage(toolName, agg);
+  };
+  const emitToolEndSummary = (
+    toolName?: string,
+    meta?: string,
+    result?: unknown,
+    duration?: string,
+    error?: string,
+    args?: unknown,
+  ) => {
+    const agg = formatToolAggregate(toolName, meta ? [meta] : undefined, {
+      markdown: useMarkdown,
+    });
+    // Extract result context for enrichment.
+    let resultInfo = "";
+    const name = (toolName ?? "").toLowerCase();
+    // Enrich tool narrations with result context.
+    if (name === "edit") {
+      try {
+        const a = (args && typeof args === "object") ? args as Record<string, unknown> : null;
+        if (a) {
+          const oldStr = String(a.old_string || a.oldText || "");
+          const newStr = String(a.new_string || a.newText || "");
+          if (oldStr || newStr) {
+            const oldLines = oldStr ? oldStr.split("\n").length : 0;
+            const newLines = newStr ? newStr.split("\n").length : 0;
+            const added = Math.max(0, newLines - oldLines);
+            const removed = Math.max(0, oldLines - newLines);
+            const charDiff = newStr.length - oldStr.length;
+            const charStr = charDiff >= 0 ? `+${charDiff}` : `${charDiff}`;
+            // Only show diff if something actually changed
+            const parts: string[] = [];
+            if (added || removed) {parts.push(`+${added}/-${removed} lines`);}
+            if (charDiff !== 0) {parts.push(`${charStr} chars`);}
+            if (parts.length) {resultInfo = " " + parts.join(", ");}
+          }
+        }
+      } catch { /* ignore */ }
+    } else if (name === "web_search") {
+      try {
+        // Result is { content: [{ type: "text", text: "<json>" }] } — extract text then parse
+        let parsed: Record<string, unknown> | null = null;
+        if (result && typeof result === "object") {
+          const r = result as Record<string, unknown>;
+          const content = Array.isArray(r.content) ? r.content : null;
+          if (content) {
+            const textBlock = content.find((c: unknown) => c && typeof c === "object" && (c as Record<string, unknown>).type === "text");
+            if (textBlock) {
+              const t = (textBlock as Record<string, unknown>).text;
+              if (typeof t === "string") {
+                try { parsed = JSON.parse(t); } catch { /* not JSON */ }
+              }
+            }
+          }
+          if (!parsed) {parsed = r;}
+        } else if (typeof result === "string") {
+          parsed = JSON.parse(result);
+        }
+        if (parsed) {
+          const results = Array.isArray(parsed.results) ? parsed.results : Array.isArray(parsed.web) ? parsed.web : null;
+          if (results) {
+            resultInfo = ` → ${results.length} result${results.length !== 1 ? "s" : ""}`;
+          }
+        }
+      } catch { /* ignore */ }
+    } else if (name === "memory_search") {
+      try {
+        // Result may be wrapped in { content: [{ type: "text", text: "<json>" }] }
+        let parsed: Record<string, unknown> | null = null;
+        if (result && typeof result === "object") {
+          const r = result as Record<string, unknown>;
+          const content = Array.isArray(r.content) ? r.content : null;
+          if (content) {
+            const textBlock = content.find((c: unknown) => c && typeof c === "object" && (c as Record<string, unknown>).type === "text");
+            if (textBlock) {
+              const t = (textBlock as Record<string, unknown>).text;
+              if (typeof t === "string") {
+                try { parsed = JSON.parse(t); } catch { /* not JSON */ }
+              }
+            }
+          }
+          if (!parsed) {parsed = r;}
+        } else if (typeof result === "string") {
+          try { parsed = JSON.parse(result); } catch { /* ignore */ }
+        }
+        if (parsed) {
+          const provider = String(parsed.provider ?? "local");
+          const results = parsed.results;
+          const count = Array.isArray(results) ? results.length : 0;
+          resultInfo = ` [${provider}] → ${count} result${count !== 1 ? "s" : ""}`;
+        }
+      } catch { /* ignore */ }
+    }
+    const suffix = [error, resultInfo, duration].filter(Boolean).join("");
+    emitToolResultMessage(toolName, suffix ? `${agg}${suffix}` : agg);
   };
   const emitToolOutput = (toolName?: string, meta?: string, output?: string) => {
     if (!output) {
@@ -606,6 +703,8 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     shouldEmitToolResult,
     shouldEmitToolOutput,
     emitToolSummary,
+    emitToolEndSummary,
+    isLightVerbose,
     emitToolOutput,
     stripBlockTags,
     emitBlockChunk,
