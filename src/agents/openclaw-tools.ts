@@ -11,6 +11,7 @@ import type { AnyAgentTool } from "./tools/common.js";
 import { createCronTool } from "./tools/cron-tool.js";
 import { createGatewayTool } from "./tools/gateway-tool.js";
 import { createImageTool } from "./tools/image-tool.js";
+import { createImageGenerateTool } from "./tools/image-generate-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
 import { createNodesTool } from "./tools/nodes-tool.js";
 import { createSessionStatusTool } from "./tools/session-status-tool.js";
@@ -84,6 +85,9 @@ export function createOpenClawTools(options?: {
         modelHasVision: options?.modelHasVision,
       })
     : null;
+  const imageGenerateTool = createImageGenerateTool({
+    config: options?.config,
+  });
   const webSearchTool = createWebSearchTool({
     config: options?.config,
     sandboxed: options?.sandboxed,
@@ -173,6 +177,7 @@ export function createOpenClawTools(options?: {
     ...(webSearchTool ? [webSearchTool] : []),
     ...(webFetchTool ? [webFetchTool] : []),
     ...(imageTool ? [imageTool] : []),
+    imageGenerateTool,
   ];
 
   const pluginTools = resolvePluginTools({
