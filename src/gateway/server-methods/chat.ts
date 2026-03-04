@@ -1013,14 +1013,19 @@ export const chatHandlers: GatewayRequestHandlers = {
             }
             // If TTS audio was generated, extract the filename for the /media/ endpoint
             // and attach it to the broadcast so the frontend can play it without regeneration.
-            const audioUrls = collectedMediaUrls
-              .filter((u) => /\.(mp3|opus|ogg|wav|webm)$/i.test(u))
-              .map((u) => {
-                const parts = u.split("/");
-                return `/media/${parts[parts.length - 1]}`;
-              });
-            if (audioUrls.length > 0 && message) {
-              (message as Record<string, unknown>).audioUrl = audioUrls[0];
+            const mediaUrls = collectedMediaUrls.map((u) => {
+              const parts = u.split("/");
+              return `/media/${parts[parts.length - 1]}`;
+            });
+            const audioUrls = mediaUrls.filter((u) => /\.(mp3|opus|ogg|wav|webm)$/i.test(u));
+            const imageUrls = mediaUrls.filter((u) => /\.(png|jpe?g|gif|webp)$/i.test(u));
+            if (message) {
+              if (audioUrls.length > 0) {
+                (message as Record<string, unknown>).audioUrl = audioUrls[0];
+              }
+              if (imageUrls.length > 0) {
+                (message as Record<string, unknown>).mediaUrl = imageUrls[0];
+              }
             }
             broadcastChatFinal({
               context,
