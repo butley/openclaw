@@ -931,6 +931,9 @@ export const chatHandlers: GatewayRequestHandlers = {
               }
             }
           }
+          if (payload.mediaUrl && !collectedMediaUrls.includes(payload.mediaUrl)) {
+            collectedMediaUrls.push(payload.mediaUrl);
+          }
           // Also capture MEDIA:/... markers from payload text (tool outputs that
           // embed media path in textual content).
           const payloadText = payload.text?.trim() ?? "";
