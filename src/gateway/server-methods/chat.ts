@@ -7,16 +7,15 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import type { MsgContext } from "../../auto-reply/templating.js";
-import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
 import { resolveSessionFilePath } from "../../config/sessions.js";
-import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
+import { saveMediaBuffer } from "../../media/store.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import {
   stripInlineDirectiveTagsForDisplay,
   stripInlineDirectiveTagsFromMessageForDisplay,
 } from "../../utils/directive-tags.js";
-import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
+import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
   abortChatRunById,
   abortChatRunsForSessionKey,
@@ -25,7 +24,11 @@ import {
   isChatStopCommandText,
   resolveChatRunExpiresAtMs,
 } from "../chat-abort.js";
-import { type ChatImageContent, parseMessageWithAttachments } from "../chat-attachments.js";
+import {
+  extractAudioAttachments,
+  type ChatImageContent,
+  parseMessageWithAttachments,
+} from "../chat-attachments.js";
 import { stripEnvelopeFromMessage, stripEnvelopeFromMessages } from "../chat-sanitize.js";
 import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
 import {
@@ -187,62 +190,25 @@ function sanitizeChatHistoryMessage(message: unknown): { message: unknown; chang
   return { message: changed ? entry : message, changed };
 }
 
-/**
- * Extract the visible text from an assistant history message for silent-token checks.
- * Returns `undefined` for non-assistant messages or messages with no extractable text.
- * When `entry.text` is present it takes precedence over `entry.content` to avoid
- * dropping messages that carry real text alongside a stale `content: "NO_REPLY"`.
- */
-function extractAssistantTextForSilentCheck(message: unknown): string | undefined {
-  if (!message || typeof message !== "object") {
-    return undefined;
-  }
-  const entry = message as Record<string, unknown>;
-  if (entry.role !== "assistant") {
-    return undefined;
-  }
-  if (typeof entry.text === "string") {
-    return entry.text;
-  }
-  if (typeof entry.content === "string") {
-    return entry.content;
-  }
-  if (!Array.isArray(entry.content) || entry.content.length === 0) {
-    return undefined;
-  }
-
-  const texts: string[] = [];
-  for (const block of entry.content) {
-    if (!block || typeof block !== "object") {
-      return undefined;
-    }
-    const typed = block as { type?: unknown; text?: unknown };
-    if (typed.type !== "text" || typeof typed.text !== "string") {
-      return undefined;
-    }
-    texts.push(typed.text);
-  }
-  return texts.length > 0 ? texts.join("\n") : undefined;
-}
-
 function sanitizeChatHistoryMessages(messages: unknown[]): unknown[] {
   if (messages.length === 0) {
     return messages;
   }
   let changed = false;
-  const next: unknown[] = [];
-  for (const message of messages) {
+  const next = messages.map((message) => {
     const res = sanitizeChatHistoryMessage(message);
     changed ||= res.changed;
-    // Drop assistant messages whose entire visible text is the silent reply token.
-    const text = extractAssistantTextForSilentCheck(res.message);
-    if (text !== undefined && isSilentReplyText(text, SILENT_REPLY_TOKEN)) {
-      changed = true;
-      continue;
-    }
-    next.push(res.message);
-  }
+    return res.message;
+  });
   return changed ? next : messages;
+}
+
+function jsonUtf8Bytes(value: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8");
+  } catch {
+    return Buffer.byteLength(String(value), "utf8");
+  }
 }
 
 function buildOversizedHistoryPlaceholder(message?: unknown): Record<string, unknown> {
@@ -595,7 +561,40 @@ export const chatHandlers: GatewayRequestHandlers = {
     const max = Math.min(hardMax, requested);
     const sliced = rawMessages.length > max ? rawMessages.slice(-max) : rawMessages;
     const sanitized = stripEnvelopeFromMessages(sliced);
+    // Extract audioUrl mapping BEFORE sanitize (which deletes `details`).
+    // Maps message index → audioUrl for the final assistant message after a TTS toolResult.
+    // Skips intermediate assistant messages with stopReason="toolUse" (still in tool-call loop).
+    const audioUrlByIndex = new Map<number, string>();
+    {
+      let pendingAudioUrl: string | undefined;
+      for (let i = 0; i < sanitized.length; i++) {
+        const msg = sanitized[i] as Record<string, unknown>;
+        const role = msg.role as string | undefined;
+        const details = msg.details as Record<string, unknown> | undefined;
+        if (role === "toolResult" && details?.audioUrl) {
+          // TTS tool completed — hold the audioUrl until final assistant message
+          pendingAudioUrl = details.audioUrl as string;
+        } else if (role === "assistant") {
+          const stopReason = msg.stopReason as string | undefined;
+          if (pendingAudioUrl && stopReason !== "toolUse") {
+            // Final assistant message (stop/end-turn) — attach audioUrl here
+            audioUrlByIndex.set(i, pendingAudioUrl);
+            pendingAudioUrl = undefined;
+          }
+          // If stopReason=toolUse, keep pendingAudioUrl for the next assistant
+        } else if (role === "user") {
+          // User message resets state (new turn)
+          pendingAudioUrl = undefined;
+        }
+      }
+    }
     const normalized = sanitizeChatHistoryMessages(sanitized);
+    // Apply audioUrl to the sanitized (normalized) messages.
+    for (const [idx, url] of audioUrlByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).audioUrl = url;
+      }
+    }
     const maxHistoryBytes = getMaxChatHistoryMessagesBytes();
     const perMessageHardCap = Math.min(CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES, maxHistoryBytes);
     const replaced = replaceOversizedChatHistoryMessages({
@@ -613,15 +612,20 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
     let thinkingLevel = entry?.thinkingLevel;
     if (!thinkingLevel) {
-      const sessionAgentId = resolveSessionAgentId({ sessionKey, config: cfg });
-      const { provider, model } = resolveSessionModelRef(cfg, entry, sessionAgentId);
-      const catalog = await context.loadGatewayModelCatalog();
-      thinkingLevel = resolveThinkingDefault({
-        cfg,
-        provider,
-        model,
-        catalog,
-      });
+      const configured = cfg.agents?.defaults?.thinkingDefault;
+      if (configured) {
+        thinkingLevel = configured;
+      } else {
+        const sessionAgentId = resolveSessionAgentId({ sessionKey, config: cfg });
+        const { provider, model } = resolveSessionModelRef(cfg, entry, sessionAgentId);
+        const catalog = await context.loadGatewayModelCatalog();
+        thinkingLevel = resolveThinkingDefault({
+          cfg,
+          provider,
+          model,
+          catalog,
+        });
+      }
     }
     const verboseLevel = entry?.verboseLevel ?? cfg.agents?.defaults?.verboseDefault;
     respond(true, {
@@ -753,6 +757,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
     let parsedMessage = inboundMessage;
     let parsedImages: ChatImageContent[] = [];
+    let parsedAudioPaths: string[] = [];
     if (normalizedAttachments.length > 0) {
       try {
         const parsed = await parseMessageWithAttachments(inboundMessage, normalizedAttachments, {
@@ -761,6 +766,16 @@ export const chatHandlers: GatewayRequestHandlers = {
         });
         parsedMessage = parsed.message;
         parsedImages = parsed.images;
+
+        const audio = await extractAudioAttachments(normalizedAttachments, {
+          maxBytes: 20_000_000,
+          log: context.logGateway,
+        });
+        for (const item of audio) {
+          const buffer = Buffer.from(item.data, "base64");
+          const saved = await saveMediaBuffer(buffer, item.mimeType, "inbound", 20_000_000, item.fileName);
+          parsedAudioPaths.push(saved.path);
+        }
       } catch (err) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, String(err)));
         return;
@@ -768,6 +783,28 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
     const rawSessionKey = p.sessionKey;
     const { cfg, entry, canonicalKey: sessionKey } = loadSessionEntry(rawSessionKey);
+
+    // Transcribe audio attachments via tools.media.audio pipeline (e.g. ElevenLabs Scribe)
+    // and replace the body with the transcript so the agent receives text, not a file path.
+    if (parsedAudioPaths.length > 0 && !parsedMessage) {
+      try {
+        const { transcribeFirstAudio } = await import("../../media-understanding/audio-preflight.js");
+        const audioCtx = {
+          MediaPath: parsedAudioPaths[0],
+          MediaPaths: parsedAudioPaths,
+          MediaUrl: parsedAudioPaths[0],
+          MediaUrls: parsedAudioPaths,
+          MediaTypes: ["audio/webm"],
+        };
+        const transcript = await transcribeFirstAudio({ ctx: audioCtx, cfg });
+        if (transcript) {
+          parsedMessage = transcript;
+        }
+      } catch (err) {
+        context.logGateway.warn(`chat.send: audio transcription failed: ${String(err)}`);
+      }
+    }
+
     const timeoutMs = resolveAgentTimeoutMs({
       cfg,
       overrideMs: p.timeoutMs,
@@ -841,24 +878,6 @@ export const chatHandlers: GatewayRequestHandlers = {
       );
       const commandBody = injectThinking ? `/think ${p.thinking} ${parsedMessage}` : parsedMessage;
       const clientInfo = client?.connect?.client;
-      const routeChannelCandidate = normalizeMessageChannel(
-        entry?.deliveryContext?.channel ?? entry?.lastChannel,
-      );
-      const routeToCandidate = entry?.deliveryContext?.to ?? entry?.lastTo;
-      const routeAccountIdCandidate =
-        entry?.deliveryContext?.accountId ?? entry?.lastAccountId ?? undefined;
-      const routeThreadIdCandidate = entry?.deliveryContext?.threadId ?? entry?.lastThreadId;
-      const hasDeliverableRoute =
-        routeChannelCandidate &&
-        routeChannelCandidate !== INTERNAL_MESSAGE_CHANNEL &&
-        typeof routeToCandidate === "string" &&
-        routeToCandidate.trim().length > 0;
-      const originatingChannel = hasDeliverableRoute
-        ? routeChannelCandidate
-        : INTERNAL_MESSAGE_CHANNEL;
-      const originatingTo = hasDeliverableRoute ? routeToCandidate : undefined;
-      const accountId = hasDeliverableRoute ? routeAccountIdCandidate : undefined;
-      const messageThreadId = hasDeliverableRoute ? routeThreadIdCandidate : undefined;
       // Inject timestamp so agents know the current date/time.
       // Only BodyForAgent gets the timestamp — Body stays raw for UI display.
       // See: https://github.com/moltbot/moltbot/issues/3658
@@ -873,10 +892,7 @@ export const chatHandlers: GatewayRequestHandlers = {
         SessionKey: sessionKey,
         Provider: INTERNAL_MESSAGE_CHANNEL,
         Surface: INTERNAL_MESSAGE_CHANNEL,
-        OriginatingChannel: originatingChannel,
-        OriginatingTo: originatingTo,
-        AccountId: accountId,
-        MessageThreadId: messageThreadId,
+        OriginatingChannel: INTERNAL_MESSAGE_CHANNEL,
         ChatType: "direct",
         CommandAuthorized: true,
         MessageSid: clientRunId,
@@ -884,6 +900,10 @@ export const chatHandlers: GatewayRequestHandlers = {
         SenderName: clientInfo?.displayName,
         SenderUsername: clientInfo?.displayName,
         GatewayClientScopes: client?.connect?.scopes,
+        MediaPath: parsedAudioPaths[0],
+        MediaUrl: parsedAudioPaths[0],
+        MediaPaths: parsedAudioPaths.length > 0 ? parsedAudioPaths : undefined,
+        MediaUrls: parsedAudioPaths.length > 0 ? parsedAudioPaths : undefined,
       };
 
       const agentId = resolveSessionAgentId({
@@ -896,12 +916,21 @@ export const chatHandlers: GatewayRequestHandlers = {
         channel: INTERNAL_MESSAGE_CHANNEL,
       });
       const finalReplyParts: string[] = [];
+      const collectedMediaUrls: string[] = [];
       const dispatcher = createReplyDispatcher({
         ...prefixOptions,
         onError: (err) => {
           context.logGateway.warn(`webchat dispatch failed: ${formatForLog(err)}`);
         },
         deliver: async (payload, info) => {
+          // Capture media URLs from tool results (e.g. TTS audio files)
+          if (payload.mediaUrls) {
+            for (const url of payload.mediaUrls) {
+              if (url && !collectedMediaUrls.includes(url)) {
+                collectedMediaUrls.push(url);
+              }
+            }
+          }
           if (info.kind !== "final") {
             return;
           }
@@ -982,6 +1011,22 @@ export const chatHandlers: GatewayRequestHandlers = {
                 };
               }
             }
+            // If TTS audio was generated, extract the filename for the /media/ endpoint
+            // and attach it to the broadcast so the frontend can play it without regeneration.
+            const mediaUrls = collectedMediaUrls.map((u) => {
+              const parts = u.split("/");
+              return `/media/${parts[parts.length - 1]}`;
+            });
+            const audioUrls = mediaUrls.filter((u) => /\.(mp3|opus|ogg|wav|webm)$/i.test(u));
+            const imageUrls = mediaUrls.filter((u) => /\.(png|jpe?g|gif|webp)$/i.test(u));
+            if (message) {
+              if (audioUrls.length > 0) {
+                (message as Record<string, unknown>).audioUrl = audioUrls[0];
+              }
+              if (imageUrls.length > 0) {
+                (message as Record<string, unknown>).mediaUrl = imageUrls[0];
+              }
+            }
             broadcastChatFinal({
               context,
               runId: clientRunId,
@@ -1009,6 +1054,28 @@ export const chatHandlers: GatewayRequestHandlers = {
               } catch (mirrorErr) {
                 context.logGateway.warn(`[mirror] error: ${String(mirrorErr)}`);
               }
+            }
+          } else if (collectedMediaUrls.length > 0) {
+            // Agent run handled its own broadcast, but we still need to notify
+            // the frontend about any TTS audio URLs so it can show play buttons.
+            const audioUrls = collectedMediaUrls
+              .filter((u) => /\.(mp3|opus|ogg|wav|webm)$/i.test(u))
+              .map((u) => {
+                const parts = u.split("/");
+                return `/media/${parts[parts.length - 1]}`;
+              });
+            if (audioUrls.length > 0) {
+              const seq = nextChatSeq(
+                { agentRunSeq: context.agentRunSeq },
+                clientRunId,
+              );
+              context.broadcast("chat", {
+                runId: clientRunId,
+                sessionKey: rawSessionKey,
+                seq,
+                state: "audioReady" as const,
+                audioUrl: audioUrls[0],
+              });
             }
           }
           context.dedupe.set(`chat:${clientRunId}`, {
