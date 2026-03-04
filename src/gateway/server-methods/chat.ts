@@ -923,6 +923,10 @@ export const chatHandlers: GatewayRequestHandlers = {
           context.logGateway.warn(`webchat dispatch failed: ${formatForLog(err)}`);
         },
         deliver: async (payload, info) => {
+          // Log every deliver call so we can see which kinds arrive
+          context.logGateway.info(
+            `[media-deliver] kind=${info.kind} hasMediaUrls=${Array.isArray(payload.mediaUrls)} mediaUrl=${payload.mediaUrl} text=${(payload.text ?? "").slice(0, 80)}`,
+          );
           // Capture media URLs from tool results (e.g. TTS audio / generated images)
           if (payload.mediaUrls) {
             for (const url of payload.mediaUrls) {
@@ -934,28 +938,27 @@ export const chatHandlers: GatewayRequestHandlers = {
           if (payload.mediaUrl && !collectedMediaUrls.includes(payload.mediaUrl)) {
             collectedMediaUrls.push(payload.mediaUrl);
           }
-          // Also capture MEDIA:/... markers from payload text (tool outputs that
-          // embed media path in textual content).
+          // Capture MEDIA:/... from tool result text BEFORE early return
           const payloadText = payload.text?.trim() ?? "";
           if (payloadText) {
             const mediaMatches = payloadText.match(/MEDIA:\/[^\s`]+/g) ?? [];
             for (const marker of mediaMatches) {
               const mediaPath = marker.slice("MEDIA:".length).trim();
               if (mediaPath && !collectedMediaUrls.includes(mediaPath)) {
+                context.logGateway.info(`[media-deliver] captured from text: ${mediaPath}`);
                 collectedMediaUrls.push(mediaPath);
               }
             }
           }
 
-
+          // Only accumulate final text for the chat response
           if (info.kind !== "final") {
             return;
           }
-          const text = payloadText;
-          if (!text) {
+          if (!payloadText) {
             return;
           }
-          finalReplyParts.push(text);
+          finalReplyParts.push(payloadText);
         },
       });
 
