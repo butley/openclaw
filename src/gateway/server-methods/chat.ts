@@ -961,20 +961,32 @@ export const chatHandlers: GatewayRequestHandlers = {
 
       let agentRunStarted = false;
       const agentEventHandler = (evt: { stream: string; data?: Record<string, unknown> }) => {
+        context.logGateway.info(
+          `[media-capture] agentEvent: stream=${evt.stream} kind=${evt.data?.kind}`,
+        );
         // Capture media URLs from tool result events during agent runs
         if (evt.stream === "tool" && evt.data?.kind === "result") {
           const result = evt.data.result as Record<string, unknown> | undefined;
           const content = result?.content;
+          context.logGateway.info(
+            `[media-capture] tool result content type=${Array.isArray(content) ? "array" : typeof content} length=${Array.isArray(content) ? content.length : "n/a"}`,
+          );
           if (Array.isArray(content)) {
             for (const block of content) {
               if (typeof block === "object" && block && block.type === "text") {
                 const text = (block as Record<string, unknown>).text;
                 if (typeof text === "string") {
+                  context.logGateway.info(
+                    `[media-capture] text block: ${text.slice(0, 200)}`,
+                  );
                   const mediaMatches = text.match(/MEDIA:\/[^\s`]+/g) ?? [];
                   for (const marker of mediaMatches) {
                     const mediaPath = marker.slice("MEDIA:".length).trim();
                     if (mediaPath && !collectedMediaUrls.includes(mediaPath)) {
                       collectedMediaUrls.push(mediaPath);
+                      context.logGateway.info(
+                        `[media-capture] ADDED: ${mediaPath} collected=${JSON.stringify(collectedMediaUrls)}`,
+                      );
                     }
                   }
                 }
@@ -1098,6 +1110,9 @@ export const chatHandlers: GatewayRequestHandlers = {
               }
             }
           } else if (collectedMediaUrls.length > 0) {
+            context.logGateway.info(
+              `[media-emit] agentRunStarted=true, collectedMediaUrls=${JSON.stringify(collectedMediaUrls)}`,
+            );
             // Agent run handled its own broadcast. Emit structured media hints so
             // the frontend can classify/render message cards without parsing paths.
             const mediaUrls = collectedMediaUrls.map((u) => {
@@ -1106,6 +1121,9 @@ export const chatHandlers: GatewayRequestHandlers = {
             });
             const audioUrls = mediaUrls.filter((u) => /\.(mp3|opus|ogg|wav|webm)$/i.test(u));
             const imageUrls = mediaUrls.filter((u) => /\.(png|jpe?g|gif|webp)$/i.test(u));
+            context.logGateway.info(
+              `[media-emit] audioUrls=${JSON.stringify(audioUrls)} imageUrls=${JSON.stringify(imageUrls)}`,
+            );
 
             if (audioUrls.length > 0) {
               const seq = nextChatSeq(
