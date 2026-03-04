@@ -609,6 +609,14 @@ export async function dispatchReplyFromConfig(params: {
       // tool results (for example TTS audio) must still be delivered.
       const hasMedia = Boolean(payload.mediaUrl) || (payload.mediaUrls?.length ?? 0) > 0;
       if (!hasMedia) {
+        // Check for MEDIA: markers in text (e.g. image_generate tool results).
+        // Extract paths into mediaUrls so the deliver callback can collect them
+        // for imageReady/audioReady emission.
+        const mediaMatches = (payload.text ?? "").match(/MEDIA:\/[^\s`]+/g);
+        if (mediaMatches && mediaMatches.length > 0) {
+          const urls = mediaMatches.map((m) => m.slice("MEDIA:".length).trim());
+          return { ...payload, text: undefined, mediaUrls: urls };
+        }
         return null;
       }
       return { ...payload, text: undefined };
