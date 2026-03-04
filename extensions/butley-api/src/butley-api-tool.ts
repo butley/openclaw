@@ -45,6 +45,14 @@ const ACTIONS: Record<
     path: "agentApi:deleteTaskComment",
     requiredArgs: ["commentId"],
   },
+  // Documents
+  listDocs: { method: "query", path: "agentApi:listDocs" },
+  getDoc: { method: "query", path: "agentApi:getDoc", requiredArgs: ["docId"] },
+  createDoc: { method: "mutation", path: "agentApi:createDoc", requiredArgs: ["title"] },
+  updateDoc: { method: "mutation", path: "agentApi:updateDoc", requiredArgs: ["docId"] },
+  deleteDoc: { method: "mutation", path: "agentApi:deleteDoc", requiredArgs: ["docId"] },
+  shareDoc: { method: "mutation", path: "agentApi:shareDoc", requiredArgs: ["docId"] },
+  unshareDoc: { method: "mutation", path: "agentApi:unshareDoc", requiredArgs: ["docId"] },
   // Contacts
   listContacts: { method: "query", path: "agentApi:listContacts" },
   findOrCreateContact: {
@@ -94,6 +102,15 @@ Use this tool to manage tasks, projects, comments, and contacts. Data persists a
 - listTaskComments: taskId (required) — returns comments on a task
 - addTaskComment: taskId (required), body (required), author (optional, defaults to "Bob")
 - deleteTaskComment: commentId (required)
+
+## Documents
+- listDocs: optional filters: projectId, limit
+- getDoc: docId (required)
+- createDoc: title (required), markdown, projectId, tags, owner
+- updateDoc: docId (required), + title, markdown, tags, archived, pinned
+- deleteDoc: docId (required)
+- shareDoc: docId (required) — makes doc public, returns { slug, url }
+- unshareDoc: docId (required) — revokes public access
 
 ## Contacts
 - listContacts: no args
