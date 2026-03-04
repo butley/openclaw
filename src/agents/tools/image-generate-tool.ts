@@ -10,7 +10,7 @@ const ImageGenerateToolSchema = Type.Object({
   prompt: Type.String({ description: "Prompt to generate an image." }),
   model: Type.Optional(
     Type.String({
-      description: "Gemini image model id (default: gemini-2.5-flash-image-preview).",
+      description: "Gemini image model id (default: gemini-2.5-flash-image).",
     }),
   ),
   filename: Type.Optional(
@@ -48,7 +48,7 @@ export function createImageGenerateTool(opts?: { config?: OpenClawConfig }): Any
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
       const prompt = readStringParam(params, "prompt", { required: true });
-      const model = readStringParam(params, "model") || "gemini-2.5-flash-image-preview";
+      const model = readStringParam(params, "model") || "gemini-2.5-flash-image";
       const fileName = sanitizeFilename(readStringParam(params, "filename"));
 
       const cfg = opts?.config ?? loadConfig();
