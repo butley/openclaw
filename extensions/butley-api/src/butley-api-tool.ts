@@ -95,7 +95,7 @@ Use this tool to manage tasks, projects, comments, and contacts. Data persists a
 - getTask: taskId (required)
 - createTask: title (required), description, body (markdown content), status, priority (low|medium|high|urgent), owner, dueDate (timestamp ms), tags (string[]), notes, category, projectId, position
 - updateTask: taskId (required), + any fields above to update
-- patchTaskBody: taskId (required), ops (required) — surgical edits to body without sending full text. ops is array of {type, find?, replace?, content?, after?}. Types: "replace" (find→replace, all occurrences), "append" (add to end), "prepend" (add to start), "insert_after" (insert after marker). Use instead of updateTask when body is long.
+- patchTaskBody: taskId (required), ops (required) — surgical edits to body without sending full text. ops is array of {type, find?, replace?, content?, after?}. Types: "replace" (find→replace, all occurrences), "append" (add to end), "prepend" (add to start), "insert_after" (insert after marker). Use instead of updateTask when body is long. ⚠️ Keep find/after fields SHORT (headings, not content) — long strings in ops also truncate.
 - deleteTask: taskId (required)
 
 ## Projects
