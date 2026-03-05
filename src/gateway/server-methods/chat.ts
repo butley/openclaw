@@ -9,6 +9,7 @@ import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.j
 import type { MsgContext } from "../../auto-reply/templating.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
 import { resolveSessionFilePath } from "../../config/sessions.js";
+import { saveMediaBuffer } from "../../media/store.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import {
   stripInlineDirectiveTagsForDisplay,
@@ -23,7 +24,11 @@ import {
   isChatStopCommandText,
   resolveChatRunExpiresAtMs,
 } from "../chat-abort.js";
-import { type ChatImageContent, parseMessageWithAttachments } from "../chat-attachments.js";
+import {
+  extractAudioAttachments,
+  type ChatImageContent,
+  parseMessageWithAttachments,
+} from "../chat-attachments.js";
 import { stripEnvelopeFromMessage, stripEnvelopeFromMessages } from "../chat-sanitize.js";
 import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
 import {
@@ -556,7 +561,67 @@ export const chatHandlers: GatewayRequestHandlers = {
     const max = Math.min(hardMax, requested);
     const sliced = rawMessages.length > max ? rawMessages.slice(-max) : rawMessages;
     const sanitized = stripEnvelopeFromMessages(sliced);
+    // Extract audioUrl mapping BEFORE sanitize (which deletes `details`).
+    // Maps message index → audioUrl for the final assistant message after a TTS toolResult.
+    // Skips intermediate assistant messages with stopReason="toolUse" (still in tool-call loop).
+    const audioUrlByIndex = new Map<number, string>();
+    {
+      let pendingAudioUrl: string | undefined;
+      for (let i = 0; i < sanitized.length; i++) {
+        const msg = sanitized[i] as Record<string, unknown>;
+        const role = msg.role as string | undefined;
+        const details = msg.details as Record<string, unknown> | undefined;
+        if (role === "toolResult" && details?.audioUrl) {
+          // TTS tool completed — hold the audioUrl until final assistant message
+          pendingAudioUrl = details.audioUrl as string;
+        } else if (role === "assistant") {
+          const stopReason = msg.stopReason as string | undefined;
+          if (pendingAudioUrl && stopReason !== "toolUse") {
+            // Final assistant message (stop/end-turn) — attach audioUrl here
+            audioUrlByIndex.set(i, pendingAudioUrl);
+            pendingAudioUrl = undefined;
+          }
+          // If stopReason=toolUse, keep pendingAudioUrl for the next assistant
+        } else if (role === "user") {
+          // User message resets state (new turn)
+          pendingAudioUrl = undefined;
+        }
+      }
+    }
+    // Same pattern for imageUrl (image_generate tool result → final assistant message).
+    const imageUrlByIndex = new Map<number, string>();
+    {
+      let pendingImageUrl: string | undefined;
+      for (let i = 0; i < sanitized.length; i++) {
+        const msg = sanitized[i] as Record<string, unknown>;
+        const role = msg.role as string | undefined;
+        const details = msg.details as Record<string, unknown> | undefined;
+        if (role === "toolResult" && details?.imageUrl) {
+          pendingImageUrl = details.imageUrl as string;
+        } else if (role === "assistant") {
+          const stopReason = msg.stopReason as string | undefined;
+          if (pendingImageUrl && stopReason !== "toolUse") {
+            imageUrlByIndex.set(i, pendingImageUrl);
+            pendingImageUrl = undefined;
+          }
+        } else if (role === "user") {
+          pendingImageUrl = undefined;
+        }
+      }
+    }
     const normalized = sanitizeChatHistoryMessages(sanitized);
+    // Apply audioUrl to the sanitized (normalized) messages.
+    for (const [idx, url] of audioUrlByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).audioUrl = url;
+      }
+    }
+    // Apply imageUrl to the sanitized (normalized) messages.
+    for (const [idx, url] of imageUrlByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).imageUrl = url;
+      }
+    }
     const maxHistoryBytes = getMaxChatHistoryMessagesBytes();
     const perMessageHardCap = Math.min(CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES, maxHistoryBytes);
     const replaced = replaceOversizedChatHistoryMessages({
@@ -719,6 +784,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
     let parsedMessage = inboundMessage;
     let parsedImages: ChatImageContent[] = [];
+    let parsedAudioPaths: string[] = [];
     if (normalizedAttachments.length > 0) {
       try {
         const parsed = await parseMessageWithAttachments(inboundMessage, normalizedAttachments, {
@@ -727,6 +793,16 @@ export const chatHandlers: GatewayRequestHandlers = {
         });
         parsedMessage = parsed.message;
         parsedImages = parsed.images;
+
+        const audio = await extractAudioAttachments(normalizedAttachments, {
+          maxBytes: 20_000_000,
+          log: context.logGateway,
+        });
+        for (const item of audio) {
+          const buffer = Buffer.from(item.data, "base64");
+          const saved = await saveMediaBuffer(buffer, item.mimeType, "inbound", 20_000_000, item.fileName);
+          parsedAudioPaths.push(saved.path);
+        }
       } catch (err) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, String(err)));
         return;
@@ -734,6 +810,28 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
     const rawSessionKey = p.sessionKey;
     const { cfg, entry, canonicalKey: sessionKey } = loadSessionEntry(rawSessionKey);
+
+    // Transcribe audio attachments via tools.media.audio pipeline (e.g. ElevenLabs Scribe)
+    // and replace the body with the transcript so the agent receives text, not a file path.
+    if (parsedAudioPaths.length > 0 && !parsedMessage) {
+      try {
+        const { transcribeFirstAudio } = await import("../../media-understanding/audio-preflight.js");
+        const audioCtx = {
+          MediaPath: parsedAudioPaths[0],
+          MediaPaths: parsedAudioPaths,
+          MediaUrl: parsedAudioPaths[0],
+          MediaUrls: parsedAudioPaths,
+          MediaTypes: ["audio/webm"],
+        };
+        const transcript = await transcribeFirstAudio({ ctx: audioCtx, cfg });
+        if (transcript) {
+          parsedMessage = transcript;
+        }
+      } catch (err) {
+        context.logGateway.warn(`chat.send: audio transcription failed: ${String(err)}`);
+      }
+    }
+
     const timeoutMs = resolveAgentTimeoutMs({
       cfg,
       overrideMs: p.timeoutMs,
@@ -829,6 +927,10 @@ export const chatHandlers: GatewayRequestHandlers = {
         SenderName: clientInfo?.displayName,
         SenderUsername: clientInfo?.displayName,
         GatewayClientScopes: client?.connect?.scopes,
+        MediaPath: parsedAudioPaths[0],
+        MediaUrl: parsedAudioPaths[0],
+        MediaPaths: parsedAudioPaths.length > 0 ? parsedAudioPaths : undefined,
+        MediaUrls: parsedAudioPaths.length > 0 ? parsedAudioPaths : undefined,
       };
 
       const agentId = resolveSessionAgentId({
@@ -841,24 +943,61 @@ export const chatHandlers: GatewayRequestHandlers = {
         channel: INTERNAL_MESSAGE_CHANNEL,
       });
       const finalReplyParts: string[] = [];
+      const collectedMediaUrls: string[] = [];
       const dispatcher = createReplyDispatcher({
         ...prefixOptions,
         onError: (err) => {
           context.logGateway.warn(`webchat dispatch failed: ${formatForLog(err)}`);
         },
         deliver: async (payload, info) => {
+          // Log every deliver call so we can see which kinds arrive
+          context.logGateway.info(
+            `[media-deliver] kind=${info.kind} hasMediaUrls=${Array.isArray(payload.mediaUrls)} mediaUrl=${payload.mediaUrl} text=${(payload.text ?? "").slice(0, 80)}`,
+          );
+          // Capture media hints from every payload BEFORE any early-return.
+          captureMediaFromPayload(payload);
+          const payloadText = payload.text?.trim() ?? "";
+
+          // Only accumulate final text for the chat response
           if (info.kind !== "final") {
             return;
           }
-          const text = payload.text?.trim() ?? "";
-          if (!text) {
+          if (!payloadText) {
             return;
           }
-          finalReplyParts.push(text);
+          finalReplyParts.push(payloadText);
         },
       });
 
       let agentRunStarted = false;
+      const captureMediaFromPayload = (payload: {
+        text?: string;
+        mediaUrl?: string;
+        mediaUrls?: string[];
+      }) => {
+        if (Array.isArray(payload.mediaUrls)) {
+          for (const url of payload.mediaUrls) {
+            if (url && !collectedMediaUrls.includes(url)) {
+              collectedMediaUrls.push(url);
+            }
+          }
+        }
+        if (payload.mediaUrl && !collectedMediaUrls.includes(payload.mediaUrl)) {
+          collectedMediaUrls.push(payload.mediaUrl);
+        }
+        const text = payload.text?.trim() ?? "";
+        if (!text) {
+          return;
+        }
+        const mediaMatches = text.match(/MEDIA:\/[^\s`]+/g) ?? [];
+        for (const marker of mediaMatches) {
+          const mediaPath = marker.slice("MEDIA:".length).trim();
+          if (mediaPath && !collectedMediaUrls.includes(mediaPath)) {
+            collectedMediaUrls.push(mediaPath);
+          }
+        }
+      };
+
       void dispatchInboundMessage({
         ctx,
         cfg,
@@ -927,6 +1066,22 @@ export const chatHandlers: GatewayRequestHandlers = {
                 };
               }
             }
+            // If TTS audio was generated, extract the filename for the /media/ endpoint
+            // and attach it to the broadcast so the frontend can play it without regeneration.
+            const mediaUrls = collectedMediaUrls.map((u) => {
+              const parts = u.split("/");
+              return `/media/${parts[parts.length - 1]}`;
+            });
+            const audioUrls = mediaUrls.filter((u) => /\.(mp3|opus|ogg|wav|webm)$/i.test(u));
+            const imageUrls = mediaUrls.filter((u) => /\.(png|jpe?g|gif|webp)$/i.test(u));
+            if (message) {
+              if (audioUrls.length > 0) {
+                (message as Record<string, unknown>).audioUrl = audioUrls[0];
+              }
+              if (imageUrls.length > 0) {
+                (message as Record<string, unknown>).imageUrl = imageUrls[0];
+              }
+            }
             broadcastChatFinal({
               context,
               runId: clientRunId,
@@ -954,6 +1109,93 @@ export const chatHandlers: GatewayRequestHandlers = {
               } catch (mirrorErr) {
                 context.logGateway.warn(`[mirror] error: ${String(mirrorErr)}`);
               }
+            }
+          } else if (collectedMediaUrls.length > 0) {
+            context.logGateway.info(
+              `[media-emit] agentRunStarted=true, collectedMediaUrls=${JSON.stringify(collectedMediaUrls)}`,
+            );
+            // Agent run handled its own broadcast. Emit structured media hints so
+            // the frontend can classify/render message cards without parsing paths.
+            const mediaUrls = collectedMediaUrls.map((u) => {
+              const parts = u.split("/");
+              return `/media/${parts[parts.length - 1]}`;
+            });
+            const audioUrls = mediaUrls.filter((u) => /\.(mp3|opus|ogg|wav|webm)$/i.test(u));
+            const imageUrls = mediaUrls.filter((u) => /\.(png|jpe?g|gif|webp)$/i.test(u));
+            context.logGateway.info(
+              `[media-emit] audioUrls=${JSON.stringify(audioUrls)} imageUrls=${JSON.stringify(imageUrls)}`,
+            );
+
+            if (audioUrls.length > 0) {
+              const seq = nextChatSeq(
+                { agentRunSeq: context.agentRunSeq },
+                clientRunId,
+              );
+              context.broadcast("chat", {
+                runId: clientRunId,
+                sessionKey: rawSessionKey,
+                seq,
+                state: "audioReady" as const,
+                audioUrl: audioUrls[0],
+              });
+            }
+
+            if (imageUrls.length > 0) {
+              const seq = nextChatSeq(
+                { agentRunSeq: context.agentRunSeq },
+                clientRunId,
+              );
+              context.broadcast("chat", {
+                runId: clientRunId,
+                sessionKey: rawSessionKey,
+                seq,
+                state: "imageReady" as const,
+                imageUrl: imageUrls[0],
+              });
+            }
+          } else if (agentRunStarted) {
+            // Fallback: ACP dispatch path doesn't forward MEDIA markers through
+            // the deliver callback (tool results are formatted as summaries).
+            // Scan the session transcript for tool results with imageUrl in details.
+            try {
+              const { storePath: postRunStorePath, entry: postRunEntry } =
+                loadSessionEntry(sessionKey);
+              const postRunSessionId = postRunEntry?.sessionId ?? entry?.sessionId;
+              if (postRunSessionId && postRunStorePath) {
+                const recentMsgs = readSessionMessages(
+                  postRunSessionId,
+                  postRunStorePath,
+                  postRunEntry?.sessionFile,
+                );
+                // Look for the last toolResult with details.imageUrl
+                for (let i = recentMsgs.length - 1; i >= 0; i--) {
+                  const msg = recentMsgs[i] as Record<string, unknown>;
+                  if (msg.role !== "toolResult") continue;
+                  const details = msg.details as Record<string, unknown> | undefined;
+                  if (details?.imageUrl) {
+                    const imageUrl = details.imageUrl as string;
+                    context.logGateway.info(
+                      `[media-emit] extracted imageUrl from session transcript: ${imageUrl}`,
+                    );
+                    const seq = nextChatSeq(
+                      { agentRunSeq: context.agentRunSeq },
+                      clientRunId,
+                    );
+                    context.broadcast("chat", {
+                      runId: clientRunId,
+                      sessionKey: rawSessionKey,
+                      seq,
+                      state: "imageReady" as const,
+                      imageUrl,
+                    });
+                    break;
+                  }
+                }
+              }
+            } catch (scanErr) {
+              context.logGateway.warn(
+                `[media-emit] session transcript scan failed: ${String(scanErr)}`,
+              );
             }
           }
           context.dedupe.set(`chat:${clientRunId}`, {

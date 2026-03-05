@@ -35,6 +35,9 @@ export function createTtsTool(opts?: {
       });
 
       if (result.success && result.audioPath) {
+        const pathMod = await import("node:path");
+        const filename = pathMod.basename(result.audioPath);
+        const audioUrl = `/media/${filename}`;
         const lines: string[] = [];
         // Tag Opus output as a voice bubble instead of a file attachment.
         if (result.voiceCompatible) {
@@ -46,7 +49,7 @@ export function createTtsTool(opts?: {
         lines.push(`MEDIA:${result.audioPath}`);
         return {
           content: [{ type: "text", text: lines.join("\n") }],
-          details: { audioPath: result.audioPath, provider: result.provider },
+          details: { audioPath: result.audioPath, audioUrl, provider: result.provider },
         };
       }
 

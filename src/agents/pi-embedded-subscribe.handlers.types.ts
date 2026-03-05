@@ -91,7 +91,9 @@ export type EmbeddedPiSubscribeContext = {
   shouldEmitToolResult: () => boolean;
   shouldEmitToolOutput: () => boolean;
   emitToolSummary: (toolName?: string, meta?: string) => void;
+  emitToolEndSummary?: (toolName?: string, meta?: string, result?: unknown, duration?: string, error?: string, args?: unknown) => void;
   emitToolOutput: (toolName?: string, meta?: string, output?: string) => void;
+  isLightVerbose?: () => boolean;
   stripBlockTags: (
     text: string,
     state: { thinking: boolean; final: boolean; inlineCode?: InlineCodeState },
@@ -132,7 +134,13 @@ export type EmbeddedPiSubscribeContext = {
  */
 export type ToolHandlerParams = Pick<
   SubscribeEmbeddedPiSessionParams,
-  "runId" | "onBlockReplyFlush" | "onAgentEvent" | "onToolResult"
+  | "runId"
+  | "onBlockReplyFlush"
+  | "onAgentEvent"
+  | "onToolResult"
+  | "sessionKey"
+  | "sessionId"
+  | "agentId"
 >;
 
 export type ToolHandlerState = Pick<
@@ -160,7 +168,9 @@ export type ToolHandlerContext = {
   shouldEmitToolResult: () => boolean;
   shouldEmitToolOutput: () => boolean;
   emitToolSummary: (toolName?: string, meta?: string) => void;
+  emitToolEndSummary?: (toolName?: string, meta?: string, result?: unknown, duration?: string, error?: string, args?: unknown) => void;
   emitToolOutput: (toolName?: string, meta?: string, output?: string) => void;
+  isLightVerbose?: () => boolean;
   trimMessagingToolSent: () => void;
 };
 

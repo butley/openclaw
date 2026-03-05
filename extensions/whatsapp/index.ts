@@ -11,6 +11,8 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     setWhatsAppRuntime(api.runtime);
     api.registerChannel({ plugin: whatsappPlugin });
+    // whatsapp_login is provided by core tooling/runtime.
+    // Do not register tool here (would duplicate names in LLM tool list).
   },
 };
 

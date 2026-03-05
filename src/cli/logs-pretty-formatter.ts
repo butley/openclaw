@@ -118,6 +118,214 @@ const C_TIME = fg256(240);
 const C_BODY = fg256(252);
 const C_SEP = fg256(236);
 
+// ─── Tool / Run formatting ───────────────────────────────────────
+const C_TOOL_NAME = fg256(183, true); // bold lavender
+const C_TOOL_META = fg256(248); // dim grey
+const C_TOOL_PHASE = fg256(243); // dim for phase arrows
+
+const TOOL_EMOJI: Record<string, string> = {
+  exec: "⚙",
+  process: "🧰",
+  read: "📖",
+  write: "✏",
+  edit: "📝",
+  apply_patch: "🩹",
+  attach: "📎",
+  browser: "🌐",
+  canvas: "🖼️",
+  web_search: "🔍",
+  web_fetch: "🌐",
+  image: "🖼️",
+  message: "💬",
+  tts: "🔊",
+  cron: "⏱",
+  gateway: "⚙",
+  memory_search: "🧠",
+  memory_get: "🧠",
+  nodes: "📡",
+  sessions_spawn: "🚀",
+  sessions_send: "📨",
+  sessions_list: "📋",
+  sessions_history: "📜",
+  session_status: "📊",
+  subagents: "🤖",
+  whatsapp_login: "📱",
+  agents_list: "👥",
+};
+
+const MODEL_SHORT: Record<string, string> = {
+  "claude-opus-4-6": "opus-4.6",
+  "claude-opus-4-5": "opus-4.5",
+  "claude-sonnet-4-6": "sonnet-4.6",
+  "claude-sonnet-4-5": "sonnet-4.5",
+  "claude-haiku-4-5": "haiku-4.5",
+};
+
+// State for run/tool tracking
+const _runInfo = new Map<string, { model: string }>();
+const _toolStartTime = new Map<string, string>();
+const TOOL_MERGE_THRESHOLD_S = 2.0;
+
+function parseRunKv(rest: string): Record<string, string> {
+  const kv: Record<string, string> = {};
+  for (const m of rest.matchAll(/(\w+)=(\S+)/g)) {
+    kv[m[1]] = m[2];
+  }
+  return kv;
+}
+
+/** Format `embedded run *` lifecycle lines. Returns null if not a run line, '' to suppress. */
+function formatRunLine(msg: string): string | null {
+  const m = msg.match(
+    /^embedded run (start|prompt start|agent start|agent end|prompt end|done): runId=(\S+)(.*)/,
+  );
+  if (!m) {
+    return null;
+  }
+  const [, phase, runId, rest] = m;
+  const kv = parseRunKv(rest);
+
+  if (phase === "start") {
+    const model = MODEL_SHORT[kv.model ?? ""] ?? kv.model ?? "";
+    const thinking = kv.thinking ?? "";
+    const channel = kv.messageChannel ?? "";
+    _runInfo.set(runId, { model });
+    const parts = [`${C_TOOL_PHASE}▶${RST} 🤖 ${C_TOOL_NAME}${model}${RST}`];
+    if (thinking) {
+      parts.push(`${C_TOOL_META}thinking=${thinking}${RST}`);
+    }
+    if (channel) {
+      parts.push(`${C_TOOL_META}(${channel})${RST}`);
+    }
+    return parts.join(" ");
+  }
+  if (phase === "prompt start") {
+    return "";
+  }
+  if (phase === "agent start") {
+    const info = _runInfo.get(runId);
+    const model = info?.model ?? "";
+    const modelPart = model ? ` ${C_TOOL_NAME}${model}${RST}` : "";
+    return ` ${C_TOOL_META}📡 calling API…${RST}${modelPart}`;
+  }
+  if (phase === "agent end") {
+    const isError = kv.isError === "true";
+    if (isError) {
+      return ` \x1b[1;31m📡 API error${RST}`;
+    }
+    return "";
+  }
+  if (phase === "prompt end") {
+    const info = _runInfo.get(runId);
+    _runInfo.delete(runId);
+    const model = info?.model ?? "";
+    const ms = kv.durationMs ? parseFloat(kv.durationMs) : null;
+    const durStr = ms !== null ? ` ${C_TOOL_META}${(ms / 1000).toFixed(1)}s${RST}` : "";
+    const modelPart = model ? ` ${C_TOOL_NAME}${model}${RST}` : "";
+    return `${C_TOOL_PHASE}■${RST} 🤖${modelPart} done${durStr}`;
+  }
+  if (phase === "done") {
+    return "";
+  }
+  return null;
+}
+
+/**
+ * Format exec/write/edit meta: strip heredoc content lines, show compact summary.
+ *
+ * Raw meta looks like:
+ *   "create folder ~/x → show > → run import → run import → run ..."
+ *   "search \"foo\" in src/ -> show first 10 lines"
+ *
+ * Strategy:
+ *   1. Split on " → run " — first chunk is the command, rest are content lines.
+ *   2. If content lines present, replace with "[+N lines]".
+ *   3. Strip " → show >" heredoc marker.
+ *   4. Truncate to MAX_META_CHARS.
+ */
+const MAX_META_CHARS = 90;
+
+function formatToolMeta(toolName: string, raw: string): string {
+  // Take only the first real line (meta may span newlines in rare cases)
+  let meta = raw
+    .replace(/\n[\s\S]*/s, "")
+    .trim()
+    .replace(/`$/, "")
+    .trim();
+
+  // Split off heredoc content lines ("→ run <code>")
+  const runParts = meta.split(/ → run /);
+  const command = runParts[0].trim();
+  const contentLineCount = runParts.length - 1;
+
+  // Also count content from "-> run" (arrow variants)
+  const altRunCount = (command.match(/ -> run /g) ?? []).length;
+  const totalLines = contentLineCount + altRunCount;
+
+  // Strip heredoc show marker "→ show >" and "-> show >"
+  let cmd = command
+    .replace(/ [→\->]+ show >.*$/, "")
+    .replace(/ -> show.*$/, "")
+    .trim();
+
+  // For write/edit, strip trailing heredoc echoes
+  if (toolName === "write" || toolName === "edit") {
+    cmd = cmd.replace(/\s+EOF\s*$/, "").trim();
+  }
+
+  // Truncate long commands
+  if (cmd.length > MAX_META_CHARS) {
+    cmd = cmd.slice(0, MAX_META_CHARS - 1) + "…";
+  }
+
+  if (totalLines > 0) {
+    return `${cmd} ${DIM}[+${totalLines} lines]${RST}`;
+  }
+  return cmd;
+}
+
+/** Format `embedded run tool start/end` lines. Returns null if not a tool line, '' to suppress. */
+function formatToolLine(msg: string, timeStr: string): string | null {
+  const m = msg.match(
+    /^embedded run tool (start|end): runId=\S+ tool=(\S+) toolCallId=(\S+)(?:\s+meta=(.+))?/s,
+  );
+  if (!m) {
+    return null;
+  }
+  const [, phase, toolName, toolCallId, metaRaw] = m;
+
+  // Format meta with tool-aware cleanup
+  const rawMeta = (metaRaw ?? "").trim();
+  const meta = rawMeta ? formatToolMeta(toolName, rawMeta) : "";
+
+  const emoji = TOOL_EMOJI[toolName] ?? "🧩";
+  const metaPart = meta ? ` ${C_TOOL_META}${meta}${RST}` : "";
+  const core = `${emoji} ${C_TOOL_NAME}${toolName}${RST}${metaPart}`;
+
+  if (phase === "start") {
+    _toolStartTime.set(toolCallId, timeStr);
+    return `${C_TOOL_PHASE}→${RST} ${core}`;
+  }
+  // end
+  const startTime = _toolStartTime.get(toolCallId);
+  _toolStartTime.delete(toolCallId);
+  let dur: number | null = null;
+  if (startTime && timeStr) {
+    try {
+      const toS = (t: string) =>
+        parseInt(t.slice(0, 2)) * 3600 + parseInt(t.slice(3, 5)) * 60 + parseInt(t.slice(6, 8));
+      dur = toS(timeStr) - toS(startTime);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (dur !== null && dur < TOOL_MERGE_THRESHOLD_S) {
+    return "";
+  }
+  const durStr = dur !== null ? ` ${C_TOOL_META}(${dur.toFixed(1)}s)${RST}` : "";
+  return `${C_TOOL_PHASE}✓${RST} ${core}${durStr}`;
+}
+
 // ─── Utilities ──────────────────────────────────────────────────
 
 function getTermWidth(): number {
@@ -184,6 +392,8 @@ function formatTimeBRT(ts: string): string {
 function stripSubsystemPrefix(msg: string): string {
   msg = msg.replace(/^\{"subsystem":"[^"]*"\}\s*/, "");
   msg = msg.replace(/^\{"module":"[^"]*"(?:,"runId":"[^"]*")?\}\s*/, "");
+  // Handle module meta with extra fields (e.g. cron's storePath)
+  msg = msg.replace(/^\{[^{}]*"module":"[^"]*"[^{}]*\}\s*(?=\{)/, "");
   msg = msg.replace(/^\[(?:WARN|INFO|ERROR|DEBUG)\]\s*/, "");
   return msg;
 }
@@ -226,6 +436,16 @@ function tryParseJson(s: string): Record<string, unknown> | null {
   try {
     return JSON.parse(trimmed) as Record<string, unknown>;
   } catch {
+    // msg may have trailing text after the JSON blob (e.g. "{ ... } auto-reply sent (text)")
+    // Try to extract just the JSON object portion by finding the last closing brace
+    const lastBrace = trimmed.lastIndexOf("}");
+    if (lastBrace > 0) {
+      try {
+        return JSON.parse(trimmed.slice(0, lastBrace + 1)) as Record<string, unknown>;
+      } catch {
+        // fall through
+      }
+    }
     return null;
   }
 }
@@ -323,6 +543,17 @@ function formatJsonBlob(msg: string, ccolor: string): string {
   if (!obj) {
     return phoneAlias(compactIds(msg));
   }
+  // Convert epoch-ms timestamps to human-readable BRT
+  for (const key of ["nextAt", "lastMessageAt", "lastAt"]) {
+    const val = obj[key];
+    if (typeof val === "number" && val > 1e12) {
+      try {
+        obj[key] = new Date(val).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo" });
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 
   const skip = new Set(["connectionId", "correlationId", "mediaPath", "mediaSizeBytes"]);
   const parts: string[] = [];
@@ -354,6 +585,119 @@ export interface PrettyFormatOptions {
 
 let prevTimeStr = "";
 
+/** Format session-memory hook lines (action=new, context resolved, reset fallback, etc.) */
+function formatSessionLine(msg: string): string | null {
+  // Pattern: {json} trailing description
+  const m = msg.match(/^(\{.*?\})\s+(.+)$/s);
+  if (!m) {
+    return null;
+  }
+  const obj = tryParseJson(m[1]);
+  if (!obj) {
+    return null;
+  }
+  const desc = m[2].trim();
+
+  // "Hook triggered for reset/new command"
+  if (desc.includes("Hook triggered") && typeof obj.action === "string") {
+    const icon = obj.action === "new" ? "🔄" : "♻️";
+    return `${icon} ${C_TOOL_NAME}session ${obj.action}${RST}`;
+  }
+
+  // "Session context resolved" — sessionId + hasCfg
+  if (desc.includes("Session context resolved") && typeof obj.sessionId === "string") {
+    const shortId = obj.sessionId.slice(0, 8);
+    const cfg = obj.hasCfg ? "✓" : "✗";
+    return `${C_TOOL_META}session ${shortId}… cfg=${cfg}${RST}`;
+  }
+
+  // "Loaded session content from reset fallback"
+  if (desc.includes("reset fallback") && typeof obj.latestResetPath === "string") {
+    const resetFile = obj.latestResetPath.split("/").pop() ?? "";
+    const tsMatch = resetFile.match(/\.reset\.(.+)$/);
+    const ts = tsMatch ? tsMatch[1] : resetFile;
+    return `${C_TOOL_META}↩ reset fallback${RST} ${DIM}${ts}${RST}`;
+  }
+
+  // "Session content loaded"
+  if (desc.includes("Session content loaded") && typeof obj.length === "number") {
+    return `${C_TOOL_META}session content ${obj.length} chars${RST}`;
+  }
+
+  // "Memory file path resolved"
+  if (desc.includes("Memory file path") && typeof obj.path === "string") {
+    const shortPath = obj.path.replace(/.*\/memory\//, "memory/");
+    return `${C_TOOL_META}→ ${shortPath}${RST}`;
+  }
+
+  // "Generated slug" / "Using fallback timestamp slug"
+  if (desc.includes("slug") && typeof obj.slug === "string") {
+    return `${C_TOOL_META}slug: ${obj.slug}${RST}`;
+  }
+
+  // "Calling generateSlugViaLLM..."
+  if (desc.includes("generateSlugViaLLM")) {
+    return `${C_TOOL_META}generating slug…${RST}`;
+  }
+
+  return null;
+}
+
+/** Format cron log lines: extracts trailing tag + timestamps. */
+function formatCronLine(msg: string, hcolor: string): string | null {
+  // Match: {json blob} trailing-tag (e.g. "cron: timer armed", "cron-reaper: ...")
+  const m = msg.match(/^(\{.*?\})\s+((?:cron|cron-reaper)[\s:].+)$/s);
+  if (!m) {
+    return null;
+  }
+  const obj = tryParseJson(m[1]);
+  if (!obj) {
+    return null;
+  }
+
+  // Normalize tag: strip "cron: " / "cron-reaper: " prefix
+  const tag = m[2].replace(/^cron(?:-reaper)?:\s*/, "").trim();
+  const parts: string[] = [`${hcolor}CRON${RST}`];
+
+  if (tag) {
+    parts.push(`${C_TOOL_META}${tag}${RST}`);
+  }
+
+  // Job name if present (e.g. job failed lines)
+  const jobName = obj["jobName"];
+  if (typeof jobName === "string" && jobName) {
+    parts.push(`${C_TOOL_NAME}${jobName}${RST}`);
+  }
+
+  // nextAt (timer armed) or nextWakeAtMs (cron: started)
+  const tsField = (obj["nextAt"] ?? obj["nextWakeAtMs"]) as number | undefined;
+  if (typeof tsField === "number" && tsField > 1e12) {
+    try {
+      const time = new Date(tsField).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo" });
+      parts.push(`${hcolor}→ ${time}${RST}`);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Compute real time-until-fire from nextAt, not the internal delayMs (polling interval)
+  if (typeof tsField === "number" && tsField > 1e12) {
+    const diffMs = tsField - Date.now();
+    if (diffMs > 0) {
+      const secs = diffMs / 1000;
+      const label = secs < 90 ? `${Math.round(secs)}s` : `${Math.round(secs / 60)}m`;
+      parts.push(`${C_TOOL_META}(in ${label})${RST}`);
+    }
+  }
+
+  // Job count for "cron: started"
+  const jobs = obj["jobs"];
+  if (typeof jobs === "number") {
+    parts.push(`${C_TOOL_META}${jobs} jobs${RST}`);
+  }
+
+  return parts.join(" ");
+}
 export function resetPrettyState(): void {
   prevTimeStr = "";
 }
@@ -412,6 +756,76 @@ export function formatPrettyLine(rawLine: string, _opts?: PrettyFormatOptions): 
   msg = stripSubsystemPrefix(msg);
   const trimmed = msg.trim();
   let content: string;
+
+  // ── Fix A: Suppress plugin startup table ──────────────────────
+  // The gateway logs a full plugin table on every startup via console.log.
+  // It's noisy in the pretty formatter — run `openclaw plugins list` instead.
+  // The table is logged as a single multi-line string (one console.log call),
+  // so we only need to match the first line (starts with ┌) plus the
+  // surrounding metadata lines logged as separate calls.
+  if (
+    /^Plugins \(\d+\/\d+ loaded\)/.test(trimmed) ||
+    trimmed === "Source roots:" ||
+    /^\s*(stock|workspace|global):\s/.test(trimmed) ||
+    // Full plugin table (renderTable output — single multi-line log entry)
+    (trimmed.startsWith("┌") && trimmed.includes("┬") && trimmed.includes("Status")) ||
+    // Fallback: individual header/footer rows if logged separately
+    (trimmed.startsWith("│") && trimmed.includes("Status") && trimmed.includes("Source"))
+  ) {
+    return null;
+  }
+
+  // Session-memory hook formatting
+  if (subsystem.includes("session-memory")) {
+    const sessFmt = formatSessionLine(trimmed);
+    if (sessFmt !== null) {
+      if (sessFmt === "") {
+        return null;
+      }
+      return `${separator}${prefix}${sessFmt}`;
+    }
+  }
+
+  // Cron line formatting
+  if (subsystem.includes("cron")) {
+    const cronFmt = formatCronLine(trimmed, cat.headerColor);
+    if (cronFmt) {
+      return `${separator}${prefix}${cronFmt}`;
+    }
+  }
+
+  // Agent run lifecycle + tool call formatting (highest priority)
+  const runFmt = formatRunLine(trimmed);
+  if (runFmt !== null) {
+    if (runFmt === "") {
+      return null;
+    } // suppress
+    return `${separator}${prefix}${wrapText(`${cat.headerColor}${runFmt}${RST}`, indent, cat.headerColor)}`;
+  }
+  const toolFmt = formatToolLine(trimmed, timeStr);
+  if (toolFmt !== null) {
+    if (toolFmt === "") {
+      return null;
+    } // suppress
+    return `${separator}${prefix}${wrapText(`${cat.headerColor}${toolFmt}${RST}`, indent, cat.headerColor)}`;
+  }
+
+  // ── Fix B: Multi-line content (tables, tool output, etc.) ───────
+  // When a single log entry contains embedded newlines (e.g. ASCII tables
+  // from `console.log(renderTable(...))`), render each line with proper
+  // indentation instead of collapsing everything into one mangled line.
+  if (trimmed.includes("\n")) {
+    const lines = trimmed.split("\n");
+    const pad = " ".repeat(indent);
+    const renderedLines = lines
+      .filter((_, i) => i > 0 || lines[0].trim() !== "") // skip leading blank
+      .map((line, i) =>
+        i === 0 ? `${cat.contentColor}${line}${RST}` : `${pad}${cat.contentColor}${line}${RST}`,
+      )
+      .join("\n");
+    // Trim trailing blank lines
+    return `${separator}${prefix}${renderedLines.trimEnd()}`;
+  }
 
   if (trimmed.startsWith("{")) {
     const obj = tryParseJson(trimmed);

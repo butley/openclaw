@@ -1,10 +1,7 @@
 import { resolveIdentityNamePrefix } from "../../../agents/identity.js";
 import { resolveChunkMode, resolveTextChunkLimit } from "../../../auto-reply/chunk.js";
 import { shouldComputeCommandAuthorized } from "../../../auto-reply/command-detection.js";
-import {
-  formatInboundEnvelope,
-  resolveEnvelopeFormatOptions,
-} from "../../../auto-reply/envelope.js";
+import { formatInboundEnvelope } from "../../../auto-reply/envelope.js";
 import type { getReplyFromConfig } from "../../../auto-reply/reply.js";
 import {
   buildHistoryContextFromEntries,
@@ -15,19 +12,23 @@ import { dispatchReplyWithBufferedBlockDispatcher } from "../../../auto-reply/re
 import type { ReplyPayload } from "../../../auto-reply/types.js";
 import { toLocationContext } from "../../../channels/location.js";
 import { createReplyPrefixOptions } from "../../../channels/reply-prefix.js";
+import { resolveInboundSessionEnvelopeContext } from "../../../channels/session-envelope.js";
 import type { loadConfig } from "../../../config/config.js";
 import { resolveMarkdownTableMode } from "../../../config/markdown-tables.js";
-import {
-  readSessionUpdatedAt,
-  recordSessionMetaFromInbound,
-  resolveStorePath,
-} from "../../../config/sessions.js";
+import { recordSessionMetaFromInbound } from "../../../config/sessions.js";
+// Butley patches: WA Streaming (extracted to avoid upstream conflicts)
+// formatToolNarration available via ../wa-verbose-utils.js when needed
+import { readSessionStreamLevel, resolveStreamDelayMs } from "../wa-streaming-utils.js";
 import { logVerbose, shouldLogVerbose } from "../../../globals.js";
 import type { getChildLogger } from "../../../logging.js";
 import { getAgentScopedMediaLocalRoots } from "../../../media/local-roots.js";
-import { readChannelAllowFromStore } from "../../../pairing/pairing-store.js";
 import type { resolveAgentRoute } from "../../../routing/resolve-route.js";
-import { jidToE164, normalizeE164 } from "../../../utils.js";
+import {
+  readStoreAllowFromForDmPolicy,
+  resolvePinnedMainDmOwnerFromAllowlist,
+  resolveDmGroupAccessWithCommandGate,
+} from "../../../security/dm-policy-shared.js";
+import { jidToE164, normalizeE164, sleep } from "../../../utils.js";
 import { resolveWhatsAppAccount } from "../../accounts.js";
 import { newConnectionId } from "../../reconnect.js";
 import { formatError } from "../../session.js";
@@ -48,13 +49,12 @@ export type GroupHistoryEntry = {
   senderJid?: string;
 };
 
-function normalizeAllowFromE164(values: Array<string | number> | undefined): string[] {
-  const list = Array.isArray(values) ? values : [];
-  return list
-    .map((entry) => String(entry).trim())
-    .filter((entry) => entry && entry !== "*")
-    .map((entry) => normalizeE164(entry))
-    .filter((entry): entry is string => Boolean(entry));
+function resolveWhatsAppBlockStreamingEnabled(params: {
+  cfg: ReturnType<typeof loadConfig>;
+  accountId: string;
+}): boolean {
+  const account = resolveWhatsAppAccount({ cfg: params.cfg, accountId: params.accountId });
+  return account.blockStreaming ?? false;
 }
 
 async function resolveWhatsAppCommandAuthorized(params: {
@@ -76,39 +76,59 @@ async function resolveWhatsAppCommandAuthorized(params: {
 
   const account = resolveWhatsAppAccount({ cfg: params.cfg, accountId: params.msg.accountId });
   const dmPolicy = account.dmPolicy ?? "pairing";
+  const groupPolicy = account.groupPolicy ?? "allowlist";
   const configuredAllowFrom = account.allowFrom ?? [];
   const configuredGroupAllowFrom =
     account.groupAllowFrom ?? (configuredAllowFrom.length > 0 ? configuredAllowFrom : undefined);
 
-  if (isGroup) {
-    if (!configuredGroupAllowFrom || configuredGroupAllowFrom.length === 0) {
-      return false;
-    }
-    if (configuredGroupAllowFrom.some((v) => String(v).trim() === "*")) {
-      return true;
-    }
-    return normalizeAllowFromE164(configuredGroupAllowFrom).includes(senderE164);
-  }
-
-  const storeAllowFrom =
-    dmPolicy === "allowlist"
-      ? []
-      : await readChannelAllowFromStore("whatsapp", process.env, params.msg.accountId).catch(
-          () => [],
-        );
-  const combinedAllowFrom = Array.from(
-    new Set([...(configuredAllowFrom ?? []), ...storeAllowFrom]),
-  );
-  const allowFrom =
-    combinedAllowFrom.length > 0
-      ? combinedAllowFrom
+  const storeAllowFrom = isGroup
+    ? []
+    : await readStoreAllowFromForDmPolicy({
+        provider: "whatsapp",
+        accountId: params.msg.accountId,
+        dmPolicy,
+      });
+  const dmAllowFrom =
+    configuredAllowFrom.length > 0
+      ? configuredAllowFrom
       : params.msg.selfE164
         ? [params.msg.selfE164]
         : [];
-  if (allowFrom.some((v) => String(v).trim() === "*")) {
-    return true;
-  }
-  return normalizeAllowFromE164(allowFrom).includes(senderE164);
+  const access = resolveDmGroupAccessWithCommandGate({
+    isGroup,
+    dmPolicy,
+    groupPolicy,
+    allowFrom: dmAllowFrom,
+    groupAllowFrom: configuredGroupAllowFrom,
+    storeAllowFrom,
+    isSenderAllowed: (allowEntries) => {
+      if (allowEntries.includes("*")) {
+        return true;
+      }
+      const normalizedEntries = allowEntries
+        .map((entry) => normalizeE164(String(entry)))
+        .filter((entry): entry is string => Boolean(entry));
+      return normalizedEntries.includes(senderE164);
+    },
+    command: {
+      useAccessGroups,
+      allowTextCommands: true,
+      hasControlCommand: true,
+    },
+  });
+  return access.commandAuthorized;
+}
+
+function resolvePinnedMainDmRecipient(params: {
+  cfg: ReturnType<typeof loadConfig>;
+  msg: WebInboundMsg;
+}): string | null {
+  const account = resolveWhatsAppAccount({ cfg: params.cfg, accountId: params.msg.accountId });
+  return resolvePinnedMainDmOwnerFromAllowlist({
+    dmScope: params.cfg.session?.dmScope,
+    allowFrom: account.allowFrom,
+    normalizeEntry: (entry) => normalizeE164(entry),
+  });
 }
 
 export async function processMessage(params: {
@@ -140,12 +160,9 @@ export async function processMessage(params: {
   suppressGroupHistoryClear?: boolean;
 }) {
   const conversationId = params.msg.conversationId ?? params.msg.from;
-  const storePath = resolveStorePath(params.cfg.session?.store, {
+  const { storePath, envelopeOptions, previousTimestamp } = resolveInboundSessionEnvelopeContext({
+    cfg: params.cfg,
     agentId: params.route.agentId,
-  });
-  const envelopeOptions = resolveEnvelopeFormatOptions(params.cfg);
-  const previousTimestamp = readSessionUpdatedAt({
-    storePath,
     sessionKey: params.route.sessionKey,
   });
   let combinedBody = buildInboundLine({
@@ -327,7 +344,17 @@ export async function processMessage(params: {
   // Only update main session's lastRoute when DM actually IS the main session.
   // When dmScope="per-channel-peer", the DM uses an isolated sessionKey,
   // and updating mainSessionKey would corrupt routing for the session owner.
-  if (dmRouteTarget && params.route.sessionKey === params.route.mainSessionKey) {
+  const pinnedMainDmRecipient = resolvePinnedMainDmRecipient({
+    cfg: params.cfg,
+    msg: params.msg,
+  });
+  const shouldUpdateMainLastRoute =
+    !pinnedMainDmRecipient || pinnedMainDmRecipient === dmRouteTarget;
+  if (
+    dmRouteTarget &&
+    params.route.sessionKey === params.route.mainSessionKey &&
+    shouldUpdateMainLastRoute
+  ) {
     updateLastRouteInBackground({
       cfg: params.cfg,
       backgroundTasks: params.backgroundTasks,
@@ -339,6 +366,14 @@ export async function processMessage(params: {
       ctx: ctxPayload,
       warn: params.replyLogger.warn.bind(params.replyLogger),
     });
+  } else if (
+    dmRouteTarget &&
+    params.route.sessionKey === params.route.mainSessionKey &&
+    pinnedMainDmRecipient
+  ) {
+    logVerbose(
+      `Skipping main-session last route update for ${dmRouteTarget} (pinned owner ${pinnedMainDmRecipient})`,
+    );
   }
 
   const metaTask = recordSessionMetaFromInbound({
@@ -357,6 +392,18 @@ export async function processMessage(params: {
   });
   trackBackgroundTask(params.backgroundTasks, metaTask);
 
+  const blockStreamingEnabled = resolveWhatsAppBlockStreamingEnabled({
+    cfg: params.cfg,
+    accountId: params.route.accountId,
+  });
+
+  // Resolve stream level once for the session — controls delivery behavior.
+  // When stream is "off", override chunkMode to "length" so delivery sends as one message.
+  const sessionStreamLevel = readSessionStreamLevel(params.route.sessionKey, storePath);
+  // When streaming is off, send as one message. When on, use newline splitting in delivery layer.
+  const effectiveChunkMode = sessionStreamLevel === "off" ? ("length" as const) : chunkMode;
+
+  let prevBlockText: string | null = null;
   const { queuedFinal } = await dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload,
     cfg: params.cfg,
@@ -371,10 +418,41 @@ export async function processMessage(params: {
         }
       },
       deliver: async (payload: ReplyPayload, info) => {
-        if (info.kind !== "final") {
-          // Only deliver final replies to external messaging channels (WhatsApp).
-          // Block (reasoning/thinking) and tool updates are meant for the internal
-          // web UI only; sending them here leaks chain-of-thought to end users.
+        if (info.kind === "block" && (!blockStreamingEnabled || sessionStreamLevel === "off")) {
+          // When block streaming is disabled (default), suppress block payloads
+          // so that ACP-backed replies don't leak intermediate text to end users.
+          return;
+        }
+        // Pre-delivery reading delay: based on PREVIOUS block length.
+        // First block: no delay (prevBlockText is null). Last block: no trailing delay.
+        // Only runs when block streaming is enabled — otherwise blocks are suppressed above.
+        if (info.kind === "block" && prevBlockText !== null) {
+          const sessionStream = sessionStreamLevel;
+          const readDelayMs = resolveStreamDelayMs(sessionStream, prevBlockText.length);
+          if (readDelayMs > 0) {
+            void params.msg.sendComposing?.();
+            let elapsed = 0;
+            while (elapsed < readDelayMs) {
+              const step = Math.min(3000, readDelayMs - elapsed);
+              await sleep(step);
+              elapsed += step;
+              if (elapsed < readDelayMs) {
+                void params.msg.sendComposing?.();
+              }
+            }
+          }
+        }
+        // Tool narration: format inline mono, suppress code block details.
+        if (info.kind === "tool") {
+          if (payload.text) {
+            whatsappOutboundLog.debug(`[tool-narration-raw] ${payload.text.slice(0, 300)}`);
+            const firstLine = payload.text.split("\n\n")[0].trim();
+            payload = { ...payload, text: "`" + firstLine + "`" };
+          }
+        }
+        if (info.kind !== "final" && info.kind !== "block" && info.kind !== "tool") {
+          // Only deliver final, block-streaming, and (optionally) tool replies.
+          // Reasoning/thinking is for the internal web UI only.
           return;
         }
         await deliverWebReply({
@@ -383,13 +461,20 @@ export async function processMessage(params: {
           mediaLocalRoots,
           maxMediaBytes: params.maxMediaBytes,
           textLimit,
-          chunkMode,
+          chunkMode: effectiveChunkMode,
+          streamDelayMs:
+            sessionStreamLevel !== "off"
+              ? (chars: number) => resolveStreamDelayMs(sessionStreamLevel, chars)
+              : undefined,
           replyLogger: params.replyLogger,
           connectionId: params.connectionId,
           skipLog: false,
           tableMode,
         });
         didSendReply = true;
+        if (info.kind === "block" && payload.text) {
+          prevBlockText = payload.text;
+        }
         const shouldLog = payload.text ? true : undefined;
         params.rememberSentText(payload.text, {
           combinedBody,
@@ -419,12 +504,15 @@ export async function processMessage(params: {
       onReplyStart: params.msg.sendComposing,
     },
     replyOptions: {
-      // WhatsApp delivery intentionally suppresses non-final payloads.
-      // Keep block streaming disabled so final replies are still produced.
-      disableBlockStreaming: true,
+      disableBlockStreaming: !blockStreamingEnabled || sessionStreamLevel === "off",
       onModelSelected,
     },
   });
+
+  // Clear typing indicator after all deliveries complete.
+  if (queuedFinal) {
+    await params.msg.sendAvailable?.();
+  }
 
   if (!queuedFinal) {
     if (shouldClearGroupHistory) {
