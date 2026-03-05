@@ -288,7 +288,7 @@ export type AgentEventHandlerOptions = {
 
 export function createAgentEventHandler({
   broadcast,
-  broadcastToConnIds,
+  broadcastToConnIds: _broadcastToConnIds,
   nodeSendToSession,
   agentRunSeq,
   chatRunState,
@@ -511,14 +511,12 @@ export function createAgentEventHandler({
     }
     agentRunSeq.set(evt.runId, evt.seq);
     if (isToolEvent) {
-      // Always broadcast tool events to registered WS recipients with
-      // tool-events capability, regardless of verboseLevel. The verbose
-      // setting only controls whether tool details are sent as channel
-      // messages to messaging surfaces (Telegram, Discord, etc.).
-      const recipients = toolEventRecipients.get(evt.runId);
-      if (recipients && recipients.size > 0) {
-        broadcastToConnIds("agent", toolPayload, recipients);
-      }
+      // Broadcast tool events to ALL connected WS clients so Control UI
+      // can show tool progress for any run (including WA-initiated runs
+      // where the UI never called chat.send to register).
+      // The verbose setting only controls whether tool details are sent
+      // as channel messages to messaging surfaces (Telegram, Discord, etc.).
+      broadcast("agent", toolPayload, { dropIfSlow: true });
     } else {
       broadcast("agent", agentPayload);
     }
