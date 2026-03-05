@@ -1,6 +1,6 @@
 # Custom Patches — butley/openclaw
 
-11 active custom patches on top of upstream openclaw/openclaw.
+13 active custom patches on top of upstream openclaw/openclaw.
 
 ## Absorbed by Upstream (no longer maintained)
 
@@ -24,6 +24,8 @@
 | 12 | WA Login Tool Dedup | `wa-login-tool-dedup/` | WA | `grep -q "natively by OpenClaw" extensions/whatsapp/index.ts` |
 | 13 | Verbose Light | `verbose-light/` | Shared | `grep -q '"light"' src/auto-reply/thinking.ts` |
 | 14 | WA Outbound Mentions | `wa-outbound-mentions/` | WA | `grep -q "processOutboundMentions" src/web/inbound/send-api.ts` |
+| 15 | Webchat Thinking Stream | `webchat-thinking-stream/` | Agents | `grep -q 'reasoningMode !== "off"' src/agents/pi-embedded-subscribe.ts` |
+| 16 | Tool Events Broadcast | `tool-events-broadcast/` | Gateway | `grep -q "_broadcastToConnIds" src/gateway/server-chat.ts` |
 
 
 
@@ -36,6 +38,7 @@
 - **TUI** — Terminal UI (`src/tui/`)
 - **CLI** — CLI commands (`src/cli/`)
 - **Memory** — Memory/QMD (`src/memory/`)
+- **Agents** — Agent runtime (`src/agents/`)
 
 ## Verification
 
