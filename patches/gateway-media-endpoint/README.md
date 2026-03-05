@@ -19,9 +19,10 @@ Also extends TTS temp file cleanup from 5 minutes to 7 days so files remain avai
 ## How It Works
 
 1. Validates filename with `^[\w.-]+$` regex (prevents path traversal)
-2. Searches two candidate directories:
+2. Searches three candidate directories (in order):
    - `/tmp/openclaw/tts-*/` — TTS audio output
-   - `/root/clawd/` — image_generate output
+   - `~/.openclaw/media/` — image_generate output (standard media dir)
+   - `/root/clawd/` — legacy fallback
 3. Serves with proper `Content-Type` (mp3, ogg, opus, wav, webm, png, jpg, gif, webp)
 4. Sets `Cache-Control: public, max-age=86400` and `Access-Control-Allow-Origin: *`
 
@@ -30,7 +31,7 @@ Also extends TTS temp file cleanup from 5 minutes to 7 days so files remain avai
 In `src/gateway/server-http.ts`, add a `"media"` entry to the route table (between `hooks` and `tools-invoke`). The handler:
 - Extracts filename from URL path after `/media/`
 - Validates with `/^[\w.-]+$/`
-- Searches `/tmp/openclaw/tts-*/` then `/root/clawd/` for the file
+- Searches `/tmp/openclaw/tts-*/`, then `~/.openclaw/media/`, then `/root/clawd/` for the file
 - Returns file with correct Content-Type and CORS headers
 
 In `src/tts/tts-core.ts`, change `TEMP_FILE_CLEANUP_DELAY_MS` to `7 * 24 * 60 * 60 * 1000`.

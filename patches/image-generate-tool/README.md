@@ -5,7 +5,7 @@
 
 ## What It Does
 
-New `image_generate` agent tool that calls the Gemini API to produce images from text prompts. Saves output to `/root/clawd/` and returns a `MEDIA:` marker + `/media/` URL for frontend rendering.
+New `image_generate` agent tool that calls the Gemini API to produce images from text prompts. Saves output to `~/.openclaw/media/` (via `ensureMediaDir()`) and returns a `MEDIA:` marker + `/media/` URL for frontend rendering.
 
 ## Files Modified
 
@@ -20,7 +20,7 @@ New `image_generate` agent tool that calls the Gemini API to produce images from
 2. Resolves API key from `GEMINI_API_KEY` or `GOOGLE_API_KEY`
 3. Calls Gemini `v1beta/models/{model}:generateContent` with `responseModalities: ["TEXT", "IMAGE"]`
 4. Decodes base64 inline image data from response
-5. Writes to `/root/clawd/{filename}` (gateway's `/media/` endpoint serves from here)
+5. Writes to `~/.openclaw/media/{filename}` via `ensureMediaDir()` — this directory is always in the default media local roots, so `assertLocalMediaAllowed` passes for WhatsApp outbound without needing agent-scoped root resolution
 6. Returns via `imageResultFromFile()` with `details.imageUrl = /media/{filename}`
 
 ## Re-apply
@@ -34,6 +34,7 @@ New `image_generate` agent tool that calls the Gemini API to produce images from
 Key details:
 - Tool name: `image_generate`
 - Default filename pattern: `generated-{Date.now()}.png`
+- Save location: `~/.openclaw/media/` via `import { ensureMediaDir } from "../../media/store.js"` — NOT `/root/clawd/` (that fails `assertLocalMediaAllowed` for WhatsApp outbound)
 - `details` must include `imageUrl` (used by chat media pipeline)
 - Text output must include `MEDIA:{fullPath}` marker (backward compat)
 
