@@ -562,7 +562,10 @@ export function createGatewayHttpServer(opts: {
                 // ignore
               }
 
-              // 2) /root/clawd/<filename> (common image output location)
+              // 2) ~/.openclaw/media/<filename> (standard media directory)
+              candidatePaths.push(path.join(os.homedir(), ".openclaw", "media", filename));
+
+              // 3) /root/clawd/<filename> (legacy image output location)
               candidatePaths.push(path.join("/root/clawd", filename));
 
               for (const filePath of candidatePaths) {

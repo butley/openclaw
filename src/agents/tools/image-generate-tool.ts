@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { ensureMediaDir } from "../../media/store.js";
 import { imageResultFromFile, readStringParam } from "./common.js";
 import type { AnyAgentTool } from "./common.js";
 
@@ -110,11 +111,11 @@ export function createImageGenerateTool(opts?: { config?: OpenClawConfig }): Any
         };
       }
 
-      // Save to /root/clawd — the gateway's custom media handler (server-http.ts)
-      // already searches this directory when serving GET /media/<filename>.
-      const workspaceDir = "/root/clawd";
-      await fs.mkdir(workspaceDir, { recursive: true });
-      const outPath = path.join(workspaceDir, fileName);
+      // Save to ~/.openclaw/media/ — always in the default media local roots,
+      // so WhatsApp outbound passes assertLocalMediaAllowed without needing
+      // agent-scoped root resolution. The gateway media handler also searches here.
+      const mediaDir = await ensureMediaDir();
+      const outPath = path.join(mediaDir, fileName);
       const buffer = Buffer.from(inlineData.data, "base64");
       await fs.writeFile(outPath, buffer);
       const imageUrl = `/media/${fileName}`;
