@@ -15,6 +15,11 @@ const ACTIONS: Record<
   getTask: { method: "query", path: "agentApi:getTask", requiredArgs: ["taskId"] },
   createTask: { method: "mutation", path: "agentApi:createTask", requiredArgs: ["title"] },
   updateTask: { method: "mutation", path: "agentApi:updateTask", requiredArgs: ["taskId"] },
+  patchTaskBody: {
+    method: "mutation",
+    path: "agentApi:patchTaskBody",
+    requiredArgs: ["taskId", "ops"],
+  },
   deleteTask: { method: "mutation", path: "agentApi:deleteTask", requiredArgs: ["taskId"] },
   // Projects
   listProjects: { method: "query", path: "agentApi:listProjects" },
@@ -90,6 +95,7 @@ Use this tool to manage tasks, projects, comments, and contacts. Data persists a
 - getTask: taskId (required)
 - createTask: title (required), description, body (markdown content), status, priority (low|medium|high|urgent), owner, dueDate (timestamp ms), tags (string[]), notes, category, projectId, position
 - updateTask: taskId (required), + any fields above to update
+- patchTaskBody: taskId (required), ops (required) — surgical edits to body without sending full text. ops is array of {type, find?, replace?, content?, after?}. Types: "replace" (find→replace, all occurrences), "append" (add to end), "prepend" (add to start), "insert_after" (insert after marker). Use instead of updateTask when body is long.
 - deleteTask: taskId (required)
 
 ## Projects
