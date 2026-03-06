@@ -156,10 +156,12 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
 
   const runId = url.searchParams.get("runId");
   const sessionKey = url.searchParams.get("sessionKey");
+  // Persistent mode: no runId = stream ALL events for this sessionKey
+  const persistentMode = !runId;
 
-  if (!runId || !sessionKey) {
+  if (!sessionKey) {
     res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "runId and sessionKey query params are required" }));
+    res.end(JSON.stringify({ error: "sessionKey query param is required" }));
     return true;
   }
 
@@ -190,23 +192,26 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
   // Keep-alive ping every 15s
   const pingInterval = setInterval(() => ssePing(res), 15_000);
 
-  // Timeout safety: close after 5 minutes
-  const timeout = setTimeout(
-    () => {
-      if (!finished) {
-        sseWrite(res, { type: "error", errorText: "Stream timeout (5 minutes)" });
-        sseEnd(res);
-        cleanup();
-      }
-    },
-    5 * 60 * 1000,
-  );
+  // Timeout safety: close after 5 minutes (per-run mode only)
+  // Persistent mode stays open indefinitely (ping keeps alive)
+  const timeout = persistentMode
+    ? null
+    : setTimeout(
+        () => {
+          if (!finished) {
+            sseWrite(res, { type: "error", errorText: "Stream timeout (5 minutes)" });
+            sseEnd(res);
+            cleanup();
+          }
+        },
+        5 * 60 * 1000,
+      );
 
   // ── Cleanup ──
   function cleanup() {
     finished = true;
     clearInterval(pingInterval);
-    clearTimeout(timeout);
+    if (timeout) clearTimeout(timeout);
     gatewayEventBus.removeListener("chat", onChatEvent);
     gatewayEventBus.removeListener("agent", onAgentEvent);
   }
@@ -272,16 +277,38 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       closeActiveReasoning();
       sseWrite(res, { type: "finish-step" });
       sseWrite(res, { type: "finish" });
-      sseEnd(res);
-      cleanup();
+      if (persistentMode) {
+        // Reset state for next run — keep connection open
+        activeTextId = null;
+        activeReasoningId = null;
+        lastTextLen = 0;
+        lastReasoningLen = 0;
+      } else {
+        sseEnd(res);
+        cleanup();
+      }
     } else if (payload.state === "error") {
       sseWrite(res, { type: "error", errorText: payload.errorMessage ?? "Unknown error" });
-      sseEnd(res);
-      cleanup();
+      if (persistentMode) {
+        activeTextId = null;
+        activeReasoningId = null;
+        lastTextLen = 0;
+        lastReasoningLen = 0;
+      } else {
+        sseEnd(res);
+        cleanup();
+      }
     } else if (payload.state === "aborted") {
       sseWrite(res, { type: "abort", reason: "aborted" });
-      sseEnd(res);
-      cleanup();
+      if (persistentMode) {
+        activeTextId = null;
+        activeReasoningId = null;
+        lastTextLen = 0;
+        lastReasoningLen = 0;
+      } else {
+        sseEnd(res);
+        cleanup();
+      }
     }
   }
 
