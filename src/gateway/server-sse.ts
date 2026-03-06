@@ -1,0 +1,326 @@
+/**
+ * SSE stream endpoint for Butley webchat.
+ *
+ * Provides a receive-only SSE stream that converts gateway internal events
+ * to the Vercel AI SDK Data Stream Protocol (v1).
+ *
+ * Message sending still happens via the existing WS `chat.send` RPC.
+ * This endpoint only handles the streaming response side.
+ *
+ * Flow:
+ * 1. Frontend sends message via WS `chat.send` → gets { runId }
+ * 2. Frontend opens GET /api/sse/stream?runId=xxx&sessionKey=xxx
+ * 3. This endpoint subscribes to gatewayEventBus for matching events
+ * 4. Converts events to AI SDK format and streams to browser
+ * 5. HTTP backpressure prevents drops (no more dropIfSlow issues)
+ *
+ * This is a fork patch (butley/openclaw) — additive only.
+ * Zero impact on existing WS broadcast or channel delivery.
+ *
+ * Protocol reference: https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol
+ */
+
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { gatewayEventBus } from "./server-broadcast.js";
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+interface ChatEventPayload {
+  runId: string;
+  sessionKey: string;
+  state: "delta" | "final" | "aborted" | "error";
+  message?: {
+    role: string;
+    content: Array<{ type: string; text?: string; thinking?: string }>;
+    timestamp: number;
+  };
+  errorMessage?: string;
+}
+
+interface AgentEventPayload {
+  runId: string;
+  sessionKey?: string;
+  stream: string;
+  data?: Record<string, unknown>;
+}
+
+// ─── SSE Helpers ────────────────────────────────────────────────────────────
+
+function sseWrite(res: ServerResponse, data: Record<string, unknown>): void {
+  if (res.writableEnded) {
+    return;
+  }
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function ssePing(res: ServerResponse): void {
+  if (res.writableEnded) {
+    return;
+  }
+  res.write(":ping\n\n");
+}
+
+function sseEnd(res: ServerResponse): void {
+  if (res.writableEnded) {
+    return;
+  }
+  res.write("data: [DONE]\n\n");
+  res.end();
+}
+
+// ─── AI SDK Data Stream Protocol Emitters ───────────────────────────────────
+
+let textBlockCounter = 0;
+let reasoningBlockCounter = 0;
+
+function emitTextStart(res: ServerResponse): string {
+  const id = `text_${++textBlockCounter}`;
+  sseWrite(res, { type: "text-start", id });
+  return id;
+}
+
+function emitTextDelta(res: ServerResponse, id: string, delta: string): void {
+  sseWrite(res, { type: "text-delta", id, delta });
+}
+
+function emitTextEnd(res: ServerResponse, id: string): void {
+  sseWrite(res, { type: "text-end", id });
+}
+
+function emitReasoningStart(res: ServerResponse): string {
+  const id = `reasoning_${++reasoningBlockCounter}`;
+  sseWrite(res, { type: "reasoning-start", id });
+  return id;
+}
+
+function emitReasoningDelta(res: ServerResponse, id: string, delta: string): void {
+  sseWrite(res, { type: "reasoning-delta", id, delta });
+}
+
+function emitReasoningEnd(res: ServerResponse, id: string): void {
+  sseWrite(res, { type: "reasoning-end", id });
+}
+
+// ─── Request Handler ────────────────────────────────────────────────────────
+
+/**
+ * Handle GET /api/sse/stream?runId=xxx&sessionKey=xxx
+ *
+ * Opens an SSE stream that emits AI SDK Data Stream Protocol events
+ * for the given runId. The client must have already sent the message
+ * via WS `chat.send` and received the runId.
+ *
+ * Headers required:
+ *   Accept: text/event-stream
+ *
+ * Query params:
+ *   runId: string — the run ID from chat.send response
+ *   sessionKey: string — the session key
+ *
+ * Returns: SSE stream in AI SDK Data Stream Protocol v1
+ */
+export function handleSseStream(req: IncomingMessage, res: ServerResponse): boolean {
+  const url = new URL(req.url ?? "/", "http://localhost");
+
+  // Only handle our specific path
+  if (url.pathname !== "/api/sse/stream") {
+    return false;
+  }
+
+  if (req.method !== "GET") {
+    res.writeHead(405, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Method not allowed. Use GET." }));
+    return true;
+  }
+
+  const runId = url.searchParams.get("runId");
+  const sessionKey = url.searchParams.get("sessionKey");
+
+  if (!runId || !sessionKey) {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "runId and sessionKey query params are required" }));
+    return true;
+  }
+
+  // ── SSE headers ──
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+    "x-vercel-ai-ui-message-stream": "v1",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  });
+
+  // ── State ──
+  let activeTextId: string | null = null;
+  let activeReasoningId: string | null = null;
+  let lastTextLen = 0;
+  let lastReasoningLen = 0;
+  let finished = false;
+
+  // Send message start
+  sseWrite(res, { type: "start", messageId: runId });
+
+  // Keep-alive ping every 15s
+  const pingInterval = setInterval(() => ssePing(res), 15_000);
+
+  // Timeout safety: close after 5 minutes
+  const timeout = setTimeout(
+    () => {
+      if (!finished) {
+        sseWrite(res, { type: "error", errorText: "Stream timeout (5 minutes)" });
+        sseEnd(res);
+        cleanup();
+      }
+    },
+    5 * 60 * 1000,
+  );
+
+  // ── Cleanup ──
+  function cleanup() {
+    finished = true;
+    clearInterval(pingInterval);
+    clearTimeout(timeout);
+    gatewayEventBus.removeListener("chat", onChatEvent);
+    gatewayEventBus.removeListener("agent", onAgentEvent);
+  }
+
+  // Close on client disconnect
+  req.on("close", cleanup);
+
+  // ── Helpers ──
+  function closeActiveText() {
+    if (activeTextId) {
+      emitTextEnd(res, activeTextId);
+      activeTextId = null;
+    }
+  }
+
+  function closeActiveReasoning() {
+    if (activeReasoningId) {
+      emitReasoningEnd(res, activeReasoningId);
+      activeReasoningId = null;
+    }
+  }
+
+  // ── Event handlers ──
+  function onChatEvent(payload: ChatEventPayload) {
+    if (finished) {
+      return;
+    }
+    if (payload.runId !== runId) {
+      return;
+    }
+
+    if (payload.state === "delta") {
+      // Extract text from content array
+      const content = payload.message?.content;
+      if (!content) {
+        return;
+      }
+
+      for (const block of content) {
+        if (block.type === "text" && block.text) {
+          // Gateway sends FULL accumulated text in each delta.
+          // Extract only the new portion.
+          const fullText = block.text;
+          if (fullText.length <= lastTextLen) {
+            continue;
+          }
+
+          const newText = fullText.slice(lastTextLen);
+          lastTextLen = fullText.length;
+
+          // Close reasoning if text starts (thinking → text transition)
+          closeActiveReasoning();
+
+          if (!activeTextId) {
+            activeTextId = emitTextStart(res);
+          }
+          emitTextDelta(res, activeTextId, newText);
+        }
+      }
+    } else if (payload.state === "final") {
+      closeActiveText();
+      closeActiveReasoning();
+      sseWrite(res, { type: "finish-step" });
+      sseWrite(res, { type: "finish" });
+      sseEnd(res);
+      cleanup();
+    } else if (payload.state === "error") {
+      sseWrite(res, { type: "error", errorText: payload.errorMessage ?? "Unknown error" });
+      sseEnd(res);
+      cleanup();
+    } else if (payload.state === "aborted") {
+      sseWrite(res, { type: "abort", reason: "aborted" });
+      sseEnd(res);
+      cleanup();
+    }
+  }
+
+  function onAgentEvent(payload: AgentEventPayload) {
+    if (finished) {
+      return;
+    }
+    if (payload.runId !== runId) {
+      return;
+    }
+
+    // ── Thinking / Reasoning ──
+    if (payload.stream === "thinking") {
+      const thinkingText =
+        typeof payload.data?.thinking === "string"
+          ? payload.data.thinking
+          : typeof payload.data?.text === "string"
+            ? payload.data.text
+            : null;
+
+      if (thinkingText) {
+        // Close any open text block before reasoning
+        closeActiveText();
+        lastTextLen = 0;
+
+        if (!activeReasoningId) {
+          activeReasoningId = emitReasoningStart(res);
+        }
+        // Gateway sends full thinking text — extract only new content
+        if (thinkingText.length > lastReasoningLen) {
+          const newReasoning = thinkingText.slice(lastReasoningLen);
+          lastReasoningLen = thinkingText.length;
+          emitReasoningDelta(res, activeReasoningId, newReasoning);
+        }
+      }
+    }
+
+    // ── Tool events ──
+    if (payload.stream === "tool") {
+      const phase = payload.data?.phase as string | undefined;
+      const toolName = (payload.data?.tool ?? payload.data?.name ?? "tool") as string;
+      const toolCallId = (payload.data?.toolCallId ??
+        payload.data?.id ??
+        `tool_${Date.now()}`) as string;
+
+      if (phase === "start") {
+        closeActiveText();
+        closeActiveReasoning();
+        lastTextLen = 0;
+        lastReasoningLen = 0;
+
+        const args = payload.data?.args ?? payload.data?.input ?? {};
+        sseWrite(res, { type: "tool-input-start", toolCallId, toolName });
+        sseWrite(res, { type: "tool-input-available", toolCallId, toolName, input: args });
+      } else if (phase === "result" || phase === "end") {
+        const result = payload.data?.result ?? payload.data?.output ?? {};
+        sseWrite(res, { type: "tool-output-available", toolCallId, output: result });
+      }
+    }
+  }
+
+  // ── Subscribe to event bus ──
+  gatewayEventBus.on("chat", onChatEvent);
+  gatewayEventBus.on("agent", onAgentEvent);
+
+  return true; // handled
+}

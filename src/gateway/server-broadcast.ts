@@ -1,6 +1,15 @@
+import { EventEmitter } from "node:events";
 import { MAX_BUFFERED_BYTES } from "./server-constants.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 import { logWs, shouldLogWs, summarizeAgentEventForWsLog } from "./ws-log.js";
+
+/**
+ * Global event bus for SSE consumers. Emits the same events as WS broadcast
+ * but without dropIfSlow — SSE uses HTTP backpressure instead.
+ * Listeners receive (event: string, payload: unknown).
+ */
+export const gatewayEventBus = new EventEmitter();
+gatewayEventBus.setMaxListeners(100); // support multiple concurrent SSE streams
 
 const ADMIN_SCOPE = "operator.admin";
 const APPROVALS_SCOPE = "operator.approvals";
@@ -90,6 +99,9 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
       }
       logWs("out", "event", logMeta);
     }
+    // Emit on event bus for SSE consumers (no dropIfSlow — HTTP backpressure)
+    gatewayEventBus.emit(event, payload);
+
     for (const c of params.clients) {
       if (targetConnIds && !targetConnIds.has(c.connId)) {
         continue;
