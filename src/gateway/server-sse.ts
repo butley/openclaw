@@ -296,11 +296,12 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
 
     // ── Thinking / Reasoning ──
     if (payload.stream === "thinking") {
-      // The gateway emits thinking events with:
-      //   data.delta — incremental new text (preferred)
-      //   data.text  — full accumulated thinking text (fallback)
-      const delta = typeof payload.data?.delta === "string" ? payload.data.delta : null;
-      const fullText = typeof payload.data?.text === "string" ? payload.data.text : null;
+      // Prefer rawDelta/rawText (unformatted, no "Reasoning:" prefix or _italic_ wrapping).
+      // Fall back to delta/text for backward compat with older gateway code.
+      const delta = typeof payload.data?.rawDelta === "string" ? payload.data.rawDelta
+        : typeof payload.data?.delta === "string" ? payload.data.delta : null;
+      const fullText = typeof payload.data?.rawText === "string" ? payload.data.rawText
+        : typeof payload.data?.text === "string" ? payload.data.text : null;
 
       // Use delta directly if available; otherwise extract from full text
       const newContent = delta
