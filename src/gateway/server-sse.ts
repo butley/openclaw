@@ -46,13 +46,19 @@ interface AgentEventPayload {
 
 // ─── SSE Helpers ────────────────────────────────────────────────────────────
 
+function tryFlush(res: ServerResponse): void {
+  const r = res as ServerResponse & { flush?: () => void };
+  if (typeof r.flush === "function") {
+    r.flush();
+  }
+}
+
 function sseWrite(res: ServerResponse, data: Record<string, unknown>): void {
   if (res.writableEnded) {
     return;
   }
   res.write(`data: ${JSON.stringify(data)}\n\n`);
-  // Flush immediately — critical for SSE through proxies (Next.js rewrites, nginx, etc.)
-  if (typeof (res as any).flush === "function") {(res as any).flush();}
+  tryFlush(res);
 }
 
 function ssePing(res: ServerResponse): void {
@@ -60,7 +66,7 @@ function ssePing(res: ServerResponse): void {
     return;
   }
   res.write(":ping\n\n");
-  if (typeof (res as any).flush === "function") {(res as any).flush();}
+  tryFlush(res);
 }
 
 function sseEnd(res: ServerResponse): void {
@@ -228,13 +234,10 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     if (finished) {
       return;
     }
-    // Match by sessionKey (more reliable than runId which may differ between
-    // the client-generated idempotencyKey and the gateway's internal runId)
-    const payloadSessionKey = (payload as any).sessionKey;
+    const payloadSessionKey = (payload as Record<string, unknown>).sessionKey;
     if (payloadSessionKey !== sessionKey) {
       return;
     }
-    console.log(`[SSE] chat event matched: state=${payload.state}`);
 
     if (payload.state === "delta") {
       // Extract text from content array
@@ -286,22 +289,27 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     if (finished) {
       return;
     }
-    // Match by sessionKey (same reason as onChatEvent)
-    if (payload.sessionKey !== sessionKey) {
+    const agentSessionKey = payload.sessionKey;
+    if (agentSessionKey !== sessionKey) {
       return;
     }
-    console.log(`[SSE] agent event matched: stream=${payload.stream}`);
 
     // ── Thinking / Reasoning ──
     if (payload.stream === "thinking") {
-      const thinkingText =
-        typeof payload.data?.thinking === "string"
-          ? payload.data.thinking
-          : typeof payload.data?.text === "string"
-            ? payload.data.text
-            : null;
+      // The gateway emits thinking events with:
+      //   data.delta — incremental new text (preferred)
+      //   data.text  — full accumulated thinking text (fallback)
+      const delta = typeof payload.data?.delta === "string" ? payload.data.delta : null;
+      const fullText = typeof payload.data?.text === "string" ? payload.data.text : null;
 
-      if (thinkingText) {
+      // Use delta directly if available; otherwise extract from full text
+      const newContent = delta
+        ? delta
+        : fullText && fullText.length > lastReasoningLen
+          ? fullText.slice(lastReasoningLen)
+          : null;
+
+      if (newContent) {
         // Close any open text block before reasoning
         closeActiveText();
         lastTextLen = 0;
@@ -309,12 +317,10 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
         if (!activeReasoningId) {
           activeReasoningId = emitReasoningStart(res);
         }
-        // Gateway sends full thinking text — extract only new content
-        if (thinkingText.length > lastReasoningLen) {
-          const newReasoning = thinkingText.slice(lastReasoningLen);
-          lastReasoningLen = thinkingText.length;
-          emitReasoningDelta(res, activeReasoningId, newReasoning);
+        if (fullText) {
+          lastReasoningLen = fullText.length;
         }
+        emitReasoningDelta(res, activeReasoningId, newContent);
       }
     }
 
