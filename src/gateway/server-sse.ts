@@ -51,6 +51,8 @@ function sseWrite(res: ServerResponse, data: Record<string, unknown>): void {
     return;
   }
   res.write(`data: ${JSON.stringify(data)}\n\n`);
+  // Flush immediately — critical for SSE through proxies (Next.js rewrites, nginx, etc.)
+  if (typeof (res as any).flush === "function") {(res as any).flush();}
 }
 
 function ssePing(res: ServerResponse): void {
@@ -58,6 +60,7 @@ function ssePing(res: ServerResponse): void {
     return;
   }
   res.write(":ping\n\n");
+  if (typeof (res as any).flush === "function") {(res as any).flush();}
 }
 
 function sseEnd(res: ServerResponse): void {
@@ -165,6 +168,9 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
   });
 
+  // Force headers to be sent immediately (critical for SSE through proxies)
+  res.flushHeaders();
+
   // ── State ──
   let activeTextId: string | null = null;
   let activeReasoningId: string | null = null;
@@ -224,9 +230,11 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     }
     // Match by sessionKey (more reliable than runId which may differ between
     // the client-generated idempotencyKey and the gateway's internal runId)
-    if (payload.sessionKey !== sessionKey) {
+    const payloadSessionKey = (payload as any).sessionKey;
+    if (payloadSessionKey !== sessionKey) {
       return;
     }
+    console.log(`[SSE] chat event matched: state=${payload.state}`);
 
     if (payload.state === "delta") {
       // Extract text from content array
@@ -282,6 +290,7 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     if (payload.sessionKey !== sessionKey) {
       return;
     }
+    console.log(`[SSE] agent event matched: stream=${payload.stream}`);
 
     // ── Thinking / Reasoning ──
     if (payload.stream === "thinking") {
