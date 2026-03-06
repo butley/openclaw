@@ -222,7 +222,9 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     if (finished) {
       return;
     }
-    if (payload.runId !== runId) {
+    // Match by sessionKey (more reliable than runId which may differ between
+    // the client-generated idempotencyKey and the gateway's internal runId)
+    if (payload.sessionKey !== sessionKey) {
       return;
     }
 
@@ -276,7 +278,8 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     if (finished) {
       return;
     }
-    if (payload.runId !== runId) {
+    // Match by sessionKey (same reason as onChatEvent)
+    if (payload.sessionKey !== sessionKey) {
       return;
     }
 
