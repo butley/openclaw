@@ -127,6 +127,18 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     return false;
   }
 
+  // CORS preflight
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Max-Age": "86400",
+    });
+    res.end();
+    return true;
+  }
+
   if (req.method !== "GET") {
     res.writeHead(405, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Method not allowed. Use GET." }));
