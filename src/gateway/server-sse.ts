@@ -166,10 +166,12 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
   }
 
   // ── SSE headers ──
+  // Note: Do NOT include `Connection: keep-alive` — it's a hop-by-hop header
+  // forbidden in HTTP/2 (RFC 7540 §8.1.2.2). Browsers reject it with
+  // ERR_HTTP2_PROTOCOL_ERROR when accessed through HTTP/2 reverse proxies (Tailscale, Cloudflare).
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache, no-transform",
-    Connection: "keep-alive",
     "X-Accel-Buffering": "no",
     "x-vercel-ai-ui-message-stream": "v1",
     "Access-Control-Allow-Origin": "*",
@@ -211,7 +213,9 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
   function cleanup() {
     finished = true;
     clearInterval(pingInterval);
-    if (timeout) clearTimeout(timeout);
+    if (timeout) {
+      clearTimeout(timeout);
+    }
     gatewayEventBus.removeListener("chat", onChatEvent);
     gatewayEventBus.removeListener("agent", onAgentEvent);
   }
@@ -325,10 +329,18 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     if (payload.stream === "thinking") {
       // Prefer rawDelta/rawText (unformatted, no "Reasoning:" prefix or _italic_ wrapping).
       // Fall back to delta/text for backward compat with older gateway code.
-      const delta = typeof payload.data?.rawDelta === "string" ? payload.data.rawDelta
-        : typeof payload.data?.delta === "string" ? payload.data.delta : null;
-      const fullText = typeof payload.data?.rawText === "string" ? payload.data.rawText
-        : typeof payload.data?.text === "string" ? payload.data.text : null;
+      const delta =
+        typeof payload.data?.rawDelta === "string"
+          ? payload.data.rawDelta
+          : typeof payload.data?.delta === "string"
+            ? payload.data.delta
+            : null;
+      const fullText =
+        typeof payload.data?.rawText === "string"
+          ? payload.data.rawText
+          : typeof payload.data?.text === "string"
+            ? payload.data.text
+            : null;
 
       // Use delta directly if available; otherwise extract from full text
       const newContent = delta
