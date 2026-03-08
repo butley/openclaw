@@ -139,6 +139,21 @@ after the SSE implementation landed. Items are grouped by priority.
 
 ---
 
+## ✅ Fixed (2026-03-08)
+
+### [server-sse.ts] Cross-channel tool events not reaching chat UI SSE — FIXED
+- **Commit:** `9eeec977a` (fork), `c7f09f6` (frontend)
+- **Root cause:** `onAgentEvent` in SSE handler filtered by exact `sessionKey` match.
+  WA-initiated runs have `sessionKey=agent:main:whatsapp:direct:+N` while chat UI
+  subscribes with `sessionKey=agent:main:main`. Tool events were silently dropped.
+- **Fix:** Match by agent prefix (`agent:main:`) instead of exact sessionKey.
+  All events from the same agent reach the SSE stream regardless of originating channel.
+- **Frontend:** SSE handles text, thinking, AND tools. WS agent events are fully skipped
+  when SSE is active (`if (sseActiveRef.current) continue`). WS tools still work as
+  fallback when SSE is not connected.
+
+---
+
 ## 🐛 Open Bugs
 
 ### [wa-outbound-mentions] Any `@` in message text becomes a WA mention — including in DMs
