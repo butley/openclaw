@@ -412,9 +412,14 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
   }
 
   // ── Inbound user messages (cross-channel: WA/TG → chat UI) ──
+  // Normalize session key variants: "whatsapp:direct:+N" and "whatsapp:dm:+N"
+  // refer to the same main session but use different formats depending on context.
+  const normalizeSessionKey = (key: string) =>
+    key.replace(/:direct:/, ":dm:");
+
   const onInboundMessage = (payload: Record<string, unknown>) => {
     const evtSessionKey = typeof payload?.sessionKey === "string" ? payload.sessionKey : null;
-    if (!evtSessionKey || evtSessionKey !== sessionKey) return;
+    if (!evtSessionKey || normalizeSessionKey(evtSessionKey) !== normalizeSessionKey(sessionKey)) return;
     const data = {
       type: "user-message" as const,
       messageId: payload.messageId ?? null,
