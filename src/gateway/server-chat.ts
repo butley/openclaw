@@ -553,7 +553,7 @@ export function createAgentEventHandler({
 
     if (sessionKey) {
       // Send tool events to node/channel subscribers only when verbose is enabled;
-      // WS clients already received the event above via broadcastToConnIds.
+      // WS clients already received tool events above via broadcast("agent", ...) (Patch #16).
       if (!isToolEvent || toolVerbose !== "off") {
         nodeSendToSession(sessionKey, "agent", isToolEvent ? toolPayload : agentPayload);
       }

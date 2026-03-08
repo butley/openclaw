@@ -79,11 +79,8 @@ function sseEnd(res: ServerResponse): void {
 
 // ─── AI SDK Data Stream Protocol Emitters ───────────────────────────────────
 
-let textBlockCounter = 0;
-let reasoningBlockCounter = 0;
-
-function emitTextStart(res: ServerResponse): string {
-  const id = `text_${++textBlockCounter}`;
+function emitTextStart(res: ServerResponse, counter: { n: number }): string {
+  const id = `text_${++counter.n}`;
   sseWrite(res, { type: "text-start", id });
   return id;
 }
@@ -96,8 +93,8 @@ function emitTextEnd(res: ServerResponse, id: string): void {
   sseWrite(res, { type: "text-end", id });
 }
 
-function emitReasoningStart(res: ServerResponse): string {
-  const id = `reasoning_${++reasoningBlockCounter}`;
+function emitReasoningStart(res: ServerResponse, counter: { n: number }): string {
+  const id = `reasoning_${++counter.n}`;
   sseWrite(res, { type: "reasoning-start", id });
   return id;
 }
@@ -187,6 +184,9 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
   let lastTextLen = 0;
   let lastReasoningLen = 0;
   let finished = false;
+  // Per-connection counters (avoid sharing state across concurrent SSE streams)
+  const textCounter = { n: 0 };
+  const reasoningCounter = { n: 0 };
 
   // Send message start
   sseWrite(res, { type: "start", messageId: runId });
@@ -271,7 +271,7 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
           closeActiveReasoning();
 
           if (!activeTextId) {
-            activeTextId = emitTextStart(res);
+            activeTextId = emitTextStart(res, textCounter);
           }
           emitTextDelta(res, activeTextId, newText);
         }
@@ -355,7 +355,7 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
         lastTextLen = 0;
 
         if (!activeReasoningId) {
-          activeReasoningId = emitReasoningStart(res);
+          activeReasoningId = emitReasoningStart(res, reasoningCounter);
         }
         if (fullText) {
           lastReasoningLen = fullText.length;
