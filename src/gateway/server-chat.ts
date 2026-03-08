@@ -511,6 +511,33 @@ export function createAgentEventHandler({
     }
     agentRunSeq.set(evt.runId, evt.seq);
     if (isToolEvent) {
+      // Flush any pending throttled text delta before tool events.
+      // The 50ms throttle in emitChatDelta may hold the last text chunk,
+      // causing SSE/webchat clients to miss text right before a tool call.
+      if (sessionKey && clientRunId) {
+        const buffered = chatRunState.buffers.get(clientRunId);
+        const lastLen = chatRunState.deltaLastBroadcastLen.get(clientRunId) ?? 0;
+        if (buffered && buffered.length > lastLen) {
+          const cleaned = stripInlineDirectiveTagsForDisplay(buffered).text;
+          if (cleaned) {
+            chatRunState.deltaLastBroadcastLen.set(clientRunId, cleaned.length);
+            chatRunState.deltaSentAt.set(clientRunId, Date.now());
+            const flushPayload = {
+              runId: clientRunId,
+              sessionKey,
+              seq: evt.seq,
+              state: "delta" as const,
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: cleaned }],
+                timestamp: Date.now(),
+              },
+            };
+            broadcast("chat", flushPayload, { dropIfSlow: true });
+            nodeSendToSession(sessionKey, "chat", flushPayload);
+          }
+        }
+      }
       // Broadcast tool events to ALL connected WS clients so Control UI
       // can show tool progress for any run (including WA-initiated runs
       // where the UI never called chat.send to register).
@@ -526,7 +553,7 @@ export function createAgentEventHandler({
 
     if (sessionKey) {
       // Send tool events to node/channel subscribers only when verbose is enabled;
-      // WS clients already received the event above via broadcastToConnIds.
+      // WS clients already received tool events above via broadcast("agent", ...) (Patch #16).
       if (!isToolEvent || toolVerbose !== "off") {
         nodeSendToSession(sessionKey, "agent", isToolEvent ? toolPayload : agentPayload);
       }

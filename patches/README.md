@@ -1,6 +1,6 @@
 # Custom Patches — butley/openclaw
 
-13 active custom patches on top of upstream openclaw/openclaw.
+16 active custom patches on top of upstream openclaw/openclaw.
 
 ## Absorbed by Upstream (no longer maintained)
 
@@ -11,21 +11,26 @@
 
 ## Patch Registry
 
-| # | Name | Dir | Scope | Verify |
-| 2 | Brazil JID Resolution | `brazil-jid-resolution/` | WA | `grep -q "resolveJidWithBrazil" src/web/outbound.ts` |
-| 3 | Audio Transcript Hook | `audio-transcript-hook/` | Shared | `grep -q "🎤" src/auto-reply/reply/get-reply.ts` |
-| 4 | Chat Mirror | `chat-mirror/` | Gateway | `grep -rq "mirror" src/gateway/server-chat.ts` |
-| 5 | WS Inbound Push | `message-inbound-push/` | Infra | `test -f src/infra/inbound-events.ts` |
-| 7 | TUI Dark Theme | `tui-dark-theme/` | TUI | `grep -q "236" src/tui/theme/theme.ts` |
-| 8 | Status Card Redesign | `status-card/` | Shared | `grep -q "padLabel" src/auto-reply/status.ts` |
-| 9 | QMD Output Limit Fix | `qmd-output-limit/` | Memory | `grep -q "maxOutputChars" src/memory/qmd-manager.ts` |
-| 10 | Logs Pretty Formatter | `logs-pretty/` | CLI | `test -f src/cli/logs-pretty-formatter.ts` |
-| 11 | WA Paragraph Streaming | `wa-paragraph-streaming/` | WA | `grep -q "streamDelayMs" src/web/auto-reply/deliver-reply.ts` |
-| 12 | WA Login Tool Dedup | `wa-login-tool-dedup/` | WA | `grep -q "natively by OpenClaw" extensions/whatsapp/index.ts` |
-| 13 | Verbose Light | `verbose-light/` | Shared | `grep -q '"light"' src/auto-reply/thinking.ts` |
-| 14 | WA Outbound Mentions | `wa-outbound-mentions/` | WA | `grep -q "processOutboundMentions" src/web/inbound/send-api.ts` |
-| 15 | Webchat Thinking Stream | `webchat-thinking-stream/` | Agents | `grep -q 'reasoningMode !== "off"' src/agents/pi-embedded-subscribe.ts` |
-| 16 | Tool Events Broadcast | `tool-events-broadcast/` | Gateway | `grep -q "_broadcastToConnIds" src/gateway/server-chat.ts` |
+> **Branch key:** `alpha` = merged into stable base | `feat/sse-endpoint` = pending merge into alpha
+
+| # | Name | Dir | Scope | Branch | Verify |
+|---|------|-----|-------|--------|--------|
+| 2 | Brazil JID Resolution | `brazil-jid-resolution/` | WA | `alpha` | `grep -q "resolveJidWithBrazil" src/web/outbound.ts` |
+| 3 | Audio Transcript Hook | `audio-transcript-hook/` | Shared | `alpha` | `grep -q "🎤" src/auto-reply/reply/get-reply.ts` |
+| 4 | Chat Mirror | `chat-mirror/` | Gateway | `alpha` | `grep -rq "mirror" src/gateway/server-chat.ts` |
+| 5 | WS Inbound Push | `message-inbound-push/` | Infra | `alpha` | `test -f src/infra/inbound-events.ts` |
+| 7 | TUI Dark Theme | `tui-dark-theme/` | TUI | `alpha` | `grep -q "236" src/tui/theme/theme.ts` |
+| 8 | Status Card Redesign | `status-card/` | Shared | `alpha` | `grep -q "padLabel" src/auto-reply/status.ts` |
+| 9 | QMD Output Limit Fix | `qmd-output-limit/` | Memory | `alpha` | `grep -q "maxOutputChars" src/memory/qmd-manager.ts` |
+| 10 | Logs Pretty Formatter | `logs-pretty/` | CLI | `alpha` | `test -f src/cli/logs-pretty-formatter.ts` |
+| 11 | WA Paragraph Streaming | `wa-paragraph-streaming/` | WA | `alpha` | `grep -q "streamDelayMs" src/web/auto-reply/deliver-reply.ts` |
+| 12 | WA Login Tool Dedup | `wa-login-tool-dedup/` | WA | `alpha` | `grep -q "natively by OpenClaw" extensions/whatsapp/index.ts` |
+| 13 | Verbose Light | `verbose-light/` | Shared | `alpha` | `grep -q '"light"' src/auto-reply/thinking.ts` |
+| 14 | WA Outbound Mentions | `wa-outbound-mentions/` | WA | `alpha` | `grep -q "processOutboundMentions" src/web/inbound/send-api.ts` |
+| 15 | Webchat Thinking Stream | `webchat-thinking-stream/` | Agents | `alpha` | `grep -q 'reasoningMode !== "off"' src/agents/pi-embedded-subscribe.ts` |
+| 16 | Tool Events Broadcast | `tool-events-broadcast/` | Gateway | `alpha` | `grep -q "_broadcastToConnIds" src/gateway/server-chat.ts` |
+| 17 | Streaming Throttle | — | Gateway | `alpha` | `grep -q "50ms throttle" src/gateway/server-chat.ts` |
+| 18 | SSE Streaming Endpoint | `sse-streaming/` | Gateway/Agents | `feat/sse-endpoint` | `test -f src/gateway/server-sse.ts` |
 
 
 

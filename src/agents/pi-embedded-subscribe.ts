@@ -55,6 +55,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     lastStreamedAssistantCleaned: undefined,
     emittedAssistantUpdate: false,
     lastStreamedReasoning: undefined,
+    lastRawThinking: undefined,
     lastBlockReplyText: undefined,
     reasoningStreamOpen: false,
     assistantMessageIndex: 0,
@@ -657,12 +658,20 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     // ALWAYS broadcast thinking event to WebSocket clients (Control UI, webchat).
     // This is independent of the onReasoningStream callback which controls
     // channel-level typing indicators.
+    // rawText/rawDelta: unformatted thinking for SSE/webchat (no "Reasoning:" prefix, no _italic_).
+    // text/delta: formatted for messaging channels (WA, Discord, Telegram).
+    const rawDelta = text.startsWith(state.lastRawThinking ?? "")
+      ? text.slice((state.lastRawThinking ?? "").length)
+      : text;
+    state.lastRawThinking = text;
     emitAgentEvent({
       runId: params.runId,
       stream: "thinking",
       data: {
         text: formatted,
         delta,
+        rawText: text,
+        rawDelta,
       },
     });
 
