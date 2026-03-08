@@ -82,6 +82,33 @@ after the SSE implementation landed. Items are grouped by priority.
 
 ---
 
+## ⚠️ Architecture Limitations
+
+### [server-sse.ts] Mid-run join: thinking and tool calls before join point are lost
+- **Patches affected:** #18 SSE Streaming Endpoint
+- **Severity:** Medium UX — affects users who open chat while a run is already executing
+- **How it works:**
+  - Gateway only writes to session history (`session transcript`) on `lifecycle: end`
+  - During an active run, intermediate data exists only in-memory and on the SSE/WS stream
+  - Convex history only has completed runs — the current run isn't there yet
+- **What a mid-run join gets:**
+  - ✅ **Text:** full catch-up via first delta (gateway sends full accumulated buffer each time,
+    so `lastTextLen = 0` on join → first event delivers everything generated so far)
+  - ❌ **Thinking/reasoning:** only from join point onward — no accumulated buffer in gateway
+  - ❌ **Tool calls already completed before join:** lost — not in history yet, not replayable
+- **Scenario:** user opens Butley chat during a long multi-tool run (e.g. agent ran 3 tools,
+  is now generating the final response). They see the text reconstruct correctly but miss the
+  tool chain that already executed. Full picture only available after the run completes.
+- **Gateway crash mid-run:** entire run lost — history shows the user message with no response.
+- **No fix planned short-term.** Proper solution would require either:
+  - Streaming intermediate steps to Convex as they happen (complex, high write volume)
+  - Gateway-side run state snapshot on SSE connect (replay buffer for current run)
+- **Workaround:** for Butley's typical use case (user initiates from the chat UI), they're
+  always connected from run start. Mid-run join only affects cases where the user navigates
+  away and back, or opens a session someone else started (e.g. WA session observed via chat).
+
+---
+
 ## 🐛 Open Bugs
 
 ### [wa-outbound-mentions] Any `@` in message text becomes a WA mention — including in DMs
