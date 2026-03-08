@@ -227,6 +227,7 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     }
     gatewayEventBus.removeListener("chat", onChatEvent);
     gatewayEventBus.removeListener("agent", onAgentEvent);
+    gatewayEventBus.removeListener("message.inbound", onInboundMessage);
   }
 
   // Close on client disconnect
@@ -410,9 +411,26 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     }
   }
 
+  // ── Inbound user messages (cross-channel: WA/TG → chat UI) ──
+  const onInboundMessage = (payload: Record<string, unknown>) => {
+    const evtSessionKey = typeof payload?.sessionKey === "string" ? payload.sessionKey : null;
+    if (!evtSessionKey || evtSessionKey !== sessionKey) return;
+    const data = {
+      type: "user-message" as const,
+      messageId: payload.messageId ?? null,
+      content: payload.content ?? "",
+      from: payload.from ?? "",
+      senderName: payload.senderName ?? "",
+      channel: payload.channel ?? "",
+      timestamp: payload.timestamp ?? Date.now(),
+    };
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
   // ── Subscribe to event bus ──
   gatewayEventBus.on("chat", onChatEvent);
   gatewayEventBus.on("agent", onAgentEvent);
+  gatewayEventBus.on("message.inbound", onInboundMessage);
 
   return true; // handled
 }
