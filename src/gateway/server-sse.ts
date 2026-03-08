@@ -238,6 +238,23 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     }
   }
 
+  /**
+   * Called at the end of every run (final / error / aborted).
+   * Persistent mode: reset per-run state so the connection is ready for the next run.
+   * Non-persistent mode: close the SSE stream and clean up.
+   */
+  function handleRunEnd() {
+    if (persistentMode) {
+      activeTextId = null;
+      activeReasoningId = null;
+      lastTextLen = 0;
+      lastReasoningLen = 0;
+    } else {
+      sseEnd(res);
+      cleanup();
+    }
+  }
+
   // ── Event handlers ──
   function onChatEvent(payload: ChatEventPayload) {
     if (finished) {
@@ -281,38 +298,13 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       closeActiveReasoning();
       sseWrite(res, { type: "finish-step" });
       sseWrite(res, { type: "finish" });
-      if (persistentMode) {
-        // Reset state for next run — keep connection open
-        activeTextId = null;
-        activeReasoningId = null;
-        lastTextLen = 0;
-        lastReasoningLen = 0;
-      } else {
-        sseEnd(res);
-        cleanup();
-      }
+      handleRunEnd();
     } else if (payload.state === "error") {
       sseWrite(res, { type: "error", errorText: payload.errorMessage ?? "Unknown error" });
-      if (persistentMode) {
-        activeTextId = null;
-        activeReasoningId = null;
-        lastTextLen = 0;
-        lastReasoningLen = 0;
-      } else {
-        sseEnd(res);
-        cleanup();
-      }
+      handleRunEnd();
     } else if (payload.state === "aborted") {
       sseWrite(res, { type: "abort", reason: "aborted" });
-      if (persistentMode) {
-        activeTextId = null;
-        activeReasoningId = null;
-        lastTextLen = 0;
-        lastReasoningLen = 0;
-      } else {
-        sseEnd(res);
-        cleanup();
-      }
+      handleRunEnd();
     }
   }
 

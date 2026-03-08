@@ -72,6 +72,14 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
     opts?: GatewayBroadcastOpts,
     targetConnIds?: ReadonlySet<string>,
   ) => {
+    // Always emit on event bus for SSE consumers — independent of WS client count.
+    // Must happen before the clients.size === 0 guard so SSE keeps receiving events
+    // even when no WS clients are connected (e.g. WS disconnect while SSE stays open).
+    // Targeted broadcasts (broadcastToConnIds) are WS-only and skip the event bus.
+    if (!targetConnIds) {
+      gatewayEventBus.emit(event, payload);
+    }
+
     if (params.clients.size === 0) {
       return;
     }
@@ -99,8 +107,6 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
       }
       logWs("out", "event", logMeta);
     }
-    // Emit on event bus for SSE consumers (no dropIfSlow — HTTP backpressure)
-    gatewayEventBus.emit(event, payload);
 
     for (const c of params.clients) {
       if (targetConnIds && !targetConnIds.has(c.connId)) {

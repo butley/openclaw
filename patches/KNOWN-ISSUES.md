@@ -10,6 +10,29 @@ after the SSE implementation landed. Items are grouped by priority.
 
 ## ✅ Fixed (this branch)
 
+### [server-broadcast.ts] `gatewayEventBus.emit` skipped when no WS clients connected
+- **Patches affected:** #18 SSE Streaming Endpoint
+- **Severity:** Medium — SSE stops receiving events if WS disconnects while SSE stays open
+- **Root cause:** `gatewayEventBus.emit` was inside `broadcastInternal` after an early-return
+  guard `if (params.clients.size === 0) { return; }`. If no WS client was connected (e.g.
+  network hiccup causes WS reconnect while SSE stream stays open), the event bus never fired
+  and the SSE stream went silent.
+- **Fix:** Moved `gatewayEventBus.emit` before the `clients.size === 0` guard. SSE consumers
+  now receive all non-targeted broadcasts regardless of WS client count. Targeted broadcasts
+  (`broadcastToConnIds`) remain WS-only and skip the event bus.
+- **Commit:** see patch audit commit
+
+### [server-sse.ts] Duplicate run-end reset block (3×)
+- **Patches affected:** #18 SSE Streaming Endpoint
+- **Severity:** Code quality — DRY violation, maintenance risk
+- **Root cause:** The persistent-mode state reset (`activeTextId = null`, `lastTextLen = 0`,
+  etc.) and non-persistent end (`sseEnd + cleanup`) were copy-pasted identically for each of
+  the three terminal states: `final`, `error`, `aborted`.
+- **Fix:** Extracted `handleRunEnd()` helper inside `handleSseStream`. Each terminal state now
+  calls `handleRunEnd()` — single source of truth for reset/teardown logic.
+- **Commit:** see patch audit commit
+
+
 ### [server-sse.ts] Global block counters shared across concurrent SSE connections
 - **Patches affected:** #18 SSE Streaming Endpoint
 - **Severity:** Low (no visible bug with single-user sessions, but non-idiomatic)
