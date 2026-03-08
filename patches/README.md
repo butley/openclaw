@@ -27,7 +27,7 @@
 | 12 | WA Login Tool Dedup | `wa-login-tool-dedup/` | WA | `alpha` | `grep -q "natively by OpenClaw" extensions/whatsapp/index.ts` |
 | 13 | Verbose Light | `verbose-light/` | Shared | `alpha` | `grep -q '"light"' src/auto-reply/thinking.ts` |
 | 14 | WA Outbound Mentions | `wa-outbound-mentions/` | WA | `alpha` | `grep -q "processOutboundMentions" src/web/inbound/send-api.ts` |
-| 15 | Webchat Thinking Stream | `webchat-thinking-stream/` | Agents | `alpha` | `grep -q 'reasoningMode !== "off"' src/agents/pi-embedded-subscribe.ts` |
+| 15 | Webchat Thinking Stream | `webchat-thinking-stream/` | Agents | `alpha` | `grep -q 'streamReasoning: true' src/agents/pi-embedded-subscribe.ts` |
 | 16 | Tool Events Broadcast | `tool-events-broadcast/` | Gateway | `alpha` | `grep -q "_broadcastToConnIds" src/gateway/server-chat.ts` |
 | 17 | Streaming Throttle | — | Gateway | `alpha` | `grep -q "50ms throttle" src/gateway/server-chat.ts` |
 | 18 | SSE Streaming Endpoint | `sse-streaming/` | Gateway/Agents | `feat/sse-endpoint` | `test -f src/gateway/server-sse.ts` |

@@ -38,6 +38,10 @@ check "12. WA Login Tool Dedup" "grep -q 'natively by OpenClaw' extensions/whats
 
 check "13. Verbose Light"        "grep -q '"light"' src/auto-reply/thinking.ts && grep -q 'verbose:light' src/auto-reply/status.ts"
 check "14. WA Outbound Mentions" "grep -q 'processOutboundMentions' src/web/inbound/send-api.ts"      "grep -q '\"light\"' src/auto-reply/thinking.ts && grep -q 'verbose:light' src/auto-reply/status.ts"
+check "15. Webchat Thinking Stream" "grep -q 'streamReasoning: true' src/agents/pi-embedded-subscribe.ts"
+check "16. Tool Events Broadcast"   "grep -q '_broadcastToConnIds' src/gateway/server-chat.ts"
+check "17. Streaming Throttle"      "grep -q '50ms throttle' src/gateway/server-chat.ts"
+check "18. SSE Streaming Endpoint"  "test -f src/gateway/server-sse.ts"
 
 echo ""
 echo "Results: $pass passed, $fail failed"
