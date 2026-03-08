@@ -24,20 +24,23 @@ All WS broadcast paths unchanged.
 
 ## Pre-requisite Patches (already on alpha)
 
-### Patch #12 — Thinking Broadcast
+> These are standalone patches in the main registry (#15–17). Listed here because they are
+> required for SSE to function correctly. Merge these to alpha before merging this patch (#18).
+
+### Patch #15 — Thinking Broadcast
 - **File:** `src/agents/pi-embedded-subscribe.ts` (+1 line changed)
 - **What:** `streamReasoning = true` unconditionally (was gated on reasoningLevel)
 - **Why:** Thinking events never reached webchat without this
 - **Commit:** `059322ab4`
 
-### Patch #13 — Tool Broadcast  
+### Patch #16 — Tool Events Broadcast
 - **Files:** `src/agents/pi-embedded-subscribe.ts` (+17/-6), `src/gateway/server-chat.ts` (+16/-8)
 - **What:** Broadcast tool events to ALL WS clients (not just registered connIds)
 - **Why:** Observers of WA-initiated runs couldn't see tool progress
 - **Commit:** `971d37e91`
 - **⚠️ Note:** This commit also bundled clickup-api plugin + WA verbose utils (unrelated)
 
-### Patch #14 — Throttle Reduction
+### Patch #17 — Streaming Throttle Reduction
 - **File:** `src/gateway/server-chat.ts` (+1/-1)
 - **What:** 150ms → 50ms broadcast throttle
 - **Why:** Text appeared in chunky blocks at 150ms intervals
@@ -45,9 +48,11 @@ All WS broadcast paths unchanged.
 
 ---
 
-## SSE Patches (feat/sse-endpoint branch)
+## SSE Patches (feat/sse-endpoint branch — Patch #18)
 
-### Patch #15 — SSE Endpoint (core)
+> Together, the sub-patches below constitute **Patch #18** in the main registry.
+
+### #18-A — SSE Endpoint (core)
 - **`src/gateway/server-sse.ts`** — NEW, 357 lines
   - Full SSE endpoint with AI SDK Data Stream Protocol v1
   - sessionKey filter (not runId — frontend generates different IDs)
@@ -67,7 +72,7 @@ All WS broadcast paths unchanged.
 - **Commits:** `08d4daa78`, `0bd8e0775` (CORS), `b9c857c0c` (sessionKey filter), 
   `38f3a2466` (explicit flush), `47ed276f4` (remove debug events)
 
-### Patch #16 — Raw Thinking Text
+### #18-B — Raw Thinking Text
 - **`src/agents/pi-embedded-subscribe.ts`** — +9 lines
   - Emits `rawDelta`/`rawText` alongside `delta`/`text` on thinking events
   - SSE handler uses raw (no "Reasoning:\n" prefix, no `_italic_`)
@@ -79,7 +84,7 @@ All WS broadcast paths unchanged.
 
 - **Commit:** `8c1f7ed53`
 
-### Patch #17 — Flush Before Tools
+### #18-C — Flush Before Tools
 - **`src/gateway/server-chat.ts`** — +27 lines
   - Flushes pending throttled text delta before broadcasting tool-start events
   - Prevents text truncation when model switches from text to tool call
