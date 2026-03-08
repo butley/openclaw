@@ -367,9 +367,10 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
           : null;
 
       if (newContent) {
-        // Close any open text block before reasoning (but keep lastTextLen —
-        // gateway buffer accumulates across the run, resetting causes dupes).
+        // Close any open text block before reasoning. Reset lastTextLen because
+        // the provider resets its accumulated text between turns.
         closeActiveText();
+        lastTextLen = 0;
 
         if (!activeReasoningId) {
           activeReasoningId = emitReasoningStart(res, reasoningCounter);
@@ -392,9 +393,12 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       if (phase === "start") {
         closeActiveText();
         closeActiveReasoning();
-        // Do NOT reset lastTextLen/lastReasoningLen here — the gateway buffer
-        // accumulates text across the entire run. Resetting would cause the next
-        // delta to re-deliver all previously sent text (duplicate text bug).
+        // Reset text/reasoning tracking — the provider resets its accumulated text
+        // between tool call turns (lastStreamedAssistantCleaned = undefined), so
+        // the gateway buffer starts fresh after each tool. Without this reset,
+        // lastTextLen stays high from the previous turn and new text gets skipped.
+        lastTextLen = 0;
+        lastReasoningLen = 0;
 
         const args = payload.data?.args ?? payload.data?.input ?? {};
         sseWrite(res, { type: "tool-input-start", toolCallId, toolName });
