@@ -53,12 +53,17 @@ function tryFlush(res: ServerResponse): void {
   }
 }
 
-function sseWrite(res: ServerResponse, data: Record<string, unknown>): void {
-  if (res.writableEnded) {
-    return;
+function sseWrite(res: ServerResponse, data: Record<string, unknown>): boolean {
+  if (res.writableEnded || res.destroyed) {
+    return false;
   }
-  res.write(`data: ${JSON.stringify(data)}\n\n`);
-  tryFlush(res);
+  try {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+    tryFlush(res);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function ssePing(res: ServerResponse): void {
@@ -420,16 +425,15 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
   const onInboundMessage = (payload: Record<string, unknown>) => {
     const evtSessionKey = typeof payload?.sessionKey === "string" ? payload.sessionKey : null;
     if (!evtSessionKey || normalizeSessionKey(evtSessionKey) !== normalizeSessionKey(sessionKey)) return;
-    const data = {
-      type: "user-message" as const,
-      messageId: payload.messageId ?? null,
-      content: payload.content ?? "",
-      from: payload.from ?? "",
-      senderName: payload.senderName ?? "",
-      channel: payload.channel ?? "",
-      timestamp: payload.timestamp ?? Date.now(),
-    };
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
+    sseWrite(res, {
+      type: "user-message",
+      messageId: (payload.messageId as string) ?? null,
+      content: (payload.content as string) ?? "",
+      from: (payload.from as string) ?? "",
+      senderName: (payload.senderName as string) ?? "",
+      channel: (payload.channel as string) ?? "",
+      timestamp: (payload.timestamp as number) ?? Date.now(),
+    });
   };
 
   // ── Subscribe to event bus ──
