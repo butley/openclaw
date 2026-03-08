@@ -1,7 +1,4 @@
 import { createHmac, createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ReasoningLevel, ThinkLevel } from "../auto-reply/thinking.js";
 import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import type { MemoryCitationsMode } from "../config/types.memory.js";
@@ -10,12 +7,7 @@ import type { ResolvedTimeFormat } from "./date-time.js";
 import type { EmbeddedContextFile } from "./pi-embedded-helpers.js";
 import type { EmbeddedSandboxInfo } from "./pi-embedded-runner/types.js";
 import { sanitizeForPromptLiteral } from "./sanitize-for-prompt.js";
-
-const __butleyDir = dirname(fileURLToPath(import.meta.url));
-const BUTLEY_IDENTITY_PROMPT = readFileSync(
-  resolve(__butleyDir, "butley-system-prompt.md"),
-  "utf-8",
-).trim();
+import { BUTLEY_IDENTITY_PROMPT } from "./butley-system-prompt.js";
 
 /**
  * Controls which hardcoded sections are included in the system prompt.
