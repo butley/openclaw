@@ -336,7 +336,11 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       return;
     }
     const agentSessionKey = payload.sessionKey;
-    if (agentSessionKey !== sessionKey) {
+    // Match by agent prefix (e.g. "agent:main") so tool events from any channel
+    // (WA, TG, etc.) reach the chat UI SSE stream. The SSE connection is already
+    // authenticated by token — this just widens the session filter.
+    const agentPrefix = sessionKey.split(":").slice(0, 2).join(":");
+    if (!agentSessionKey?.startsWith(agentPrefix)) {
       return;
     }
 
