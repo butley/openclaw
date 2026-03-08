@@ -187,9 +187,18 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
   // Per-connection counters (avoid sharing state across concurrent SSE streams)
   const textCounter = { n: 0 };
   const reasoningCounter = { n: 0 };
+  // Tracks the active runId in persistent mode so we can emit "start" when a new run begins.
+  // In non-persistent mode this stays null (run is known at connection time).
+  let currentRunId: string | null = null;
 
-  // Send message start
-  sseWrite(res, { type: "start", messageId: runId });
+  if (persistentMode) {
+    // Persistent mode: connection open before any run exists.
+    // Emit "connected" to signal the stream is ready — not "start" (which implies a run began).
+    sseWrite(res, { type: "connected", sessionKey });
+  } else {
+    // Non-persistent mode: connection is for a specific known run — emit start immediately.
+    sseWrite(res, { type: "start", messageId: runId });
+  }
 
   // Keep-alive ping every 15s
   const pingInterval = setInterval(() => ssePing(res), 15_000);
@@ -249,6 +258,7 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       activeReasoningId = null;
       lastTextLen = 0;
       lastReasoningLen = 0;
+      currentRunId = null;
     } else {
       sseEnd(res);
       cleanup();
@@ -266,6 +276,13 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     }
 
     if (payload.state === "delta") {
+      // Persistent mode: detect new run and emit "start" with the real runId.
+      // This is the correct point to signal "a message is beginning" — not at connection open.
+      if (persistentMode && payload.runId && payload.runId !== currentRunId) {
+        currentRunId = payload.runId;
+        sseWrite(res, { type: "start", messageId: currentRunId });
+      }
+
       // Extract text from content array
       const content = payload.message?.content;
       if (!content) {

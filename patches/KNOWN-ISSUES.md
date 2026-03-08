@@ -10,6 +10,32 @@ after the SSE implementation landed. Items are grouped by priority.
 
 ## ✅ Fixed (this branch)
 
+### [server-sse.ts] Persistent mode emitted `{ type: "start", messageId: null }` on connection open
+- **Patches affected:** #18 SSE Streaming Endpoint
+- **Severity:** Protocol correctness — undefined behavior per AI SDK Data Stream Protocol
+- **Root cause:** On connection open, the handler always emitted `{ type: "start", messageId: runId }`.
+  In persistent mode `runId` is null (connection opens before any run exists), resulting in
+  `messageId: null`. The protocol doesn't define behavior for this. The frontend worked around
+  it by treating `start` with `null` as a connection signal, but that conflated two distinct
+  concepts: "session connected" vs "a run started".
+- **Architectural context:** In Butley, the chat UI subscribes to a *session* (which may have
+  WA activity), not to a specific run. The connection must be ready independently of whether
+  any run is active. A WA session may be observed via the chat UI even when WhatsApp isn't
+  actively streaming — the SSE stream needs to stay open and signal its own readiness cleanly.
+- **Fix:**
+  - Persistent mode: emit `{ type: "connected", sessionKey }` on open — signals readiness
+    without implying a run started.
+  - Non-persistent mode: unchanged — emits `{ type: "start", messageId: runId }` immediately
+    (run is known at connection time).
+  - Added `currentRunId` per-connection state. When the first delta of a new run arrives in
+    persistent mode (`payload.runId !== currentRunId`), emit `{ type: "start", messageId }` then.
+  - `handleRunEnd()` resets `currentRunId = null` so the next run emits a fresh `start`.
+- **⚠️ Frontend change required:** `feat/chat-ui-sse` must handle the new `connected` event
+  (instead of `start` with `messageId: null`) and `start` events mid-stream. The assembler
+  should reset state on `start` and treat `connected` as ready-signal only.
+- **Commit:** see patch audit commit
+
+
 ### [server-broadcast.ts] `gatewayEventBus.emit` skipped when no WS clients connected
 - **Patches affected:** #18 SSE Streaming Endpoint
 - **Severity:** Medium — SSE stops receiving events if WS disconnects while SSE stays open
