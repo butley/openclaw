@@ -1,7 +1,7 @@
 # Patch Audit — Known Issues & Pending Work
 
-> Last updated: 2026-03-07  
-> Branch: `feat/sse-endpoint`
+> Last updated: 2026-03-08  
+> Branch: `alpha`
 
 This document tracks findings from the patch quality audit. All items below were identified
 after the SSE implementation landed. Items are grouped by priority.
@@ -58,6 +58,36 @@ after the SSE implementation landed. Items are grouped by priority.
   calls `handleRunEnd()` — single source of truth for reset/teardown logic.
 - **Commit:** see patch audit commit
 
+
+### [server-sse.ts] `lastTextLen = 0` on tool/reasoning start caused text duplication
+- **Patches affected:** #18 SSE Streaming Endpoint
+- **Severity:** High — visible text duplication in any run with tool calls
+- **Root cause:** Tool start and reasoning handlers reset `lastTextLen = 0` and
+  `lastReasoningLen = 0`. The gateway buffer (`chatRunState.buffers`) accumulates text across
+  the entire run (never resets between tools). Each SSE delta delivers the full accumulated
+  buffer, with the handler extracting the new portion via `fullText.slice(lastTextLen)`.
+  Resetting `lastTextLen` to 0 made the next delta re-deliver ALL previously sent text.
+- **Scenario:** Model generates 500 chars → tool call → model generates 200 more.
+  Without fix: SSE re-emits all 700 chars (500 duplicated). With fix: only 200 new chars.
+- **Fix:** Removed `lastTextLen = 0` and `lastReasoningLen = 0` from tool start and reasoning
+  handlers. Only `handleRunEnd()` resets these counters (when the run actually ends).
+- **Found by:** Opus 4.6 deep review of Sonnet-written code
+- **Commit:** `b9b81a593`
+
+### [server-sse.ts] Thinking events arrived before `start` in persistent mode — race condition
+- **Patches affected:** #18 SSE Streaming Endpoint
+- **Severity:** Medium — thinking content could flash and disappear in frontend
+- **Root cause:** `onAgentEvent` (thinking/tool events) had no `currentRunId` detection. Only
+  `onChatEvent` emitted `start` when a new run was detected. Since thinking events arrive
+  before the first chat delta, the frontend received `reasoning-delta` without a preceding
+  `start`. The frontend's defensive fallback created a synthetic runId — but when the real
+  `start` arrived later (from the first chat delta), `resetAssembler()` cleared all
+  accumulated thinking. Users would see thinking appear then vanish.
+- **Fix:** Added `currentRunId` detection in `onAgentEvent` — same logic as `onChatEvent`.
+  Now `start` fires before any thinking content, and the assembler resets cleanly before
+  content accumulation begins.
+- **Found by:** Opus 4.6 deep review of Sonnet-written code
+- **Commit:** `b9b81a593`
 
 ### [server-sse.ts] Global block counters shared across concurrent SSE connections
 - **Patches affected:** #18 SSE Streaming Endpoint
@@ -168,13 +198,12 @@ after the SSE implementation landed. Items are grouped by priority.
 
 ---
 
-## 📋 Merge Checklist (before `feat/sse-endpoint` → `alpha`)
+## ✅ Merge Checklist (`feat/sse-endpoint` → `alpha`) — DONE 2026-03-08
 
-- [ ] Build passes (`npm run build`)
-- [ ] `bash patches/verify-patches.sh .` passes all checks
-- [ ] WA Outbound Mentions bug (#14) — decision: fix or disable before merge?
-- [ ] SSE auth + CORS — acknowledged as pre-launch (not blocker for internal merge)
-- [ ] Chat Mirror README — low priority, can be deferred
+- [x] Build passes (`npm run build`)
+- [x] `bash patches/verify-patches.sh .` — 16/16 passed
+- [x] Merge commit: `18d4ab30a`
+- [x] Post-merge fixes: counters, event bus, handleRunEnd, connected/start, text dupe, thinking race
 
 ## 📋 Merge Checklist (before `alpha` → `work` — Butley provisioning)
 
