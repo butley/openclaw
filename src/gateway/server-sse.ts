@@ -334,6 +334,14 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       return;
     }
 
+    // Persistent mode: detect new run from agent events (thinking/tool can arrive
+    // before the first chat delta). Emit "start" so the frontend gets the correct
+    // run lifecycle signal before any content.
+    if (persistentMode && payload.runId && payload.runId !== currentRunId) {
+      currentRunId = payload.runId;
+      sseWrite(res, { type: "start", messageId: currentRunId });
+    }
+
     // ── Thinking / Reasoning ──
     if (payload.stream === "thinking") {
       // Prefer rawDelta/rawText (unformatted, no "Reasoning:" prefix or _italic_ wrapping).
@@ -359,9 +367,9 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
           : null;
 
       if (newContent) {
-        // Close any open text block before reasoning
+        // Close any open text block before reasoning (but keep lastTextLen —
+        // gateway buffer accumulates across the run, resetting causes dupes).
         closeActiveText();
-        lastTextLen = 0;
 
         if (!activeReasoningId) {
           activeReasoningId = emitReasoningStart(res, reasoningCounter);
@@ -384,8 +392,9 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       if (phase === "start") {
         closeActiveText();
         closeActiveReasoning();
-        lastTextLen = 0;
-        lastReasoningLen = 0;
+        // Do NOT reset lastTextLen/lastReasoningLen here — the gateway buffer
+        // accumulates text across the entire run. Resetting would cause the next
+        // delta to re-deliver all previously sent text (duplicate text bug).
 
         const args = payload.data?.args ?? payload.data?.input ?? {};
         sseWrite(res, { type: "tool-input-start", toolCallId, toolName });
