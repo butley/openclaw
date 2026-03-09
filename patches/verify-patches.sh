@@ -49,6 +49,8 @@ check "23. Chat Internal Route"    "grep -q 'INTERNAL_MESSAGE_CHANNEL' src/gatew
 check "24. Silent Filter Remove"   "! grep -q 'extractAssistantTextForSilentCheck' src/gateway/server-methods/chat.ts"
 check "25. HTTP Tools Channel"     "grep -q 'listChannelAgentTools' src/gateway/tools-invoke-http.ts"
 check "26. ThinkingDefault"        "grep -q 'thinkingDefault' src/gateway/server-methods/chat.ts"
+check "27. Media Inbound Path"     "grep -q 'inbound' src/gateway/server-http.ts"
+check "28. SSE Cron Filter"        "grep -q ':cron:' src/gateway/server-sse.ts"
 
 echo ""
 echo "Results: $pass passed, $fail failed"

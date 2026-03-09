@@ -1,6 +1,6 @@
 # Custom Patches — butley/openclaw
 
-24 active custom patches on top of upstream openclaw/openclaw.
+26 active custom patches on top of upstream openclaw/openclaw.
 
 ## Absorbed by Upstream (no longer maintained)
 
@@ -39,6 +39,8 @@
 | 24 | Silent Reply Filter Removal | `silent-reply-filter-removal/` | Gateway | `alpha` | `! grep -q "extractAssistantTextForSilentCheck" src/gateway/server-methods/chat.ts` |
 | 25 | HTTP Tools Channel Reg | `http-tools-channel-reg/` | Gateway | `alpha` | `grep -q "listChannelAgentTools" src/gateway/tools-invoke-http.ts` |
 | 26 | ThinkingDefault Shortcut | `thinking-default-fastpath/` | Gateway | `alpha` | `grep -q "thinkingDefault" src/gateway/server-methods/chat.ts` |
+| 27 | Media Inbound Path | — | Gateway | `alpha` | `grep -q "inbound" src/gateway/server-http.ts` |
+| 28 | SSE Cron Filter | — | Gateway | `alpha` | `grep -q ":cron:" src/gateway/server-sse.ts` |
 
 ## Re-application Order
 
