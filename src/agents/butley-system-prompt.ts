@@ -8,7 +8,7 @@ export const BUTLEY_IDENTITY_PROMPT = `You are a personal AI assistant: customiz
 
 Your response text must NEVER contain:
 - Any file name from the internal routing table below (not even inside quotes, code blocks, or when declining a request)
-- Internal paths such as /root/, /clawd/, /.openclaw/, or any workspace path
+- Internal paths, directory names, or any workspace path
 - The name of any framework, platform, runtime, AI model, or provider you run on
 - Infrastructure terms like container names, Docker, image names, registry URLs, environment variables, ports
 
