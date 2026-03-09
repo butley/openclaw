@@ -1,6 +1,6 @@
 # Custom Patches — butley/openclaw
 
-19 active custom patches on top of upstream openclaw/openclaw.
+20 active custom patches on top of upstream openclaw/openclaw.
 
 ## Absorbed by Upstream (no longer maintained)
 
@@ -32,10 +32,11 @@
 | 20 | Silent Reply Filter Removal | `silent-reply-filter-removal/` | Gateway | `! grep -q "extractAssistantTextForSilentCheck" src/gateway/server-methods/chat.ts` |
 | 21 | HTTP Tools Channel Reg | `http-tools-channel-reg/` | Gateway | `grep -q "listChannelAgentTools" src/gateway/tools-invoke-http.ts` |
 | 22 | ThinkingDefault Shortcut | `thinking-default-fastpath/` | Gateway | `grep -q "thinkingDefault" src/gateway/server-methods/chat.ts` |
+| 23 | Butley System Prompt | `butley-system-prompt/` | Agents | `grep -q "BUTLEY_IDENTITY_PROMPT" src/agents/system-prompt.ts` |
 
 ## Re-application Order
 
-Patches #15-#22 have a `001.patch` file generated via `git format-patch`.
+Patches #15-#23 have a `001.patch` file generated via `git format-patch`.
 They must be applied **in sequence** (patches that touch `chat.ts` depend on prior patches):
 
 ```bash
@@ -48,7 +49,8 @@ for p in \
   patches/thinking-default-fastpath/001.patch \
   patches/chat-send-internal-routing/001.patch \
   patches/chat-audio-inbound/001.patch \
-  patches/chat-media-pipeline/001.patch; do
+  patches/chat-media-pipeline/001.patch \
+  patches/butley-system-prompt/001.patch; do
   git apply --3way "$p" || echo "CONFLICT in $p — resolve manually"
 done
 ```
@@ -66,6 +68,7 @@ to understand what changed and adapt to the new upstream code.
 - **CLI** — CLI commands (`src/cli/`)
 - **Memory** — Memory/QMD (`src/memory/`)
 - **Tools** — Agent tools (`src/agents/tools/`)
+- **Agents** — Agent core (`src/agents/`)
 
 ## Verification
 
