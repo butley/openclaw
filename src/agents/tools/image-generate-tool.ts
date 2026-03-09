@@ -36,6 +36,8 @@ function resolveGeminiKey(): string | null {
   if (direct) return direct;
   const google = process.env.GOOGLE_API_KEY?.trim();
   if (google) return google;
+  const googleAi = process.env.GOOGLE_AI_API_KEY?.trim();
+  if (googleAi) return googleAi;
   return null;
 }
 
