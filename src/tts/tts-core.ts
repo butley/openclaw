@@ -18,7 +18,7 @@ import type {
 } from "./tts.js";
 
 const DEFAULT_ELEVENLABS_BASE_URL = "https://api.elevenlabs.io";
-const TEMP_FILE_CLEANUP_DELAY_MS = 5 * 60 * 1000; // 5 minutes
+const TEMP_FILE_CLEANUP_DELAY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export function isValidVoiceId(voiceId: string): boolean {
   return /^[a-zA-Z0-9]{10,40}$/.test(voiceId);

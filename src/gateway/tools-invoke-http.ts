@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { listChannelAgentTools } from "../agents/channel-tools.js";
 import { createOpenClawTools } from "../agents/openclaw-tools.js";
 import {
   resolveEffectiveToolPolicy,
@@ -16,6 +17,7 @@ import {
 } from "../agents/tool-policy.js";
 import { ToolInputError } from "../agents/tools/common.js";
 import { loadConfig } from "../config/config.js";
+import { createWhatsAppLoginTool } from "../channels/plugins/agent-tools/whatsapp-login.js";
 import { resolveMainSessionKey } from "../config/sessions.js";
 import { logWarn } from "../logger.js";
 import { isTestDefaultMemorySlotDisabled } from "../plugins/config-state.js";
@@ -245,25 +247,33 @@ export async function handleToolsInvokeHttpRequest(
     ? resolveSubagentToolPolicy(cfg)
     : undefined;
 
-  // Build tool list (core + plugin tools).
-  const allTools = createOpenClawTools({
-    agentSessionKey: sessionKey,
-    agentChannel: messageChannel ?? undefined,
-    agentAccountId: accountId,
-    agentTo,
-    agentThreadId,
-    config: cfg,
-    pluginToolAllowlist: collectExplicitAllowlist([
-      profilePolicy,
-      providerProfilePolicy,
-      globalPolicy,
-      globalProviderPolicy,
-      agentPolicy,
-      agentProviderPolicy,
-      groupPolicy,
-      subagentPolicy,
-    ]),
-  });
+  // Build tool list (core + channel/plugin tools).
+  const allTools = [
+    ...listChannelAgentTools({ cfg }),
+    // Hard fallback: expose whatsapp_login for HTTP invoke when WhatsApp is configured,
+    // even if channel plugin agentTools registration is unavailable in this runtime path.
+    ...((cfg.channels?.whatsapp && cfg.channels.whatsapp.enabled !== false)
+      ? [createWhatsAppLoginTool()]
+      : []),
+    ...createOpenClawTools({
+      agentSessionKey: sessionKey,
+      agentChannel: messageChannel ?? undefined,
+      agentAccountId: accountId,
+      agentTo,
+      agentThreadId,
+      config: cfg,
+      pluginToolAllowlist: collectExplicitAllowlist([
+        profilePolicy,
+        providerProfilePolicy,
+        globalPolicy,
+        globalProviderPolicy,
+        agentPolicy,
+        agentProviderPolicy,
+        groupPolicy,
+        subagentPolicy,
+      ]),
+    }),
+  ];
 
   const subagentFiltered = applyToolPolicyPipeline({
     // oxlint-disable-next-line typescript/no-explicit-any

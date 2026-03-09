@@ -1,7 +1,7 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/whatsapp";
 import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/whatsapp";
 import { whatsappPlugin } from "./src/channel.js";
-import { getWhatsAppRuntime, setWhatsAppRuntime } from "./src/runtime.js";
+import { setWhatsAppRuntime } from "./src/runtime.js";
 
 const plugin = {
   id: "whatsapp",
@@ -11,8 +11,8 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     setWhatsAppRuntime(api.runtime);
     api.registerChannel({ plugin: whatsappPlugin });
-    // Note: whatsapp_login tool is registered natively by OpenClaw >= 2026.2.26.
-    // Do NOT call api.registerTool() here — it would cause duplicate tool names.
+    // whatsapp_login is provided by core tooling/runtime.
+    // Do not register tool here (would duplicate names in LLM tool list).
   },
 };
 

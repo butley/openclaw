@@ -1,6 +1,6 @@
 # Custom Patches — butley/openclaw
 
-16 active custom patches on top of upstream openclaw/openclaw.
+24 active custom patches on top of upstream openclaw/openclaw.
 
 ## Absorbed by Upstream (no longer maintained)
 
@@ -11,7 +11,7 @@
 
 ## Patch Registry
 
-> **Branch key:** `alpha` = merged into stable base | `feat/sse-endpoint` = pending merge into alpha
+> **Branch key:** `alpha` = merged into stable base
 
 | # | Name | Dir | Scope | Branch | Verify |
 |---|------|-----|-------|--------|--------|
@@ -30,9 +30,38 @@
 | 15 | Webchat Thinking Stream | `webchat-thinking-stream/` | Agents | `alpha` | `grep -q 'streamReasoning: true' src/agents/pi-embedded-subscribe.ts` |
 | 16 | Tool Events Broadcast | `tool-events-broadcast/` | Gateway | `alpha` | `grep -q "_broadcastToConnIds" src/gateway/server-chat.ts` |
 | 17 | Streaming Throttle | — | Gateway | `alpha` | `grep -q "50ms throttle" src/gateway/server-chat.ts` |
-| 18 | SSE Streaming Endpoint | `sse-streaming/` | Gateway/Agents | `feat/sse-endpoint` | `test -f src/gateway/server-sse.ts` |
+| 18 | SSE Streaming Endpoint | `sse-streaming/` | Gateway/Agents | `alpha` | `test -f src/gateway/server-sse.ts` |
+| 19 | Gateway Media Endpoint | `gateway-media-endpoint/` | Gateway | `alpha` | `grep -q '"media"' src/gateway/server-http.ts` |
+| 20 | Image Generate Tool | `image-generate-tool/` | Tools | `alpha` | `test -f src/agents/tools/image-generate-tool.ts` |
+| 21 | Chat Audio Inbound | `chat-audio-inbound/` | Gateway | `alpha` | `test -f src/gateway/chat-attachments.ts` |
+| 22 | Chat Media Pipeline | `chat-media-pipeline/` | Gateway+Shared | `alpha` | `grep -q "audioUrlByIndex" src/gateway/server-methods/chat.ts` |
+| 23 | Chat.send Internal Routing | `chat-send-internal-routing/` | Gateway | `alpha` | `grep -q "INTERNAL_MESSAGE_CHANNEL" src/gateway/server-methods/chat.ts` |
+| 24 | Silent Reply Filter Removal | `silent-reply-filter-removal/` | Gateway | `alpha` | `! grep -q "extractAssistantTextForSilentCheck" src/gateway/server-methods/chat.ts` |
+| 25 | HTTP Tools Channel Reg | `http-tools-channel-reg/` | Gateway | `alpha` | `grep -q "listChannelAgentTools" src/gateway/tools-invoke-http.ts` |
+| 26 | ThinkingDefault Shortcut | `thinking-default-fastpath/` | Gateway | `alpha` | `grep -q "thinkingDefault" src/gateway/server-methods/chat.ts` |
 
+## Re-application Order
 
+Patches #19-#26 have a `001.patch` file generated via `git format-patch`.
+They must be applied **in sequence** (patches that touch `chat.ts` depend on prior patches):
+
+```bash
+# From repo root, after an upstream merge:
+for p in \
+  patches/gateway-media-endpoint/001.patch \
+  patches/image-generate-tool/001.patch \
+  patches/http-tools-channel-reg/001.patch \
+  patches/silent-reply-filter-removal/001.patch \
+  patches/thinking-default-fastpath/001.patch \
+  patches/chat-send-internal-routing/001.patch \
+  patches/chat-audio-inbound/001.patch \
+  patches/chat-media-pipeline/001.patch; do
+  git apply --3way "$p" || echo "CONFLICT in $p — resolve manually"
+done
+```
+
+If a patch conflicts, use the `001.patch` diff + the `README.md` together
+to understand what changed and adapt to the new upstream code.
 
 ## Scope Legend
 
@@ -44,6 +73,7 @@
 - **CLI** — CLI commands (`src/cli/`)
 - **Memory** — Memory/QMD (`src/memory/`)
 - **Agents** — Agent runtime (`src/agents/`)
+- **Tools** — Agent tools (`src/agents/tools/`)
 
 ## Verification
 

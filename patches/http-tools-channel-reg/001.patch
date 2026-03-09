@@ -1,0 +1,111 @@
+From 721db98c44dc60e5f142f4b670d38c3afb064529 Mon Sep 17 00:00:00 2001
+From: Guilherme Ramos <guiramos@gmail.com>
+Date: Wed, 4 Mar 2026 17:40:13 -0500
+Subject: [PATCH 3/8] patch-21: HTTP Tools Channel Registration
+
+Include channel-registered agent tools (e.g. whatsapp_login) in HTTP
+/tools/invoke endpoint. Adds listChannelAgentTools + hard fallback for
+WhatsApp login tool. Removes duplicate registration from WA extension.
+---
+ extensions/whatsapp/index.ts     |  6 ++--
+ src/gateway/tools-invoke-http.ts | 48 +++++++++++++++++++-------------
+ 2 files changed, 32 insertions(+), 22 deletions(-)
+
+diff --git a/extensions/whatsapp/index.ts b/extensions/whatsapp/index.ts
+index 13d46e47e..af8210977 100644
+--- a/extensions/whatsapp/index.ts
++++ b/extensions/whatsapp/index.ts
+@@ -1,7 +1,7 @@
+ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+ import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
+ import { whatsappPlugin } from "./src/channel.js";
+-import { getWhatsAppRuntime, setWhatsAppRuntime } from "./src/runtime.js";
++import { setWhatsAppRuntime } from "./src/runtime.js";
+ 
+ const plugin = {
+   id: "whatsapp",
+@@ -11,8 +11,8 @@ const plugin = {
+   register(api: OpenClawPluginApi) {
+     setWhatsAppRuntime(api.runtime);
+     api.registerChannel({ plugin: whatsappPlugin });
+-    // Note: whatsapp_login tool is registered natively by OpenClaw >= 2026.2.26.
+-    // Do NOT call api.registerTool() here — it would cause duplicate tool names.
++    // whatsapp_login is provided by core tooling/runtime.
++    // Do not register tool here (would duplicate names in LLM tool list).
+   },
+ };
+ 
+diff --git a/src/gateway/tools-invoke-http.ts b/src/gateway/tools-invoke-http.ts
+index caf71c56c..afacdf65b 100644
+--- a/src/gateway/tools-invoke-http.ts
++++ b/src/gateway/tools-invoke-http.ts
+@@ -1,4 +1,5 @@
+ import type { IncomingMessage, ServerResponse } from "node:http";
++import { listChannelAgentTools } from "../agents/channel-tools.js";
+ import { createOpenClawTools } from "../agents/openclaw-tools.js";
+ import {
+   resolveEffectiveToolPolicy,
+@@ -16,6 +17,7 @@ import {
+ } from "../agents/tool-policy.js";
+ import { ToolInputError } from "../agents/tools/common.js";
+ import { loadConfig } from "../config/config.js";
++import { createWhatsAppLoginTool } from "../channels/plugins/agent-tools/whatsapp-login.js";
+ import { resolveMainSessionKey } from "../config/sessions.js";
+ import { logWarn } from "../logger.js";
+ import { isTestDefaultMemorySlotDisabled } from "../plugins/config-state.js";
+@@ -245,25 +247,33 @@ export async function handleToolsInvokeHttpRequest(
+     ? resolveSubagentToolPolicy(cfg)
+     : undefined;
+ 
+-  // Build tool list (core + plugin tools).
+-  const allTools = createOpenClawTools({
+-    agentSessionKey: sessionKey,
+-    agentChannel: messageChannel ?? undefined,
+-    agentAccountId: accountId,
+-    agentTo,
+-    agentThreadId,
+-    config: cfg,
+-    pluginToolAllowlist: collectExplicitAllowlist([
+-      profilePolicy,
+-      providerProfilePolicy,
+-      globalPolicy,
+-      globalProviderPolicy,
+-      agentPolicy,
+-      agentProviderPolicy,
+-      groupPolicy,
+-      subagentPolicy,
+-    ]),
+-  });
++  // Build tool list (core + channel/plugin tools).
++  const allTools = [
++    ...listChannelAgentTools({ cfg }),
++    // Hard fallback: expose whatsapp_login for HTTP invoke when WhatsApp is configured,
++    // even if channel plugin agentTools registration is unavailable in this runtime path.
++    ...((cfg.channels?.whatsapp && cfg.channels.whatsapp.enabled !== false)
++      ? [createWhatsAppLoginTool()]
++      : []),
++    ...createOpenClawTools({
++      agentSessionKey: sessionKey,
++      agentChannel: messageChannel ?? undefined,
++      agentAccountId: accountId,
++      agentTo,
++      agentThreadId,
++      config: cfg,
++      pluginToolAllowlist: collectExplicitAllowlist([
++        profilePolicy,
++        providerProfilePolicy,
++        globalPolicy,
++        globalProviderPolicy,
++        agentPolicy,
++        agentProviderPolicy,
++        groupPolicy,
++        subagentPolicy,
++      ]),
++    }),
++  ];
+ 
+   const subagentFiltered = applyToolPolicyPipeline({
+     // oxlint-disable-next-line typescript/no-explicit-any
+-- 
+2.53.0
+
