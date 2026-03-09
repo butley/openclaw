@@ -12,6 +12,8 @@ export type ChatImageContent = {
   type: "image";
   data: string;
   mimeType: string;
+  /** Saved media URL (e.g. /media/uuid.png) — persists after base64 data is stripped from history */
+  mediaUrl?: string;
 };
 
 export type ChatAudioAttachment = {

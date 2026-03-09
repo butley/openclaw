@@ -143,6 +143,7 @@ function sanitizeChatHistoryContentBlock(block: unknown): { block: unknown; chan
     entry.omitted = true;
     entry.bytes = bytes;
     changed = true;
+    // Preserve mediaUrl if present (saved to disk on inbound)
   }
   return { block: changed ? entry : block, changed };
 }
@@ -785,6 +786,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     let parsedMessage = inboundMessage;
     let parsedImages: ChatImageContent[] = [];
     let parsedAudioPaths: string[] = [];
+    let parsedImageMediaUrls: string[] = [];
     if (normalizedAttachments.length > 0) {
       try {
         const parsed = await parseMessageWithAttachments(inboundMessage, normalizedAttachments, {
@@ -793,6 +795,20 @@ export const chatHandlers: GatewayRequestHandlers = {
         });
         parsedMessage = parsed.message;
         parsedImages = parsed.images;
+
+        // Save images to disk so they can be served via /media endpoint
+        for (const img of parsedImages) {
+          try {
+            const buffer = Buffer.from(img.data, "base64");
+            const saved = await saveMediaBuffer(buffer, img.mimeType, "inbound", 5_000_000);
+            const mediaUrl = `/media/${saved.id}`;
+            parsedImageMediaUrls.push(mediaUrl);
+            // Tag image with saved URL — survives base64 stripping in chat.history
+            img.mediaUrl = mediaUrl;
+          } catch (imgErr) {
+            context.logGateway?.(`[chat.send] Failed to save inbound image: ${imgErr}`);
+          }
+        }
 
         const audio = await extractAudioAttachments(normalizedAttachments, {
           maxBytes: 20_000_000,
