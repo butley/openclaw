@@ -344,6 +344,12 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       return;
     }
 
+    // Skip cron/sub-agent sessions — they shouldn't hijack the chat UI stream.
+    // Cron keys look like "agent:main:cron:{id}:run:{uuid}".
+    if (agentSessionKey.includes(":cron:")) {
+      return;
+    }
+
     // Persistent mode: detect new run from agent events (thinking/tool can arrive
     // before the first chat delta). Emit "start" so the frontend gets the correct
     // run lifecycle signal before any content.
