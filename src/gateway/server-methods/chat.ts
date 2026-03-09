@@ -795,6 +795,7 @@ export const chatHandlers: GatewayRequestHandlers = {
         });
         parsedMessage = parsed.message;
         parsedImages = parsed.images;
+        context.logGateway?.info?.(`[chat.send] attachments=${normalizedAttachments.length} images=${parsedImages.length}`);
 
         // Save images to disk so they can be served via /media endpoint
         for (const img of parsedImages) {
@@ -806,7 +807,7 @@ export const chatHandlers: GatewayRequestHandlers = {
             // Tag image with saved URL — survives base64 stripping in chat.history
             img.mediaUrl = mediaUrl;
           } catch (imgErr) {
-            context.logGateway?.(`[chat.send] Failed to save inbound image: ${imgErr}`);
+            context.logGateway?.warn?.(`[chat.send] Failed to save inbound image: ${imgErr}`);
           }
         }
 
