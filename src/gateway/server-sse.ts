@@ -286,8 +286,19 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       return;
     }
     sseEventCount++;
-    const payloadSessionKey = (payload as Record<string, unknown>).sessionKey;
-    if (payloadSessionKey !== sessionKey) {
+    const payloadSessionKey = (payload as Record<string, unknown>).sessionKey as string | undefined;
+
+    // Use prefix match (same as onAgentEvent) so that runs from any channel
+    // (WA, webchat, etc.) under the same agent reach the SSE stream.
+    // This fixes the cross-channel text delivery gap where onAgentEvent
+    // delivered tools/thinking (prefix match) but onChatEvent dropped
+    // text deltas and finish events (exact match).
+    const agentPrefix = sessionKey.split(":").slice(0, 2).join(":");
+    if (!payloadSessionKey?.startsWith(agentPrefix)) {
+      return;
+    }
+    // Skip cron sessions (same as onAgentEvent)
+    if (payloadSessionKey.includes(":cron:")) {
       return;
     }
 
