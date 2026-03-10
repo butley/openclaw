@@ -190,10 +190,6 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
   let activeReasoningId: string | null = null;
   let lastTextLen = 0;
   let lastReasoningLen = 0;
-  /** Total chars of text emitted to SSE client across all turns in this run. */
-  let totalTextEmitted = 0;
-  /** True when provider is replaying previous text after a tool call buffer reset. */
-  let inTextReplay = false;
   let finished = false;
   // Per-connection counters (avoid sharing state across concurrent SSE streams)
   const textCounter = { n: 0 };
@@ -276,8 +272,6 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       activeTextId = null;
       activeReasoningId = null;
       lastTextLen = 0;
-      totalTextEmitted = 0;
-      inTextReplay = false;
       lastReasoningLen = 0;
       currentRunId = null;
     } else {
@@ -311,52 +305,27 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
         return;
       }
 
+      // Concatenate ALL text blocks into one string. The gateway broadcasts
+      // the full message state at each delta — content array includes all blocks
+      // from all turns (old text blocks + current). Concatenating and comparing
+      // against a single lastTextLen naturally handles tool call "replays"
+      // (old blocks are still there, so concatenated length stays monotonic).
+      let fullText = "";
       for (const block of content) {
         if (block.type === "text" && block.text) {
-          const fullText = block.text;
-          const prevLen = lastTextLen;
-
-          // Provider buffer reset: text shrunk = new turn after tool call.
-          if (fullText.length < prevLen) {
-            console.warn(
-              `[sse] text replay started: fullText=${fullText.length} prev=${prevLen} totalEmitted=${totalTextEmitted} sessionKey=${sessionKey}`,
-            );
-            inTextReplay = true;
-          }
-
-          // During replay: provider is re-sending text we already emitted.
-          // Skip until accumulated text exceeds totalTextEmitted.
-          if (inTextReplay) {
-            lastTextLen = fullText.length;
-            if (fullText.length <= totalTextEmitted) {
-              continue; // Still replaying old text
-            }
-            // Replay done — emit only the new part beyond what we already sent
-            inTextReplay = false;
-            const textToEmit = fullText.slice(totalTextEmitted);
-            totalTextEmitted += textToEmit.length;
-            closeActiveReasoning();
-            if (!activeTextId) {
-              activeTextId = emitTextStart(res, textCounter);
-            }
-            emitTextDelta(res, activeTextId, textToEmit);
-            continue;
-          }
-
-          // Normal path: no replay, just extract new portion
-          if (fullText.length <= prevLen) {
-            continue;
-          }
-          lastTextLen = fullText.length;
-          const newText = fullText.slice(prevLen);
-          totalTextEmitted += newText.length;
-
-          closeActiveReasoning();
-          if (!activeTextId) {
-            activeTextId = emitTextStart(res, textCounter);
-          }
-          emitTextDelta(res, activeTextId, newText);
+          fullText += block.text;
         }
+      }
+
+      if (fullText.length > lastTextLen) {
+        const newText = fullText.slice(lastTextLen);
+        lastTextLen = fullText.length;
+
+        closeActiveReasoning();
+        if (!activeTextId) {
+          activeTextId = emitTextStart(res, textCounter);
+        }
+        emitTextDelta(res, activeTextId, newText);
       }
     } else if (payload.state === "final") {
       closeActiveText();
