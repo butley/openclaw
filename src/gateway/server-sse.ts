@@ -455,7 +455,7 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
 
   const onInboundMessage = (payload: Record<string, unknown>) => {
     const evtSessionKey = typeof payload?.sessionKey === "string" ? payload.sessionKey : null;
-    if (!evtSessionKey || normalizeSessionKey(evtSessionKey) !== normalizeSessionKey(sessionKey)) return;
+    if (!evtSessionKey || normalizeSessionKey(evtSessionKey) !== normalizeSessionKey(sessionKey)) {return;}
     sseWrite(res, {
       type: "user-message",
       messageId: (payload.messageId as string) ?? null,
