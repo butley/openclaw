@@ -171,21 +171,22 @@ after the SSE implementation landed. Items are grouped by priority.
 
 ## ✅ Fixed (2026-03-09)
 
-### [server-sse.ts] Cross-channel TEXT delivery — onChatEvent exact match vs onAgentEvent prefix match
-- **Commit:** `bb6cb8b6f` (fork, alpha)
-- **Root cause:** `onChatEvent` (text deltas + finish) used **exact** sessionKey match,
-  while `onAgentEvent` (tools + thinking) used **prefix** match (`agent:main:*`).
-  When SSE subscriber key differed from run sessionKey (e.g., WA session watching webchat
-  runs), tools/thinking streamed fine but text never appeared and `finish` never arrived
-  → `isRunning` stuck forever, eternal pulsing, no text rendered.
-- **Symptoms:** SSE connections open (573s+), `events>0` counted (chat events hit handler),
-  but `lastTextLen=0` (all filtered out by exact match). User sees nothing until page refresh
-  loads `chat.history`.
-- **Fix:** Aligned `onChatEvent` with `onAgentEvent` — prefix match on first two segments
-  (`agent:main:`) + skip `:cron:` sessions. Both handlers now use identical filtering.
-- **Note:** This was the SECOND half of the cross-channel fix. The first half (2026-03-08,
-  `9eeec977a`) fixed `onAgentEvent` exact→prefix for tools. This commit fixes `onChatEvent`
-  exact→prefix for text deltas and finish events.
+### [server-sse.ts] SSE sessionKey matching — prefix vs exact (RESOLVED: exact wins)
+- **History:** Went through 3 iterations:
+  1. `9eeec977a` (Mar 8) — `onAgentEvent` exact→prefix for tools
+  2. `bb6cb8b6f` (Mar 10) — `onChatEvent` exact→prefix for text
+  3. `3c0b33f3b` (Mar 10) — **REVERTED BOTH back to exact match**
+- **Why prefix failed:** Prefix match (`agent:main:*`) leaked events across channels.
+  Slack runs streamed text into WA chat UI. Cron tool events hijacked active sessions.
+- **Why exact works:** Butley frontend always uses the specific session key from the thread
+  list. Unlike upstream's control-ui (which may use a broad agent key), our chat UI
+  subscribes to one session at a time. Exact match = correct isolation.
+- **Root cause of original "SSE broken":** Anthropic API rate limits caused all `chat.send`
+  runs to fail — NOT a sessionKey matching issue. The prefix match fix happened to coincide
+  with the rate limit clearing, creating a false correlation.
+- **Also in `3c0b33f3b`:** Simplified text dedup (removed `totalTextEmitted`/`inTextReplay`
+  — 4 approaches all failed, per CHAT-UI-REFACTOR.md). Correct fix: per-block `lastTextLen`
+  with reset on tool start.
 
 ## ✅ Fixed (2026-03-08)
 
