@@ -55,13 +55,15 @@ function tryFlush(res: ServerResponse): void {
 
 function sseWrite(res: ServerResponse, data: Record<string, unknown>): boolean {
   if (res.writableEnded || res.destroyed) {
+    console.warn(`[sse] sseWrite skipped: writableEnded=${res.writableEnded} destroyed=${res.destroyed} type=${data.type}`);
     return false;
   }
   try {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
     tryFlush(res);
     return true;
-  } catch {
+  } catch (err) {
+    console.warn(`[sse] sseWrite error: type=${data.type} err=${err}`);
     return false;
   }
 }
@@ -188,6 +190,10 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
   let activeReasoningId: string | null = null;
   let lastTextLen = 0;
   let lastReasoningLen = 0;
+  /** Total chars of text emitted to SSE client across all turns in this run. */
+  let totalTextEmitted = 0;
+  /** True when provider is replaying previous text after a tool call buffer reset. */
+  let inTextReplay = false;
   let finished = false;
   // Per-connection counters (avoid sharing state across concurrent SSE streams)
   const textCounter = { n: 0 };
@@ -224,7 +230,14 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       );
 
   // ── Cleanup ──
+  const sseOpenedAt = Date.now();
+  let sseEventCount = 0;
+
   function cleanup() {
+    const durationSec = ((Date.now() - sseOpenedAt) / 1000).toFixed(1);
+    console.warn(
+      `[sse] connection closed: sessionKey=${sessionKey} duration=${durationSec}s events=${sseEventCount} runActive=${currentRunId !== null} lastTextLen=${lastTextLen}`,
+    );
     finished = true;
     clearInterval(pingInterval);
     if (timeout) {
@@ -263,6 +276,8 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       activeTextId = null;
       activeReasoningId = null;
       lastTextLen = 0;
+      totalTextEmitted = 0;
+      inTextReplay = false;
       lastReasoningLen = 0;
       currentRunId = null;
     } else {
@@ -276,6 +291,7 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     if (finished) {
       return;
     }
+    sseEventCount++;
     const payloadSessionKey = (payload as Record<string, unknown>).sessionKey;
     if (payloadSessionKey !== sessionKey) {
       return;
@@ -297,19 +313,45 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
 
       for (const block of content) {
         if (block.type === "text" && block.text) {
-          // Gateway sends FULL accumulated text in each delta.
-          // Extract only the new portion.
           const fullText = block.text;
-          if (fullText.length <= lastTextLen) {
+          const prevLen = lastTextLen;
+
+          // Provider buffer reset: text shrunk = new turn after tool call.
+          if (fullText.length < prevLen) {
+            console.warn(
+              `[sse] text replay started: fullText=${fullText.length} prev=${prevLen} totalEmitted=${totalTextEmitted} sessionKey=${sessionKey}`,
+            );
+            inTextReplay = true;
+          }
+
+          // During replay: provider is re-sending text we already emitted.
+          // Skip until accumulated text exceeds totalTextEmitted.
+          if (inTextReplay) {
+            lastTextLen = fullText.length;
+            if (fullText.length <= totalTextEmitted) {
+              continue; // Still replaying old text
+            }
+            // Replay done — emit only the new part beyond what we already sent
+            inTextReplay = false;
+            const textToEmit = fullText.slice(totalTextEmitted);
+            totalTextEmitted += textToEmit.length;
+            closeActiveReasoning();
+            if (!activeTextId) {
+              activeTextId = emitTextStart(res, textCounter);
+            }
+            emitTextDelta(res, activeTextId, textToEmit);
             continue;
           }
 
-          const newText = fullText.slice(lastTextLen);
+          // Normal path: no replay, just extract new portion
+          if (fullText.length <= prevLen) {
+            continue;
+          }
           lastTextLen = fullText.length;
+          const newText = fullText.slice(prevLen);
+          totalTextEmitted += newText.length;
 
-          // Close reasoning if text starts (thinking → text transition)
           closeActiveReasoning();
-
           if (!activeTextId) {
             activeTextId = emitTextStart(res, textCounter);
           }
@@ -383,10 +425,9 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
           : null;
 
       if (newContent) {
-        // Close any open text block before reasoning. Reset lastTextLen because
-        // the provider resets its accumulated text between turns.
+        // Close any open text block before reasoning.
+        // Do NOT reset lastTextLen — full message content accumulates across turns.
         closeActiveText();
-        lastTextLen = 0;
 
         if (!activeReasoningId) {
           activeReasoningId = emitReasoningStart(res, reasoningCounter);
@@ -409,12 +450,11 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       if (phase === "start") {
         closeActiveText();
         closeActiveReasoning();
-        // Reset text/reasoning tracking — the provider resets its accumulated text
-        // between tool call turns (lastStreamedAssistantCleaned = undefined), so
-        // the gateway buffer starts fresh after each tool. Without this reset,
-        // lastTextLen stays high from the previous turn and new text gets skipped.
-        lastTextLen = 0;
-        lastReasoningLen = 0;
+        // NOTE: Do NOT reset lastTextLen/lastReasoningLen here.
+        // The gateway broadcasts the full accumulated message content (not per-turn).
+        // Resetting causes re-emission of all pre-tool text → visible duplication.
+        // If the provider truly resets its buffer (edge case), the defensive guard
+        // in onChatEvent (fullText.length < lastTextLen → reset) handles it.
 
         const args = payload.data?.args ?? payload.data?.input ?? {};
         sseWrite(res, { type: "tool-input-start", toolCallId, toolName });
