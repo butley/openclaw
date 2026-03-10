@@ -287,18 +287,10 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     }
     sseEventCount++;
     const payloadSessionKey = (payload as Record<string, unknown>).sessionKey as string | undefined;
-
-    // Use prefix match (same as onAgentEvent) so that runs from any channel
-    // (WA, webchat, etc.) under the same agent reach the SSE stream.
-    // This fixes the cross-channel text delivery gap where onAgentEvent
-    // delivered tools/thinking (prefix match) but onChatEvent dropped
-    // text deltas and finish events (exact match).
-    const agentPrefix = sessionKey.split(":").slice(0, 2).join(":");
-    if (!payloadSessionKey?.startsWith(agentPrefix)) {
-      return;
-    }
-    // Skip cron sessions (same as onAgentEvent)
-    if (payloadSessionKey.includes(":cron:")) {
+    // Exact session match for text deltas — only stream text from the session
+    // the SSE subscriber is viewing. Prefix match (agent:main:*) leaks text
+    // from other channels (e.g., Slack runs appearing in WA chat UI).
+    if (payloadSessionKey !== sessionKey) {
       return;
     }
 
@@ -357,17 +349,10 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       return;
     }
     const agentSessionKey = payload.sessionKey;
-    // Match by agent prefix (e.g. "agent:main") so tool events from any channel
-    // (WA, TG, etc.) reach the chat UI SSE stream. The SSE connection is already
-    // authenticated by token — this just widens the session filter.
-    const agentPrefix = sessionKey.split(":").slice(0, 2).join(":");
-    if (!agentSessionKey?.startsWith(agentPrefix)) {
-      return;
-    }
-
-    // Skip cron/sub-agent sessions — they shouldn't hijack the chat UI stream.
-    // Cron keys look like "agent:main:cron:{id}:run:{uuid}".
-    if (agentSessionKey.includes(":cron:")) {
+    // Exact session match — only stream tools/thinking from the session the
+    // SSE subscriber is viewing. Prefix match leaked events from other channels
+    // (e.g., Slack tool calls appearing in WA chat UI).
+    if (agentSessionKey !== sessionKey) {
       return;
     }
 
