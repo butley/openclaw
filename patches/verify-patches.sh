@@ -51,6 +51,7 @@ check "25. HTTP Tools Channel"     "grep -q 'listChannelAgentTools' src/gateway/
 check "26. ThinkingDefault"        "grep -q 'thinkingDefault' src/gateway/server-methods/chat.ts"
 check "27. Media Inbound Path"     "grep -q 'inbound' src/gateway/server-http.ts"
 check "28. SSE Cron Filter"        "grep -q ':cron:' src/gateway/server-sse.ts"
+check "29. SSE Text Dedup"         "grep -q 'totalTextEmitted' src/gateway/server-sse.ts"
 
 echo ""
 echo "Results: $pass passed, $fail failed"

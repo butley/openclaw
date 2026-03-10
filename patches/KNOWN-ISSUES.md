@@ -1,6 +1,6 @@
 # Patch Audit — Known Issues & Pending Work
 
-> Last updated: 2026-03-08  
+> Last updated: 2026-03-09  
 > Branch: `alpha`
 
 This document tracks findings from the patch quality audit. All items below were identified
@@ -109,6 +109,36 @@ after the SSE implementation landed. Items are grouped by priority.
   to the removed function was left behind.
 - **Fix:** Updated comment to correctly reference `broadcast("agent", ...)` and Patch #16.
 - **Commit:** see patch audit commit
+
+### [server-sse.ts] Text duplication across tool call turns — Patch #29
+- **Patches affected:** #18 SSE Streaming Endpoint
+- **Severity:** High UX — text before tool call appeared twice in chat UI
+- **Root cause:** The provider (Claude) resets its accumulated text buffer between tool call
+  turns. After a tool executes, the provider re-sends all previous text from scratch before
+  adding new content. The SSE handler's `lastTextLen` reset on tool start (or the defensive
+  `fullText.length < lastTextLen` guard) caused re-emission of already-sent text.
+- **Fix:** Added `totalTextEmitted` counter (total chars emitted across ALL turns in a run)
+  and `inTextReplay` flag. When text buffer shrinks (new turn after tool), enter replay mode.
+  Skip all text until accumulated length exceeds `totalTextEmitted`, then emit only new content.
+  Counter resets in `handleRunEnd()` between runs.
+- **Commit:** `9bba224be`
+
+### [server-sse.ts] SSE cron session pollution — Patch #28
+- **Patches affected:** #18 SSE Streaming Endpoint
+- **Severity:** Medium UX — cron runs (scribe, curator) appeared in chat UI and blocked composer
+- **Root cause:** SSE `onAgentEvent` matches by agent prefix (`agent:main`). Cron sessions
+  like `agent:main:cron:xyz` matched the prefix, so cron tool events streamed into the chat UI.
+  Upstream control-ui uses exact `sessionKey` matching; our prefix matching needed exclusion.
+- **Fix:** Filter events where `agentSessionKey.includes(":cron:")`.
+- **Commit:** `246997912`
+
+### [server-sse.ts] Diagnostic logging added
+- **Patches affected:** #18 SSE Streaming Endpoint
+- **Severity:** Operational improvement
+- **Details:** Added `console.warn` logging for: text replay detection (with lengths), `sseWrite`
+  failures (connection dead/errors), SSE connection close stats (duration, event count, runActive,
+  lastTextLen). Logs go to `~/.openclaw/logs/gateway.err.log` (stderr).
+- **Commit:** `9bba224be`
 
 ---
 
