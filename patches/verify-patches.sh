@@ -51,6 +51,8 @@ check "25. HTTP Tools Channel"     "grep -q 'listChannelAgentTools' src/gateway/
 check "26. ThinkingDefault"        "grep -q 'thinkingDefault' src/gateway/server-methods/chat.ts"
 check "27. Media Inbound Path"     "grep -q 'inbound' src/gateway/server-http.ts"
 check "28. SSE Cron Filter"        "grep -q ':cron:' src/gateway/server-sse.ts"
+check "29. Chat Sender Meta"      "grep -q 'senderMeta' src/gateway/server-methods/chat.ts"
+check "30. Chat Group Context"    "grep -q 'chatHistory' src/gateway/server-methods/chat.ts"
 
 echo ""
 echo "Results: $pass passed, $fail failed"
