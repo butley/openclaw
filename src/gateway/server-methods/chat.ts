@@ -565,6 +565,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     // removes Sender/Conversation info blocks). We attach as top-level fields.
     const threadHistoryIndices = new Set<number>();
     const senderMetaByIndex = new Map<number, { name: string; id: string; isGroupChat: boolean }>();
+    const chatHistoryByIndex = new Map<number, Array<{ sender: string; timestamp_ms: number; body: string }>>();
     for (let i = 0; i < sliced.length; i++) {
       const msg = sliced[i] as Record<string, unknown>;
       if (msg.role !== "user") {continue;}
@@ -581,6 +582,23 @@ export const chatHandlers: GatewayRequestHandlers = {
       // Detect thread history context messages
       if (text.trimStart().startsWith("[Thread history - for context]")) {
         threadHistoryIndices.add(i);
+      }
+      // Extract "Chat history since last reply" (WA/Telegram group context messages)
+      const chatHistMatch = text.match(
+        /Chat history since last reply \(untrusted, for context\):\s*```json\s*(\[[\s\S]*?\])\s*```/,
+      );
+      if (chatHistMatch) {
+        try {
+          const entries = JSON.parse(chatHistMatch[1]) as Array<Record<string, unknown>>;
+          const parsed = entries
+            .filter((e) => typeof e.sender === "string" && typeof e.body === "string")
+            .map((e) => ({
+              sender: e.sender as string,
+              timestamp_ms: typeof e.timestamp_ms === "number" ? e.timestamp_ms : 0,
+              body: e.body as string,
+            }));
+          if (parsed.length > 0) chatHistoryByIndex.set(i, parsed);
+        } catch { /* ignore parse errors */ }
       }
       const senderMatch = text.match(
         /Sender \(untrusted metadata\):\s*```json\s*(\{[\s\S]*?\})\s*```/,
@@ -658,6 +676,12 @@ export const chatHandlers: GatewayRequestHandlers = {
     for (const [idx, meta] of senderMetaByIndex) {
       if (idx < normalized.length) {
         (normalized[idx] as Record<string, unknown>).senderMeta = meta;
+      }
+    }
+    // Apply chat history context (WA/Telegram group messages between bot replies).
+    for (const [idx, entries] of chatHistoryByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).chatHistory = entries;
       }
     }
     // Preserve raw content for thread history messages (frontend parses them into cards).
