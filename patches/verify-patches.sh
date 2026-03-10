@@ -53,6 +53,7 @@ check "27. Media Inbound Path"     "grep -q 'inbound' src/gateway/server-http.ts
 check "28. SSE Cron Filter"        "grep -q ':cron:' src/gateway/server-sse.ts"
 check "29. Chat Sender Meta"      "grep -q 'senderMeta' src/gateway/server-methods/chat.ts"
 check "30. Chat Group Context"    "grep -q 'chatHistory' src/gateway/server-methods/chat.ts"
+check "31. SSE EventBus Singleton" "grep -q '__openclaw_gatewayEventBus__' src/gateway/server-broadcast.ts"
 
 echo ""
 echo "Results: $pass passed, $fail failed"

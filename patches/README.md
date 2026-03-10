@@ -1,6 +1,6 @@
 # Custom Patches — butley/openclaw
 
-28 active custom patches on top of upstream openclaw/openclaw.
+29 active custom patches on top of upstream openclaw/openclaw.
 
 ## Absorbed by Upstream (no longer maintained)
 
@@ -43,6 +43,7 @@
 | 28 | SSE Cron Filter | — | Gateway | `alpha` | `grep -q ":cron:" src/gateway/server-sse.ts` |
 | 29 | Chat History Sender Meta | — | Gateway | `alpha` | `grep -q "senderMeta" src/gateway/server-methods/chat.ts` |
 | 30 | Chat History Group Context | — | Gateway | `alpha` | `grep -q "chatHistory" src/gateway/server-methods/chat.ts` |
+| 31 | SSE EventBus Singleton | — | Gateway | `alpha` | `grep -q "__openclaw_gatewayEventBus__" src/gateway/server-broadcast.ts` |
 
 
 ## Re-application Order
