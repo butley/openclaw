@@ -7,8 +7,22 @@ import { logWs, shouldLogWs, summarizeAgentEventForWsLog } from "./ws-log.js";
  * Global event bus for SSE consumers. Emits the same events as WS broadcast
  * but without dropIfSlow — SSE uses HTTP backpressure instead.
  * Listeners receive (event: string, payload: unknown).
+ *
+ * IMPORTANT: Uses globalThis singleton to survive bundler chunk duplication.
+ * The bundler may split server-broadcast.ts into multiple chunks (e.g.
+ * gateway-cli-DrjKHMYb.js and gateway-cli-KUZQqdiC.js), each getting its
+ * own module-level `new EventEmitter()`. Without globalThis, broadcast()
+ * emits on one instance while SSE listens on another → events never arrive.
+ * Same class of bug as WA active-listener (#23027).
  */
-export const gatewayEventBus = new EventEmitter();
+const GATEWAY_EVENT_BUS_KEY = "__openclaw_gatewayEventBus__";
+export const gatewayEventBus: EventEmitter =
+  (globalThis as Record<string, unknown>)[GATEWAY_EVENT_BUS_KEY] as EventEmitter ??
+  (() => {
+    const bus = new EventEmitter();
+    (globalThis as Record<string, unknown>)[GATEWAY_EVENT_BUS_KEY] = bus;
+    return bus;
+  })();
 gatewayEventBus.setMaxListeners(100); // support multiple concurrent SSE streams
 
 const ADMIN_SCOPE = "operator.admin";
