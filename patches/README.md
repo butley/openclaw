@@ -1,6 +1,6 @@
 # Custom Patches — butley/openclaw
 
-27 active custom patches on top of upstream openclaw/openclaw.
+26 active custom patches on top of upstream openclaw/openclaw.
 
 ## Absorbed by Upstream (no longer maintained)
 
@@ -41,7 +41,7 @@
 | 26 | ThinkingDefault Shortcut | `thinking-default-fastpath/` | Gateway | `alpha` | `grep -q "thinkingDefault" src/gateway/server-methods/chat.ts` |
 | 27 | Media Inbound Path | — | Gateway | `alpha` | `grep -q "inbound" src/gateway/server-http.ts` |
 | 28 | SSE Cron Filter | — | Gateway | `alpha` | `grep -q ":cron:" src/gateway/server-sse.ts` |
-| 29 | SSE Text Dedup | — | Gateway | `alpha` | `grep -q "totalTextEmitted" src/gateway/server-sse.ts` |
+
 
 ## Re-application Order
 
