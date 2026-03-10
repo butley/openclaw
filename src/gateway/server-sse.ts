@@ -305,27 +305,26 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
         return;
       }
 
-      // Concatenate ALL text blocks into one string. The gateway broadcasts
-      // the full message state at each delta — content array includes all blocks
-      // from all turns (old text blocks + current). Concatenating and comparing
-      // against a single lastTextLen naturally handles tool call "replays"
-      // (old blocks are still there, so concatenated length stays monotonic).
-      let fullText = "";
       for (const block of content) {
         if (block.type === "text" && block.text) {
-          fullText += block.text;
-        }
-      }
+          // Gateway sends FULL accumulated text in each delta.
+          // Extract only the new portion.
+          const fullText = block.text;
+          if (fullText.length <= lastTextLen) {
+            continue;
+          }
 
-      if (fullText.length > lastTextLen) {
-        const newText = fullText.slice(lastTextLen);
-        lastTextLen = fullText.length;
+          const newText = fullText.slice(lastTextLen);
+          lastTextLen = fullText.length;
 
-        closeActiveReasoning();
-        if (!activeTextId) {
-          activeTextId = emitTextStart(res, textCounter);
+          // Close reasoning if text starts (thinking → text transition)
+          closeActiveReasoning();
+
+          if (!activeTextId) {
+            activeTextId = emitTextStart(res, textCounter);
+          }
+          emitTextDelta(res, activeTextId, newText);
         }
-        emitTextDelta(res, activeTextId, newText);
       }
     } else if (payload.state === "final") {
       closeActiveText();
@@ -394,9 +393,10 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
           : null;
 
       if (newContent) {
-        // Close any open text block before reasoning.
-        // Do NOT reset lastTextLen — full message content accumulates across turns.
+        // Close any open text block before reasoning. Reset lastTextLen because
+        // the provider resets its accumulated text between turns.
         closeActiveText();
+        lastTextLen = 0;
 
         if (!activeReasoningId) {
           activeReasoningId = emitReasoningStart(res, reasoningCounter);
@@ -419,11 +419,12 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       if (phase === "start") {
         closeActiveText();
         closeActiveReasoning();
-        // NOTE: Do NOT reset lastTextLen/lastReasoningLen here.
-        // The gateway broadcasts the full accumulated message content (not per-turn).
-        // Resetting causes re-emission of all pre-tool text → visible duplication.
-        // If the provider truly resets its buffer (edge case), the defensive guard
-        // in onChatEvent (fullText.length < lastTextLen → reset) handles it.
+        // Reset text/reasoning tracking — the provider resets its accumulated text
+        // between tool call turns (lastStreamedAssistantCleaned = undefined), so
+        // the gateway buffer starts fresh after each tool. Without this reset,
+        // lastTextLen stays high from the previous turn and new text gets skipped.
+        lastTextLen = 0;
+        lastReasoningLen = 0;
 
         const args = payload.data?.args ?? payload.data?.input ?? {};
         sseWrite(res, { type: "tool-input-start", toolCallId, toolName });
