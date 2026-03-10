@@ -169,6 +169,24 @@ after the SSE implementation landed. Items are grouped by priority.
 
 ---
 
+## ✅ Fixed (2026-03-09)
+
+### [server-sse.ts] Cross-channel TEXT delivery — onChatEvent exact match vs onAgentEvent prefix match
+- **Commit:** `bb6cb8b6f` (fork, alpha)
+- **Root cause:** `onChatEvent` (text deltas + finish) used **exact** sessionKey match,
+  while `onAgentEvent` (tools + thinking) used **prefix** match (`agent:main:*`).
+  When SSE subscriber key differed from run sessionKey (e.g., WA session watching webchat
+  runs), tools/thinking streamed fine but text never appeared and `finish` never arrived
+  → `isRunning` stuck forever, eternal pulsing, no text rendered.
+- **Symptoms:** SSE connections open (573s+), `events>0` counted (chat events hit handler),
+  but `lastTextLen=0` (all filtered out by exact match). User sees nothing until page refresh
+  loads `chat.history`.
+- **Fix:** Aligned `onChatEvent` with `onAgentEvent` — prefix match on first two segments
+  (`agent:main:`) + skip `:cron:` sessions. Both handlers now use identical filtering.
+- **Note:** This was the SECOND half of the cross-channel fix. The first half (2026-03-08,
+  `9eeec977a`) fixed `onAgentEvent` exact→prefix for tools. This commit fixes `onChatEvent`
+  exact→prefix for text deltas and finish events.
+
 ## ✅ Fixed (2026-03-08)
 
 ### [server-sse.ts] Cross-channel tool events not reaching chat UI SSE — FIXED
