@@ -561,6 +561,49 @@ export const chatHandlers: GatewayRequestHandlers = {
     const requested = typeof limit === "number" ? limit : defaultLimit;
     const max = Math.min(hardMax, requested);
     const sliced = rawMessages.length > max ? rawMessages.slice(-max) : rawMessages;
+    // Extract metadata from user messages BEFORE stripping (stripEnvelopeFromMessages
+    // removes Sender/Conversation info blocks). We attach as top-level fields.
+    const threadHistoryIndices = new Set<number>();
+    const senderMetaByIndex = new Map<number, { name: string; id: string; isGroupChat: boolean }>();
+    for (let i = 0; i < sliced.length; i++) {
+      const msg = sliced[i] as Record<string, unknown>;
+      if (msg.role !== "user") {continue;}
+      const text =
+        typeof msg.content === "string"
+          ? msg.content
+          : Array.isArray(msg.content)
+            ? (msg.content as Array<Record<string, unknown>>)
+                .filter((b) => b.type === "text" && typeof b.text === "string")
+                .map((b) => b.text as string)
+                .join("")
+            : "";
+      if (!text) {continue;}
+      // Detect thread history context messages
+      if (text.trimStart().startsWith("[Thread history - for context]")) {
+        threadHistoryIndices.add(i);
+      }
+      const senderMatch = text.match(
+        /Sender \(untrusted metadata\):\s*```json\s*(\{[\s\S]*?\})\s*```/,
+      );
+      if (!senderMatch) {continue;}
+      try {
+        const sender = JSON.parse(senderMatch[1]) as Record<string, unknown>;
+        const name = typeof sender.name === "string" ? sender.name : "";
+        const id = typeof sender.id === "string" ? sender.id : "";
+        if (!name) {continue;}
+        let isGroupChat = false;
+        const convMatch = text.match(
+          /Conversation info \(untrusted metadata\):\s*```json\s*(\{[\s\S]*?\})\s*```/,
+        );
+        if (convMatch) {
+          try {
+            const conv = JSON.parse(convMatch[1]) as Record<string, unknown>;
+            isGroupChat = conv.is_group_chat === true;
+          } catch { /* ignore */ }
+        }
+        senderMetaByIndex.set(i, { name, id, isGroupChat });
+      } catch { /* ignore parse errors */ }
+    }
     const sanitized = stripEnvelopeFromMessages(sliced);
     // Extract audioUrl mapping BEFORE sanitize (which deletes `details`).
     // Maps message index → audioUrl for the final assistant message after a TTS toolResult.
@@ -611,6 +654,28 @@ export const chatHandlers: GatewayRequestHandlers = {
       }
     }
     const normalized = sanitizeChatHistoryMessages(sanitized);
+    // Apply sender metadata to user messages (extracted before strip).
+    for (const [idx, meta] of senderMetaByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).senderMeta = meta;
+      }
+    }
+    // Preserve raw content for thread history messages (frontend parses them into cards).
+    for (const idx of threadHistoryIndices) {
+      if (idx < normalized.length) {
+        const raw = sliced[idx] as Record<string, unknown>;
+        const rawText =
+          typeof raw.content === "string"
+            ? raw.content
+            : Array.isArray(raw.content)
+              ? (raw.content as Array<Record<string, unknown>>)
+                  .filter((b) => b.type === "text" && typeof b.text === "string")
+                  .map((b) => b.text as string)
+                  .join("")
+              : "";
+        (normalized[idx] as Record<string, unknown>).threadHistoryRaw = rawText;
+      }
+    }
     // Apply audioUrl to the sanitized (normalized) messages.
     for (const [idx, url] of audioUrlByIndex) {
       if (idx < normalized.length) {
@@ -1093,10 +1158,10 @@ export const chatHandlers: GatewayRequestHandlers = {
             const imageUrls = mediaUrls.filter((u) => /\.(png|jpe?g|gif|webp)$/i.test(u));
             if (message) {
               if (audioUrls.length > 0) {
-                (message as Record<string, unknown>).audioUrl = audioUrls[0];
+                (message).audioUrl = audioUrls[0];
               }
               if (imageUrls.length > 0) {
-                (message as Record<string, unknown>).imageUrl = imageUrls[0];
+                (message).imageUrl = imageUrls[0];
               }
             }
             broadcastChatFinal({
@@ -1187,7 +1252,7 @@ export const chatHandlers: GatewayRequestHandlers = {
                 // Look for the last toolResult with details.imageUrl
                 for (let i = recentMsgs.length - 1; i >= 0; i--) {
                   const msg = recentMsgs[i] as Record<string, unknown>;
-                  if (msg.role !== "toolResult") continue;
+                  if (msg.role !== "toolResult") {continue;}
                   const details = msg.details as Record<string, unknown> | undefined;
                   if (details?.imageUrl) {
                     const imageUrl = details.imageUrl as string;
