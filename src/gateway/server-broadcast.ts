@@ -15,9 +15,13 @@ import { logWs, shouldLogWs, summarizeAgentEventForWsLog } from "./ws-log.js";
  * emits on one instance while SSE listens on another → events never arrive.
  * Same class of bug as WA active-listener (#23027).
  */
+// [FORK-PATCH-31] SSE EventBus Singleton — globalThis singleton survives bundler chunk duplication. See patches/README.md #31.
 const GATEWAY_EVENT_BUS_KEY = "__openclaw_gatewayEventBus__";
-export const gatewayEventBus: EventEmitter =
-  (globalThis as Record<string, unknown>)[GATEWAY_EVENT_BUS_KEY] as EventEmitter ??
+const existingBus = (globalThis as Record<string, unknown>)[GATEWAY_EVENT_BUS_KEY] as EventEmitter | undefined;
+if (existingBus) {
+  console.warn("[sse] gatewayEventBus reused from globalThis — second chunk loaded (bundler dedup confirmed)");
+}
+export const gatewayEventBus: EventEmitter = existingBus ??
   (() => {
     const bus = new EventEmitter();
     (globalThis as Record<string, unknown>)[GATEWAY_EVENT_BUS_KEY] = bus;

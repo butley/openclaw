@@ -288,6 +288,7 @@ export type AgentEventHandlerOptions = {
 
 export function createAgentEventHandler({
   broadcast,
+  // [FORK-PATCH-16] Tool Events Broadcast — emits tool call/result events to all WS clients (chat UI shows inline tools). See patches/README.md #16.
   broadcastToConnIds: _broadcastToConnIds,
   nodeSendToSession,
   agentRunSeq,
@@ -317,6 +318,7 @@ export function createAgentEventHandler({
     if (shouldHideHeartbeatChatOutput(clientRunId, sourceRunId)) {
       return;
     }
+    // [FORK-PATCH-17] Streaming Throttle — 50ms debounce on chat deltas, prevents WS flood during fast generation. See patches/README.md #17.
     const now = Date.now();
     const last = chatRunState.deltaSentAt.get(clientRunId) ?? 0;
     if (now - last < 50) {
@@ -414,6 +416,7 @@ export function createAgentEventHandler({
       nodeSendToSession(sessionKey, "chat", payload);
       // Mirror to original channel if requested
       const runContext = getAgentRunContext(clientRunId);
+      // [FORK-PATCH-4] Chat Mirror — re-delivers final reply to the WS client that sent the message (control UI needs it). See patches/README.md #4.
       if (runContext?.mirror && text) {
         try {
           const keyParts = sessionKey.split(":").filter(Boolean);

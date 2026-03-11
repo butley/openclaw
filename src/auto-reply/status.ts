@@ -670,6 +670,7 @@ export function buildStatusMessage(args: StatusArgs): string {
   const voiceLine = formatVoiceModeLine(args.config, args.sessionEntry);
 
   // --- Aligned status card format ---
+  // [FORK-PATCH-8] Status Card Redesign — aligned columns, commit hash, custom /status layout. See patches/README.md #8.
   const padLabel = (s: string) => s.padEnd(11);
   const commit = resolveCommitHash();
   const title = `*OpenClaw* \`${VERSION}${commit ? ` (${commit})` : ""}\``;

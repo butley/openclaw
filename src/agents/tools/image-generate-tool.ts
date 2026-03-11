@@ -1,3 +1,4 @@
+// [FORK-PATCH-20] Image Generate Tool — Gemini image generation via tool call (saves to workspace). Entire file is fork-only. See patches/README.md #20.
 import { Type } from "@sinclair/typebox";
 import { promises as fs } from "node:fs";
 import path from "node:path";

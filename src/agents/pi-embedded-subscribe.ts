@@ -45,6 +45,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     reasoningMode,
     includeReasoning: reasoningMode === "on",
     shouldEmitPartialReplies: !(reasoningMode === "on" && !params.onBlockReply),
+    // [FORK-PATCH-15] Webchat Thinking Stream — hardcodes streamReasoning:true so thinking blocks reach chat UI via WS. See patches/README.md #15.
     streamReasoning: true, // Always broadcast thinking to WS clients (webchat needs it; channels ignore agent events)
     deltaBuffer: "",
     blockBuffer: "",

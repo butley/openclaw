@@ -581,6 +581,7 @@ export function createGatewayHttpServer(opts: {
           name: "hooks",
           run: () => handleHooksRequest(req, res),
         },
+        // [FORK-PATCH-19] Gateway Media Endpoint — serves /media/* files (TTS audio, generated images) over HTTP. See patches/README.md #19.
         {
           name: "media",
           run: async () => {

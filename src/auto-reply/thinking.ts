@@ -1,4 +1,5 @@
 export type ThinkLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "adaptive";
+// [FORK-PATCH-13] Verbose Light — adds "light" level: backtick-wrapped tool summaries without full output. See patches/README.md #13.
 export type VerboseLevel = "off" | "light" | "on" | "full";
 export type StreamLevel = "off" | "fast" | "on" | "slow" | `custom:${number}`;
 export type NoticeLevel = "off" | "on" | "full";

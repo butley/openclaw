@@ -27,6 +27,7 @@ function resolveOutboundMessageId(result: unknown): string {
  *
  * The text keeps human-readable @Name; Baileys mentions array gets the JIDs.
  */
+// [FORK-PATCH-14] WA Outbound Mentions — converts @mentions to WA mention format. See patches/README.md #14.
 export function processOutboundMentions(text: string): { text: string; mentions: string[] } {
   const mentions: string[] = [];
   let result = text;

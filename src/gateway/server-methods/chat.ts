@@ -15,6 +15,7 @@ import {
   stripInlineDirectiveTagsForDisplay,
   stripInlineDirectiveTagsFromMessageForDisplay,
 } from "../../utils/directive-tags.js";
+// [FORK-PATCH-23] Chat.send Internal Routing — control UI messages go through full agent pipeline (not just WS echo). See patches/README.md #23.
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
   abortChatRunById,
@@ -564,7 +565,9 @@ export const chatHandlers: GatewayRequestHandlers = {
     // Extract metadata from user messages BEFORE stripping (stripEnvelopeFromMessages
     // removes Sender/Conversation info blocks). We attach as top-level fields.
     const threadHistoryIndices = new Set<number>();
+    // [FORK-PATCH-29] Chat Sender Meta — extracts sender name/id from inbound metadata before stripEnvelope removes it. See patches/README.md #29.
     const senderMetaByIndex = new Map<number, { name: string; id: string; isGroupChat: boolean }>();
+    // [FORK-PATCH-30] Chat Group Context — extracts group chat history (who said what) before stripEnvelope removes it. See patches/README.md #30.
     const chatHistoryByIndex = new Map<number, Array<{ sender: string; timestamp_ms: number; body: string }>>();
     for (let i = 0; i < sliced.length; i++) {
       const msg = sliced[i] as Record<string, unknown>;
@@ -626,6 +629,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     // Extract audioUrl mapping BEFORE sanitize (which deletes `details`).
     // Maps message index → audioUrl for the final assistant message after a TTS toolResult.
     // Skips intermediate assistant messages with stopReason="toolUse" (still in tool-call loop).
+    // [FORK-PATCH-22] Chat Media Pipeline — extracts audioUrl/imageUrl from toolResult details before sanitize deletes them. See patches/README.md #22.
     const audioUrlByIndex = new Map<number, string>();
     {
       let pendingAudioUrl: string | undefined;
@@ -729,6 +733,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
     let thinkingLevel = entry?.thinkingLevel;
     if (!thinkingLevel) {
+      // [FORK-PATCH-26] ThinkingDefault Shortcut — falls back to agents.defaults.thinkingDefault when session has no level set. See patches/README.md #26.
       const configured = cfg.agents?.defaults?.thinkingDefault;
       if (configured) {
         thinkingLevel = configured;

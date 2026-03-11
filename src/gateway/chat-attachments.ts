@@ -1,3 +1,4 @@
+// [FORK-PATCH-21] Chat Audio Inbound — handles audio/image attachments from webchat (base64 → file → media URL). Entire file is fork-only. See patches/README.md #21.
 import { estimateBase64DecodedBytes } from "../media/base64.js";
 import { sniffMimeFromBase64 } from "../media/sniff-mime-from-base64.js";
 

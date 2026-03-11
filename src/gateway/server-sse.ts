@@ -1,3 +1,4 @@
+// [FORK-PATCH-18] SSE Streaming Endpoint — entire file is a fork addition (~460 lines). See patches/README.md #18.
 /**
  * SSE stream endpoint for Butley webchat.
  *

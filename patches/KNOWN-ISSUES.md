@@ -1,6 +1,6 @@
 # Patch Audit — Known Issues & Pending Work
 
-> Last updated: 2026-03-09  
+> Last updated: 2026-03-11  
 > Branch: `alpha`
 
 This document tracks findings from the patch quality audit. All items below were identified
@@ -216,6 +216,45 @@ after the SSE implementation landed. Items are grouped by priority.
   before injecting into `mentions` field. Only inject if pattern matches a known JID.
 - **Convex task:** `m57b5fp3xhh956v5skbj9yjfts828q2y`
 - **Status:** Open — not yet fixed
+
+---
+
+## 🐛 Open Bugs — Health Monitor / WhatsApp Cron Delivery
+
+### Health-monitor `stale-socket` restarts break WA outbound via `message` tool
+- **Upstream issues:** [#30177](https://github.com/openclaw/openclaw/issues/30177), [#36017](https://github.com/openclaw/openclaw/issues/36017), [#1260](https://github.com/openclaw/openclaw/issues/1260)
+- **Upstream PR (partial fix):** [#32367](https://github.com/openclaw/openclaw/pull/32367) (v2026.3.2 — added grace window, doesn't fully resolve)
+- **Severity:** High — all cron/subagent WA sends fail after prolonged inactivity
+- **Introduced:** v2026.3.3 merge (commit `38a929efb`, 2026-03-03). Health-monitor was generalized from Slack to all channels.
+- **Last working:** 2026-03-07 (intermittent Mar 3-7, fully broken Mar 8-10)
+- **Symptoms:**
+  - Crons (Morning Briefing, Daily Digest) fail at 08:00/08:30 BRT with `No active WhatsApp Web listener`
+  - Auto-replies (inbound → response) work fine — they use the listener directly from scope
+  - `message` tool (WS → `requireActiveWebListener()`) fails — listener Map returns null
+  - Health-monitor logs show `stale-socket` restart every ~35 min during overnight inactivity
+- **Root cause:** `lastEventAt` in `src/web/auto-reply/monitor.ts` is only updated on:
+  1. Inbound messages (line 211)
+  2. Connection events (line 220)
+  3. Disconnect/shutdown (lines 377, 471)
+  
+  It does NOT update on: outbound sends, Baileys keepalive pings, or any internal activity.
+  After 30 min without inbound messages (`DEFAULT_STALE_EVENT_THRESHOLD_MS`), the monitor
+  marks the WA socket as "stale" and restarts it — even though Baileys is connected and
+  healthy. The restart cycle (`stopChannel` → `setActiveWebListener(null)` → `startChannel`)
+  corrupts the listener Map state over repeated cycles.
+- **Evidence:**
+  - Mar 7 08:00 (success): 10 min after restart, listener still valid
+  - Mar 8 08:00 (failure): 5 min after restart, listener null despite "Listening" log
+  - Mar 8 10:01: `message` tool fails but inbound at 10:02 works — listener exists but Map is stale
+  - Test Mar 11 02:38: cron succeeds when WA had recent activity (conversation ongoing)
+- **Proposed fix (fork patch):** Update `lastEventAt` on outbound sends in monitor.ts,
+  or hook into Baileys connection keepalive events. This prevents false stale-socket detection
+  while preserving the monitor for actual dead connections. One-liner change in
+  `src/web/auto-reply/monitor.ts`.
+- **Alternative (quick):** `gateway.channelHealthCheckMinutes: 0` — disables monitor entirely
+  (global, affects all channels). Baileys has its own reconnect. Tradeoff: no safety net if
+  WA truly dies silently.
+- **Status:** Root cause identified, fix not yet applied.
 
 ---
 

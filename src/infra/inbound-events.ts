@@ -1,3 +1,4 @@
+// [FORK-PATCH-5] WS Inbound Push — pushes inbound messages (WA/Slack) to all connected WS clients in real-time. Entire file is fork-only. See patches/README.md #5.
 /**
  * Inbound Message Events
  *
