@@ -6,6 +6,7 @@ import { resolveThinkingDefault } from "../../agents/model-selection.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
+import { registerAgentRunContext } from "../../infra/agent-events.js";
 import type { MsgContext } from "../../auto-reply/templating.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
 import { resolveSessionFilePath } from "../../config/sessions.js";
@@ -600,7 +601,7 @@ export const chatHandlers: GatewayRequestHandlers = {
               timestamp_ms: typeof e.timestamp_ms === "number" ? e.timestamp_ms : 0,
               body: e.body as string,
             }));
-          if (parsed.length > 0) chatHistoryByIndex.set(i, parsed);
+          if (parsed.length > 0) {chatHistoryByIndex.set(i, parsed);}
         } catch { /* ignore parse errors */ }
       }
       const senderMatch = text.match(
@@ -949,6 +950,8 @@ export const chatHandlers: GatewayRequestHandlers = {
     });
     const now = Date.now();
     const clientRunId = p.idempotencyKey;
+    // [FORK-PATCH-4] Chat Mirror — register mirror flag so agent event handler can deliver to WA. See patches/README.md #4.
+    registerAgentRunContext(clientRunId, { sessionKey, mirror: p.mirror });
 
     const sendPolicy = resolveSendPolicy({
       cfg,

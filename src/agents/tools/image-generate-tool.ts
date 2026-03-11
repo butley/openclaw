@@ -25,20 +25,20 @@ const ImageGenerateToolSchema = Type.Object({
 function sanitizeFilename(input?: string): string {
   const fallback = `generated-${Date.now()}.png`;
   const raw = (input || "").trim();
-  if (!raw) return fallback;
+  if (!raw) {return fallback;}
   const safe = raw.replace(/[^a-zA-Z0-9._-]/g, "_");
-  if (!safe) return fallback;
-  if (!/\.(png|jpg|jpeg|webp)$/i.test(safe)) return `${safe}.png`;
+  if (!safe) {return fallback;}
+  if (!/\.(png|jpg|jpeg|webp)$/i.test(safe)) {return `${safe}.png`;}
   return safe;
 }
 
 function resolveGeminiKey(): string | null {
   const direct = process.env.GEMINI_API_KEY?.trim();
-  if (direct) return direct;
+  if (direct) {return direct;}
   const google = process.env.GOOGLE_API_KEY?.trim();
-  if (google) return google;
+  if (google) {return google;}
   const googleAi = process.env.GOOGLE_AI_API_KEY?.trim();
-  if (googleAi) return googleAi;
+  if (googleAi) {return googleAi;}
   return null;
 }
 
@@ -99,7 +99,7 @@ export function createImageGenerateTool(opts?: { config?: OpenClawConfig }): Any
       let inlineData: { data?: string; mimeType?: string } | null = null;
       for (const c of candidates) {
         const parts = c?.content?.parts;
-        if (!Array.isArray(parts)) continue;
+        if (!Array.isArray(parts)) {continue;}
         const found = parts.find((p: any) => p?.inlineData?.data);
         if (found?.inlineData?.data) {
           inlineData = found.inlineData;

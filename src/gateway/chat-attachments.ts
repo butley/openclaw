@@ -169,7 +169,7 @@ export async function extractAudioAttachments(
   }
   const audio: ChatAudioAttachment[] = [];
   for (const [idx, att] of attachments.entries()) {
-    if (!att) continue;
+    if (!att) {continue;}
     const normalized = normalizeAttachment(att, idx, {
       stripDataUrlPrefix: true,
       requireImageMime: false,
