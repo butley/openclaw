@@ -950,7 +950,11 @@ export const chatHandlers: GatewayRequestHandlers = {
     });
     const now = Date.now();
     const clientRunId = p.idempotencyKey;
-    // [FORK-PATCH-4] Chat Mirror — register mirror flag so agent event handler can deliver to WA. See patches/README.md #4.
+    // [FORK-PATCH-4] Chat Mirror — without this, replies from chat UI on WA sessions
+    // never reach WhatsApp. The agent event handler (server-chat.ts:420) checks
+    // runContext.mirror to decide whether to call sendMessageWhatsApp(). If this
+    // registration is missing, mirror is always undefined and WA delivery is skipped.
+    // Lost during upstream merge — restored from commit aea535abf (Feb 3).
     registerAgentRunContext(clientRunId, { sessionKey, mirror: p.mirror });
 
     const sendPolicy = resolveSendPolicy({
