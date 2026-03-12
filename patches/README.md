@@ -44,6 +44,7 @@
 | 29 | Chat History Sender Meta | — | Gateway | `alpha` | `grep -q "senderMeta" src/gateway/server-methods/chat.ts` |
 | 30 | Chat History Group Context | — | Gateway | `alpha` | `grep -q "chatHistory" src/gateway/server-methods/chat.ts` |
 | 31 | SSE EventBus Singleton | — | Gateway | `alpha` | `grep -q "__openclaw_gatewayEventBus__" src/gateway/server-broadcast.ts` |
+| 32 | SSE Retryable Error Suppression | — | Gateway | `work` | `grep -q "RETRYABLE_LIFECYCLE_ERROR_RE" src/gateway/server-chat.ts` |
 
 
 ## Re-application Order
