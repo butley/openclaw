@@ -623,7 +623,7 @@ export function createGatewayHttpServer(opts: {
               try {
                 const entries = fs.readdirSync(ttsBaseDir);
                 for (const entry of entries) {
-                  if (!entry.startsWith("tts-")) {continue;}
+                  if (!entry.startsWith("tts-")) continue;
                   candidatePaths.push(path.join(ttsBaseDir, entry, filename));
                 }
               } catch {
@@ -641,9 +641,9 @@ export function createGatewayHttpServer(opts: {
 
               for (const filePath of candidatePaths) {
                 try {
-                  if (!fs.existsSync(filePath)) {continue;}
+                  if (!fs.existsSync(filePath)) continue;
                   const stat = fs.statSync(filePath);
-                  if (!stat.isFile()) {continue;}
+                  if (!stat.isFile()) continue;
                   res.setHeader("Content-Type", mimeMap[ext] ?? "application/octet-stream");
                   res.setHeader("Content-Length", stat.size);
                   res.setHeader("Cache-Control", "public, max-age=86400");
