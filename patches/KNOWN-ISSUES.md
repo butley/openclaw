@@ -315,3 +315,33 @@ after the SSE implementation landed. Items are grouped by priority.
 - [ ] WA Outbound Mentions fixed (affects all WA users)
 - [ ] Regression test: WS broadcast still works (SSE is additive — verify no regressions)
 - [ ] Docker image rebuilt with new fork
+
+---
+
+## Stuck Run / Lane Blocking (Confirmed 2026-03-12)
+
+**Symptom:** Frontend pulsing forever, messages queue indefinitely, `lane wait exceeded` in logs with `queueAhead=0` but no `lane task done/error` ever fires.
+
+**Evidence (2026-03-12):**
+- `waitedMs=76116` (76s) without any lane task completion
+- SSE closes with `runActive=true` — run never emits lifecycle `end`/`error`
+- Only gateway restart clears the blocked lane (`maxConcurrent=1`)
+
+**Root cause:** Unknown. The run's Promise never resolves or rejects. Possibly related to:
+- Compaction/memory flush interfering with active runs
+- LLM failover retry loop swallowing the final error without propagating to the Promise
+- The `abortTimer` in `pi-embedded-runner/run/attempt.ts` (line 1314) fires `abortRun(true)` but the subscription may not propagate the abort cleanly to the Promise
+
+**What it's NOT:**
+- NOT `removeChatRun` bug (add/remove both use runId as key — consistent)
+- NOT the Anthropic SDK timeout (default 10min, runs die in <60s)
+- NOT agent timeout (default 600s, not configured in our config)
+
+**Upstream refs:** PR #16125 (stuck run detection — `stuckDetection` watchdog config). Not yet merged upstream.
+
+**Workaround:** Gateway restart (`openclaw gateway restart`) clears the run registry and unblocks lanes.
+
+**Related symptoms observed same day:**
+- LLM timeouts (`FailoverError: LLM request timed out`) — 8 retries over 26s, all fail
+- SSE `webchat:main` dying after exactly 30.0s with 0 events (separate issue — webchat SSE not receiving group session events)
+- WA message coalescence: 2 `final` states at same ms → only last one delivered
