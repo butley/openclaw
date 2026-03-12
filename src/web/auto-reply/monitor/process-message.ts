@@ -17,7 +17,7 @@ import type { loadConfig } from "../../../config/config.js";
 import { resolveMarkdownTableMode } from "../../../config/markdown-tables.js";
 import { recordSessionMetaFromInbound } from "../../../config/sessions.js";
 // Butley patches: WA Streaming (extracted to avoid upstream conflicts)
-// formatToolNarration available via ../wa-verbose-utils.js when needed
+import { logToolNarrationDelivered } from "../wa-verbose-utils.js";
 import { readSessionStreamLevel, resolveStreamDelayMs } from "../wa-streaming-utils.js";
 import { logVerbose, shouldLogVerbose } from "../../../globals.js";
 import type { getChildLogger } from "../../../logging.js";
@@ -398,10 +398,11 @@ export async function processMessage(params: {
   });
 
   // Resolve stream level once for the session — controls delivery behavior.
-  // When stream is "off", override chunkMode to "length" so delivery sends as one message.
+  // /str exclusively controls chunking: "off" = one message, on/fast/slow = newline-split with delays.
+  // chunkMode from config is intentionally ignored here — hardcode "newline" when streaming is active
+  // so that removing chunkMode:"newline" from config doesn't break /str on behavior.
   const sessionStreamLevel = readSessionStreamLevel(params.route.sessionKey, storePath);
-  // When streaming is off, send as one message. When on, use newline splitting in delivery layer.
-  const effectiveChunkMode = sessionStreamLevel === "off" ? ("length" as const) : chunkMode;
+  const effectiveChunkMode = sessionStreamLevel === "off" ? ("length" as const) : ("newline" as const);
 
   let prevBlockText: string | null = null;
   const { queuedFinal } = await dispatchReplyWithBufferedBlockDispatcher({
@@ -418,9 +419,9 @@ export async function processMessage(params: {
         }
       },
       deliver: async (payload: ReplyPayload, info) => {
-        if (info.kind === "block" && (!blockStreamingEnabled || sessionStreamLevel === "off")) {
-          // When block streaming is disabled (default), suppress block payloads
-          // so that ACP-backed replies don't leak intermediate text to end users.
+        if (info.kind === "block" && sessionStreamLevel === "off") {
+          // Suppress block payloads when /str is off — only final is delivered.
+          // blockStreamingEnabled (config) is the capability gate but /str is the sole runtime controller.
           return;
         }
         // Pre-delivery reading delay: based on PREVIOUS block length.
@@ -484,10 +485,16 @@ export async function processMessage(params: {
         const fromDisplay =
           params.msg.chatType === "group" ? conversationId : (params.msg.from ?? "unknown");
         const hasMedia = Boolean(payload.mediaUrl || payload.mediaUrls?.length);
-        whatsappOutboundLog.info(`Auto-replied to ${fromDisplay}${hasMedia ? " (media)" : ""}`);
-        if (shouldLogVerbose()) {
-          const preview = payload.text != null ? elide(payload.text, 400) : "<media>";
-          whatsappOutboundLog.debug(`Reply body: ${preview}${hasMedia ? " (media)" : ""}`);
+        if (info.kind === "tool") {
+          // Tool narrations are side-channel — log at DEBUG to avoid noise.
+          // Tool execution is already tracked via native tool start/end logs.
+          logToolNarrationDelivered(fromDisplay, hasMedia);
+        } else {
+          whatsappOutboundLog.info(`Auto-replied to ${fromDisplay}${hasMedia ? " (media)" : ""}`);
+          if (shouldLogVerbose()) {
+            const preview = payload.text != null ? elide(payload.text, 400) : "<media>";
+            whatsappOutboundLog.debug(`Reply body: ${preview}${hasMedia ? " (media)" : ""}`);
+          }
         }
       },
       onError: (err, info) => {
@@ -504,7 +511,7 @@ export async function processMessage(params: {
       onReplyStart: params.msg.sendComposing,
     },
     replyOptions: {
-      disableBlockStreaming: !blockStreamingEnabled || sessionStreamLevel === "off",
+      disableBlockStreaming: !blockStreamingEnabled,
       onModelSelected,
     },
   });

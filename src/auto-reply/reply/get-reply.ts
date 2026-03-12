@@ -108,6 +108,7 @@ export async function getReplyFromConfig(
           .runMessageReceived(
             {
               from: finalized.From ?? "",
+              // [FORK-PATCH-3] Audio Transcript Hook — injects transcript as message content. See patches/README.md #3.
               content: `🎤 ${finalized.Transcript}`,
               timestamp: finalized.Timestamp,
               metadata: {

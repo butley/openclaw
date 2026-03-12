@@ -1,6 +1,33 @@
+import { EventEmitter } from "node:events";
 import { MAX_BUFFERED_BYTES } from "./server-constants.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 import { logWs, shouldLogWs, summarizeAgentEventForWsLog } from "./ws-log.js";
+
+/**
+ * Global event bus for SSE consumers. Emits the same events as WS broadcast
+ * but without dropIfSlow — SSE uses HTTP backpressure instead.
+ * Listeners receive (event: string, payload: unknown).
+ *
+ * IMPORTANT: Uses globalThis singleton to survive bundler chunk duplication.
+ * The bundler may split server-broadcast.ts into multiple chunks (e.g.
+ * gateway-cli-DrjKHMYb.js and gateway-cli-KUZQqdiC.js), each getting its
+ * own module-level `new EventEmitter()`. Without globalThis, broadcast()
+ * emits on one instance while SSE listens on another → events never arrive.
+ * Same class of bug as WA active-listener (#23027).
+ */
+// [FORK-PATCH-31] SSE EventBus Singleton — globalThis singleton survives bundler chunk duplication. See patches/README.md #31.
+const GATEWAY_EVENT_BUS_KEY = "__openclaw_gatewayEventBus__";
+const existingBus = (globalThis as Record<string, unknown>)[GATEWAY_EVENT_BUS_KEY] as EventEmitter | undefined;
+if (existingBus) {
+  console.warn("[sse] gatewayEventBus reused from globalThis — second chunk loaded (bundler dedup confirmed)");
+}
+export const gatewayEventBus: EventEmitter = existingBus ??
+  (() => {
+    const bus = new EventEmitter();
+    (globalThis as Record<string, unknown>)[GATEWAY_EVENT_BUS_KEY] = bus;
+    return bus;
+  })();
+gatewayEventBus.setMaxListeners(100); // support multiple concurrent SSE streams
 
 const ADMIN_SCOPE = "operator.admin";
 const APPROVALS_SCOPE = "operator.approvals";
@@ -63,6 +90,14 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
     opts?: GatewayBroadcastOpts,
     targetConnIds?: ReadonlySet<string>,
   ) => {
+    // Always emit on event bus for SSE consumers — independent of WS client count.
+    // Must happen before the clients.size === 0 guard so SSE keeps receiving events
+    // even when no WS clients are connected (e.g. WS disconnect while SSE stays open).
+    // Targeted broadcasts (broadcastToConnIds) are WS-only and skip the event bus.
+    if (!targetConnIds) {
+      gatewayEventBus.emit(event, payload);
+    }
+
     if (params.clients.size === 0) {
       return;
     }
@@ -90,6 +125,7 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
       }
       logWs("out", "event", logMeta);
     }
+
     for (const c of params.clients) {
       if (targetConnIds && !targetConnIds.has(c.connId)) {
         continue;

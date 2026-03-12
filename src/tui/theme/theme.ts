@@ -75,6 +75,7 @@ export const theme = {
   toolTitle: fg(palette.toolTitle),
   toolOutput: fg(palette.toolOutput),
   toolPendingBg: bg(palette.toolPendingBg),
+  // [FORK-PATCH-7] TUI Dark Theme — overrides tool success bg to dark gray (ansi 236) for OLED-friendly contrast. See patches/README.md #7.
   toolSuccessBg: bgAnsi(236), // dark gray
   toolErrorBg: bg(palette.toolErrorBg),
   border: fg(palette.border),

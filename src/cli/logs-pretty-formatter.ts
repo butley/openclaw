@@ -1,3 +1,4 @@
+// [FORK-PATCH-10] Logs Pretty Formatter — `openclaw logs --pretty` with icons, phone aliases, UUID compaction. Entire file is fork-only. See patches/README.md #10.
 /**
  * Rich log formatter for `openclaw logs --pretty`.
  * Ported from oc-logs.py — categories, icons, phone aliases, UUID compaction,

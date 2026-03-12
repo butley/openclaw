@@ -6,6 +6,7 @@ import { resolveThinkingDefault } from "../../agents/model-selection.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
+import { registerAgentRunContext } from "../../infra/agent-events.js";
 import type { MsgContext } from "../../auto-reply/templating.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
 import { resolveSessionFilePath } from "../../config/sessions.js";
@@ -15,6 +16,7 @@ import {
   stripInlineDirectiveTagsForDisplay,
   stripInlineDirectiveTagsFromMessageForDisplay,
 } from "../../utils/directive-tags.js";
+// [FORK-PATCH-23] Chat.send Internal Routing — control UI messages go through full agent pipeline (not just WS echo). See patches/README.md #23.
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
   abortChatRunById,
@@ -143,6 +145,7 @@ function sanitizeChatHistoryContentBlock(block: unknown): { block: unknown; chan
     entry.omitted = true;
     entry.bytes = bytes;
     changed = true;
+    // Preserve mediaUrl if present (saved to disk on inbound)
   }
   return { block: changed ? entry : block, changed };
 }
@@ -560,10 +563,74 @@ export const chatHandlers: GatewayRequestHandlers = {
     const requested = typeof limit === "number" ? limit : defaultLimit;
     const max = Math.min(hardMax, requested);
     const sliced = rawMessages.length > max ? rawMessages.slice(-max) : rawMessages;
+    // Extract metadata from user messages BEFORE stripping (stripEnvelopeFromMessages
+    // removes Sender/Conversation info blocks). We attach as top-level fields.
+    const threadHistoryIndices = new Set<number>();
+    // [FORK-PATCH-29] Chat Sender Meta — extracts sender name/id from inbound metadata before stripEnvelope removes it. See patches/README.md #29.
+    const senderMetaByIndex = new Map<number, { name: string; id: string; isGroupChat: boolean }>();
+    // [FORK-PATCH-30] Chat Group Context — extracts group chat history (who said what) before stripEnvelope removes it. See patches/README.md #30.
+    const chatHistoryByIndex = new Map<number, Array<{ sender: string; timestamp_ms: number; body: string }>>();
+    for (let i = 0; i < sliced.length; i++) {
+      const msg = sliced[i] as Record<string, unknown>;
+      if (msg.role !== "user") {continue;}
+      const text =
+        typeof msg.content === "string"
+          ? msg.content
+          : Array.isArray(msg.content)
+            ? (msg.content as Array<Record<string, unknown>>)
+                .filter((b) => b.type === "text" && typeof b.text === "string")
+                .map((b) => b.text as string)
+                .join("")
+            : "";
+      if (!text) {continue;}
+      // Detect thread history context messages
+      if (text.trimStart().startsWith("[Thread history - for context]")) {
+        threadHistoryIndices.add(i);
+      }
+      // Extract "Chat history since last reply" (WA/Telegram group context messages)
+      const chatHistMatch = text.match(
+        /Chat history since last reply \(untrusted, for context\):\s*```json\s*(\[[\s\S]*?\])\s*```/,
+      );
+      if (chatHistMatch) {
+        try {
+          const entries = JSON.parse(chatHistMatch[1]) as Array<Record<string, unknown>>;
+          const parsed = entries
+            .filter((e) => typeof e.sender === "string" && typeof e.body === "string")
+            .map((e) => ({
+              sender: e.sender as string,
+              timestamp_ms: typeof e.timestamp_ms === "number" ? e.timestamp_ms : 0,
+              body: e.body as string,
+            }));
+          if (parsed.length > 0) {chatHistoryByIndex.set(i, parsed);}
+        } catch { /* ignore parse errors */ }
+      }
+      const senderMatch = text.match(
+        /Sender \(untrusted metadata\):\s*```json\s*(\{[\s\S]*?\})\s*```/,
+      );
+      if (!senderMatch) {continue;}
+      try {
+        const sender = JSON.parse(senderMatch[1]) as Record<string, unknown>;
+        const name = typeof sender.name === "string" ? sender.name : "";
+        const id = typeof sender.id === "string" ? sender.id : "";
+        if (!name) {continue;}
+        let isGroupChat = false;
+        const convMatch = text.match(
+          /Conversation info \(untrusted metadata\):\s*```json\s*(\{[\s\S]*?\})\s*```/,
+        );
+        if (convMatch) {
+          try {
+            const conv = JSON.parse(convMatch[1]) as Record<string, unknown>;
+            isGroupChat = conv.is_group_chat === true;
+          } catch { /* ignore */ }
+        }
+        senderMetaByIndex.set(i, { name, id, isGroupChat });
+      } catch { /* ignore parse errors */ }
+    }
     const sanitized = stripEnvelopeFromMessages(sliced);
     // Extract audioUrl mapping BEFORE sanitize (which deletes `details`).
     // Maps message index → audioUrl for the final assistant message after a TTS toolResult.
     // Skips intermediate assistant messages with stopReason="toolUse" (still in tool-call loop).
+    // [FORK-PATCH-22] Chat Media Pipeline — extracts audioUrl/imageUrl from toolResult details before sanitize deletes them. See patches/README.md #22.
     const audioUrlByIndex = new Map<number, string>();
     {
       let pendingAudioUrl: string | undefined;
@@ -610,6 +677,34 @@ export const chatHandlers: GatewayRequestHandlers = {
       }
     }
     const normalized = sanitizeChatHistoryMessages(sanitized);
+    // Apply sender metadata to user messages (extracted before strip).
+    for (const [idx, meta] of senderMetaByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).senderMeta = meta;
+      }
+    }
+    // Apply chat history context (WA/Telegram group messages between bot replies).
+    for (const [idx, entries] of chatHistoryByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).chatHistory = entries;
+      }
+    }
+    // Preserve raw content for thread history messages (frontend parses them into cards).
+    for (const idx of threadHistoryIndices) {
+      if (idx < normalized.length) {
+        const raw = sliced[idx] as Record<string, unknown>;
+        const rawText =
+          typeof raw.content === "string"
+            ? raw.content
+            : Array.isArray(raw.content)
+              ? (raw.content as Array<Record<string, unknown>>)
+                  .filter((b) => b.type === "text" && typeof b.text === "string")
+                  .map((b) => b.text as string)
+                  .join("")
+              : "";
+        (normalized[idx] as Record<string, unknown>).threadHistoryRaw = rawText;
+      }
+    }
     // Apply audioUrl to the sanitized (normalized) messages.
     for (const [idx, url] of audioUrlByIndex) {
       if (idx < normalized.length) {
@@ -639,6 +734,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
     let thinkingLevel = entry?.thinkingLevel;
     if (!thinkingLevel) {
+      // [FORK-PATCH-26] ThinkingDefault Shortcut — falls back to agents.defaults.thinkingDefault when session has no level set. See patches/README.md #26.
       const configured = cfg.agents?.defaults?.thinkingDefault;
       if (configured) {
         thinkingLevel = configured;
@@ -785,6 +881,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     let parsedMessage = inboundMessage;
     let parsedImages: ChatImageContent[] = [];
     let parsedAudioPaths: string[] = [];
+    let parsedImageMediaUrls: string[] = [];
     if (normalizedAttachments.length > 0) {
       try {
         const parsed = await parseMessageWithAttachments(inboundMessage, normalizedAttachments, {
@@ -793,6 +890,21 @@ export const chatHandlers: GatewayRequestHandlers = {
         });
         parsedMessage = parsed.message;
         parsedImages = parsed.images;
+        context.logGateway?.info?.(`[chat.send] attachments=${normalizedAttachments.length} images=${parsedImages.length}`);
+
+        // Save images to disk so they can be served via /media endpoint
+        for (const img of parsedImages) {
+          try {
+            const buffer = Buffer.from(img.data, "base64");
+            const saved = await saveMediaBuffer(buffer, img.mimeType, "inbound", 5_000_000);
+            const mediaUrl = `/media/${saved.id}`;
+            parsedImageMediaUrls.push(mediaUrl);
+            // Tag image with saved URL — survives base64 stripping in chat.history
+            img.mediaUrl = mediaUrl;
+          } catch (imgErr) {
+            context.logGateway?.warn?.(`[chat.send] Failed to save inbound image: ${imgErr}`);
+          }
+        }
 
         const audio = await extractAudioAttachments(normalizedAttachments, {
           maxBytes: 20_000_000,
@@ -838,6 +950,12 @@ export const chatHandlers: GatewayRequestHandlers = {
     });
     const now = Date.now();
     const clientRunId = p.idempotencyKey;
+    // [FORK-PATCH-4] Chat Mirror — without this, replies from chat UI on WA sessions
+    // never reach WhatsApp. The agent event handler (server-chat.ts:420) checks
+    // runContext.mirror to decide whether to call sendMessageWhatsApp(). If this
+    // registration is missing, mirror is always undefined and WA delivery is skipped.
+    // Lost during upstream merge — restored from commit aea535abf (Feb 3).
+    registerAgentRunContext(clientRunId, { sessionKey, mirror: p.mirror });
 
     const sendPolicy = resolveSendPolicy({
       cfg,
@@ -1076,10 +1194,10 @@ export const chatHandlers: GatewayRequestHandlers = {
             const imageUrls = mediaUrls.filter((u) => /\.(png|jpe?g|gif|webp)$/i.test(u));
             if (message) {
               if (audioUrls.length > 0) {
-                (message as Record<string, unknown>).audioUrl = audioUrls[0];
+                (message).audioUrl = audioUrls[0];
               }
               if (imageUrls.length > 0) {
-                (message as Record<string, unknown>).imageUrl = imageUrls[0];
+                (message).imageUrl = imageUrls[0];
               }
             }
             broadcastChatFinal({
@@ -1170,7 +1288,7 @@ export const chatHandlers: GatewayRequestHandlers = {
                 // Look for the last toolResult with details.imageUrl
                 for (let i = recentMsgs.length - 1; i >= 0; i--) {
                   const msg = recentMsgs[i] as Record<string, unknown>;
-                  if (msg.role !== "toolResult") continue;
+                  if (msg.role !== "toolResult") {continue;}
                   const details = msg.details as Record<string, unknown> | undefined;
                   if (details?.imageUrl) {
                     const imageUrl = details.imageUrl as string;

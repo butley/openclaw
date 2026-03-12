@@ -15,6 +15,11 @@ const ACTIONS: Record<
   getTask: { method: "query", path: "agentApi:getTask", requiredArgs: ["taskId"] },
   createTask: { method: "mutation", path: "agentApi:createTask", requiredArgs: ["title"] },
   updateTask: { method: "mutation", path: "agentApi:updateTask", requiredArgs: ["taskId"] },
+  patchTaskBody: {
+    method: "mutation",
+    path: "agentApi:patchTaskBody",
+    requiredArgs: ["taskId", "ops"],
+  },
   deleteTask: { method: "mutation", path: "agentApi:deleteTask", requiredArgs: ["taskId"] },
   // Projects
   listProjects: { method: "query", path: "agentApi:listProjects" },
@@ -45,6 +50,14 @@ const ACTIONS: Record<
     path: "agentApi:deleteTaskComment",
     requiredArgs: ["commentId"],
   },
+  // Documents
+  listDocs: { method: "query", path: "agentApi:listDocs" },
+  getDoc: { method: "query", path: "agentApi:getDoc", requiredArgs: ["docId"] },
+  createDoc: { method: "mutation", path: "agentApi:createDoc", requiredArgs: ["title"] },
+  updateDoc: { method: "mutation", path: "agentApi:updateDoc", requiredArgs: ["docId"] },
+  deleteDoc: { method: "mutation", path: "agentApi:deleteDoc", requiredArgs: ["docId"] },
+  shareDoc: { method: "mutation", path: "agentApi:shareDoc", requiredArgs: ["docId"] },
+  unshareDoc: { method: "mutation", path: "agentApi:unshareDoc", requiredArgs: ["docId"] },
   // Contacts
   listContacts: { method: "query", path: "agentApi:listContacts" },
   findOrCreateContact: {
@@ -82,6 +95,7 @@ Use this tool to manage tasks, projects, comments, and contacts. Data persists a
 - getTask: taskId (required)
 - createTask: title (required), description, body (markdown content), status, priority (low|medium|high|urgent), owner, dueDate (timestamp ms), tags (string[]), notes, category, projectId, position
 - updateTask: taskId (required), + any fields above to update
+- patchTaskBody: taskId (required), ops (required) — surgical edits to body without sending full text. ops is array of {type, find?, replace?, content?, after?}. Types: "replace" (find→replace, all occurrences), "append" (add to end), "prepend" (add to start), "insert_after" (insert after marker). Use instead of updateTask when body is long. ⚠️ Keep find/after fields SHORT (headings, not content) — long strings in ops also truncate.
 - deleteTask: taskId (required)
 
 ## Projects
@@ -94,6 +108,15 @@ Use this tool to manage tasks, projects, comments, and contacts. Data persists a
 - listTaskComments: taskId (required) — returns comments on a task
 - addTaskComment: taskId (required), body (required), author (optional, defaults to "Bob")
 - deleteTaskComment: commentId (required)
+
+## Documents
+- listDocs: optional filters: projectId, limit
+- getDoc: docId (required)
+- createDoc: title (required), markdown, projectId, tags, owner
+- updateDoc: docId (required), + title, markdown, tags, archived, pinned
+- deleteDoc: docId (required)
+- shareDoc: docId (required) — makes doc public, returns { slug, url }
+- unshareDoc: docId (required) — revokes public access
 
 ## Contacts
 - listContacts: no args

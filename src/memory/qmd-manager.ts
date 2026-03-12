@@ -224,6 +224,7 @@ export class QmdMemoryManager implements MemorySearchManager {
     this.cfg = params.cfg;
     this.agentId = params.agentId;
     this.qmd = params.resolved;
+    // [FORK-PATCH-9] QMD Output Limit Fix — caps QMD response to maxOutputChars (default 200k) to prevent context overflow. See patches/README.md #9.
     this.maxQmdOutputChars = params.resolved.maxOutputChars ?? MAX_QMD_OUTPUT_CHARS;
     this.workspaceDir = resolveAgentWorkspaceDir(params.cfg, params.agentId);
     this.stateDir = resolveStateDir(process.env, os.homedir);
@@ -240,6 +241,9 @@ export class QmdMemoryManager implements MemorySearchManager {
     this.env = {
       ...process.env,
       XDG_CONFIG_HOME: this.xdgConfigHome,
+      // workaround for upstream bug https://github.com/tobi/qmd/issues/132
+      // QMD doesn't respect XDG_CONFIG_HOME:
+      QMD_CONFIG_DIR: this.xdgConfigHome,
       XDG_CACHE_HOME: this.xdgCacheHome,
       NO_COLOR: "1",
     };
