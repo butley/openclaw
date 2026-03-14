@@ -1,6 +1,6 @@
 # Custom Patches — butley/openclaw
 
-31 active custom patches on top of upstream openclaw/openclaw.
+32 active custom patches on top of upstream openclaw/openclaw.
 
 ## Absorbed by Upstream (no longer maintained)
 
@@ -47,6 +47,7 @@
 | 32 | SSE Retryable Error Suppression | — | Gateway | `work` | `grep -q "RETRYABLE_LIFECYCLE_ERROR_RE" src/gateway/server-chat.ts` |
 | 33 | Memory Flush Context Priority | — | Agents | `work` | `grep -q "FORK-PATCH-33" src/auto-reply/reply/memory-flush.ts` |
 | 34 | Session Chain (previousSessionId) | — | Infra | `work` | `grep -q "FORK-PATCH-34" src/config/sessions/types.ts` |
+| 35 | Context Window Override (not cap) | — | Agents | `work` | `grep -q "FORK-PATCH-35" src/agents/context-window-guard.ts` |
 
 
 ## Re-application Order
