@@ -41,9 +41,12 @@ export function resolveContextWindowInfo(params: {
       ? { tokens: fromModel, source: "model" as const }
       : { tokens: Math.floor(params.defaultTokens), source: "default" as const };
 
-  const capTokens = normalizePositiveInt(params.cfg?.agents?.defaults?.contextTokens);
-  if (capTokens && capTokens < baseInfo.tokens) {
-    return { tokens: capTokens, source: "agentContextTokens" };
+  // [FORK-PATCH-35] Treat agents.defaults.contextTokens as an override, not just a cap.
+  // When context1m is enabled, the model cache reports 200k but the user configured 1M.
+  // The config value should take precedence in both directions (cap down OR expand up).
+  const cfgTokens = normalizePositiveInt(params.cfg?.agents?.defaults?.contextTokens);
+  if (cfgTokens && cfgTokens !== baseInfo.tokens) {
+    return { tokens: cfgTokens, source: "agentContextTokens" };
   }
 
   return baseInfo;
