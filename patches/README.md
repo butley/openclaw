@@ -1,6 +1,6 @@
 # Custom Patches — butley/openclaw
 
-29 active custom patches on top of upstream openclaw/openclaw.
+30 active custom patches on top of upstream openclaw/openclaw.
 
 ## Absorbed by Upstream (no longer maintained)
 
@@ -45,6 +45,7 @@
 | 30 | Chat History Group Context | — | Gateway | `alpha` | `grep -q "chatHistory" src/gateway/server-methods/chat.ts` |
 | 31 | SSE EventBus Singleton | — | Gateway | `alpha` | `grep -q "__openclaw_gatewayEventBus__" src/gateway/server-broadcast.ts` |
 | 32 | SSE Retryable Error Suppression | — | Gateway | `work` | `grep -q "RETRYABLE_LIFECYCLE_ERROR_RE" src/gateway/server-chat.ts` |
+| 33 | Memory Flush Context Priority | — | Agents | `work` | `grep -q "FORK-PATCH-33" src/auto-reply/reply/memory-flush.ts` |
 
 
 ## Re-application Order
