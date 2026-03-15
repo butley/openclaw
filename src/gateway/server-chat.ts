@@ -614,7 +614,10 @@ export function createAgentEventHandler({
     const lifecyclePhase =
       evt.stream === "lifecycle" && typeof evt.data?.phase === "string" ? evt.data.phase : null;
 
-    if (isControlUiVisible && sessionKey) {
+    // [FORK-PATCH-16] Always emit to SSE/node subscribers regardless of isControlUiVisible.
+    // Upstream gates this on isControlUiVisible (false for WA-originated runs), but our
+    // Butley frontend watches WA sessions via SSE — we need deltas + tool events always.
+    if (sessionKey) {
       // Send tool events to node/channel subscribers only when verbose is enabled;
       // WS clients already received tool events above via broadcast("agent", ...) (Patch #16).
       if (!isToolEvent || toolVerbose !== "off") {
