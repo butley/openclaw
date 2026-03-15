@@ -6,11 +6,12 @@ import { resolveThinkingDefault } from "../../agents/model-selection.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
+import { registerAgentRunContext } from "../../infra/agent-events.js";
 import type { MsgContext } from "../../auto-reply/templating.js";
-import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
 import { resolveSessionFilePath } from "../../config/sessions.js";
 import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
+import { saveMediaBuffer } from "../../media/store.js";
 import { normalizeInputProvenance, type InputProvenance } from "../../sessions/input-provenance.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { parseAgentSessionKey } from "../../sessions/session-key-utils.js";
@@ -31,7 +32,11 @@ import {
   isChatStopCommandText,
   resolveChatRunExpiresAtMs,
 } from "../chat-abort.js";
-import { type ChatImageContent, parseMessageWithAttachments } from "../chat-attachments.js";
+import {
+  extractAudioAttachments,
+  type ChatImageContent,
+  parseMessageWithAttachments,
+} from "../chat-attachments.js";
 import { stripEnvelopeFromMessage, stripEnvelopeFromMessages } from "../chat-sanitize.js";
 import { ADMIN_SCOPE } from "../method-scopes.js";
 import {
@@ -108,7 +113,6 @@ const CHANNEL_AGNOSTIC_SESSION_SCOPES = new Set([
   "topic",
 ]);
 const CHANNEL_SCOPED_SESSION_SHAPES = new Set(["direct", "dm", "group", "channel"]);
-
 type ChatSendDeliveryEntry = {
   deliveryContext?: {
     channel?: string;
@@ -457,61 +461,16 @@ function sanitizeChatHistoryMessage(message: unknown): { message: unknown; chang
   return { message: changed ? entry : message, changed };
 }
 
-/**
- * Extract the visible text from an assistant history message for silent-token checks.
- * Returns `undefined` for non-assistant messages or messages with no extractable text.
- * When `entry.text` is present it takes precedence over `entry.content` to avoid
- * dropping messages that carry real text alongside a stale `content: "NO_REPLY"`.
- */
-function extractAssistantTextForSilentCheck(message: unknown): string | undefined {
-  if (!message || typeof message !== "object") {
-    return undefined;
-  }
-  const entry = message as Record<string, unknown>;
-  if (entry.role !== "assistant") {
-    return undefined;
-  }
-  if (typeof entry.text === "string") {
-    return entry.text;
-  }
-  if (typeof entry.content === "string") {
-    return entry.content;
-  }
-  if (!Array.isArray(entry.content) || entry.content.length === 0) {
-    return undefined;
-  }
-
-  const texts: string[] = [];
-  for (const block of entry.content) {
-    if (!block || typeof block !== "object") {
-      return undefined;
-    }
-    const typed = block as { type?: unknown; text?: unknown };
-    if (typed.type !== "text" || typeof typed.text !== "string") {
-      return undefined;
-    }
-    texts.push(typed.text);
-  }
-  return texts.length > 0 ? texts.join("\n") : undefined;
-}
-
 function sanitizeChatHistoryMessages(messages: unknown[]): unknown[] {
   if (messages.length === 0) {
     return messages;
   }
   let changed = false;
-  const next: unknown[] = [];
-  for (const message of messages) {
+  const next = messages.map((message) => {
     const res = sanitizeChatHistoryMessage(message);
     changed ||= res.changed;
-    // Drop assistant messages whose entire visible text is the silent reply token.
-    const text = extractAssistantTextForSilentCheck(res.message);
-    if (text !== undefined && isSilentReplyText(text, SILENT_REPLY_TOKEN)) {
-      changed = true;
-      continue;
-    }
-    next.push(res.message);
-  }
+    return res.message;
+  });
   return changed ? next : messages;
 }
 
@@ -945,8 +904,159 @@ export const chatHandlers: GatewayRequestHandlers = {
     const requested = typeof limit === "number" ? limit : defaultLimit;
     const max = Math.min(hardMax, requested);
     const sliced = rawMessages.length > max ? rawMessages.slice(-max) : rawMessages;
+    const threadHistoryIndices = new Set<number>();
+    const senderMetaByIndex = new Map<number, { name: string; id: string; isGroupChat: boolean }>();
+    const chatHistoryByIndex = new Map<
+      number,
+      Array<{ sender: string; timestamp_ms: number; body: string }>
+    >();
+    for (let i = 0; i < sliced.length; i += 1) {
+      const msg = sliced[i] as Record<string, unknown>;
+      if (msg.role !== "user") {
+        continue;
+      }
+      const text =
+        typeof msg.content === "string"
+          ? msg.content
+          : Array.isArray(msg.content)
+            ? (msg.content as Array<Record<string, unknown>>)
+                .filter((b) => b.type === "text" && typeof b.text === "string")
+                .map((b) => b.text as string)
+                .join("")
+            : "";
+      if (!text) {
+        continue;
+      }
+      if (text.trimStart().startsWith("[Thread history - for context]")) {
+        threadHistoryIndices.add(i);
+      }
+      const chatHistMatch = text.match(
+        /Chat history since last reply \(untrusted, for context\):\s*```json\s*(\[[\s\S]*?\])\s*```/,
+      );
+      if (chatHistMatch) {
+        try {
+          const entries = JSON.parse(chatHistMatch[1]) as Array<Record<string, unknown>>;
+          const parsed = entries
+            .filter((e) => typeof e.sender === "string" && typeof e.body === "string")
+            .map((e) => ({
+              sender: e.sender as string,
+              timestamp_ms: typeof e.timestamp_ms === "number" ? e.timestamp_ms : 0,
+              body: e.body as string,
+            }));
+          if (parsed.length > 0) {
+            chatHistoryByIndex.set(i, parsed);
+          }
+        } catch {
+          // ignore malformed metadata
+        }
+      }
+      const senderMatch = text.match(
+        /Sender \(untrusted metadata\):\s*```json\s*(\{[\s\S]*?\})\s*```/,
+      );
+      if (!senderMatch) {
+        continue;
+      }
+      try {
+        const sender = JSON.parse(senderMatch[1]) as Record<string, unknown>;
+        const name = typeof sender.name === "string" ? sender.name : "";
+        const id = typeof sender.id === "string" ? sender.id : "";
+        if (!name) {
+          continue;
+        }
+        let isGroupChat = false;
+        const convMatch = text.match(
+          /Conversation info \(untrusted metadata\):\s*```json\s*(\{[\s\S]*?\})\s*```/,
+        );
+        if (convMatch) {
+          try {
+            const conv = JSON.parse(convMatch[1]) as Record<string, unknown>;
+            isGroupChat = conv.is_group_chat === true;
+          } catch {
+            // ignore malformed metadata
+          }
+        }
+        senderMetaByIndex.set(i, { name, id, isGroupChat });
+      } catch {
+        // ignore malformed metadata
+      }
+    }
     const sanitized = stripEnvelopeFromMessages(sliced);
+    const audioUrlByIndex = new Map<number, string>();
+    {
+      let pendingAudioUrl: string | undefined;
+      for (let i = 0; i < sanitized.length; i += 1) {
+        const msg = sanitized[i] as Record<string, unknown>;
+        const role = msg.role as string | undefined;
+        const details = msg.details as Record<string, unknown> | undefined;
+        if (role === "toolResult" && typeof details?.audioUrl === "string") {
+          pendingAudioUrl = details.audioUrl;
+        } else if (role === "assistant") {
+          const stopReason = msg.stopReason as string | undefined;
+          if (pendingAudioUrl && stopReason !== "toolUse") {
+            audioUrlByIndex.set(i, pendingAudioUrl);
+            pendingAudioUrl = undefined;
+          }
+        } else if (role === "user") {
+          pendingAudioUrl = undefined;
+        }
+      }
+    }
+    const imageUrlByIndex = new Map<number, string>();
+    {
+      let pendingImageUrl: string | undefined;
+      for (let i = 0; i < sanitized.length; i += 1) {
+        const msg = sanitized[i] as Record<string, unknown>;
+        const role = msg.role as string | undefined;
+        const details = msg.details as Record<string, unknown> | undefined;
+        if (role === "toolResult" && typeof details?.imageUrl === "string") {
+          pendingImageUrl = details.imageUrl;
+        } else if (role === "assistant") {
+          const stopReason = msg.stopReason as string | undefined;
+          if (pendingImageUrl && stopReason !== "toolUse") {
+            imageUrlByIndex.set(i, pendingImageUrl);
+            pendingImageUrl = undefined;
+          }
+        } else if (role === "user") {
+          pendingImageUrl = undefined;
+        }
+      }
+    }
     const normalized = sanitizeChatHistoryMessages(sanitized);
+    for (const [idx, meta] of senderMetaByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).senderMeta = meta;
+      }
+    }
+    for (const [idx, entries] of chatHistoryByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).chatHistory = entries;
+      }
+    }
+    for (const idx of threadHistoryIndices) {
+      if (idx < normalized.length) {
+        const raw = sliced[idx] as Record<string, unknown>;
+        const rawText =
+          typeof raw.content === "string"
+            ? raw.content
+            : Array.isArray(raw.content)
+              ? (raw.content as Array<Record<string, unknown>>)
+                  .filter((b) => b.type === "text" && typeof b.text === "string")
+                  .map((b) => b.text as string)
+                  .join("")
+              : "";
+        (normalized[idx] as Record<string, unknown>).threadHistoryRaw = rawText;
+      }
+    }
+    for (const [idx, url] of audioUrlByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).audioUrl = url;
+      }
+    }
+    for (const [idx, url] of imageUrlByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).imageUrl = url;
+      }
+    }
     const maxHistoryBytes = getMaxChatHistoryMessagesBytes();
     const perMessageHardCap = Math.min(CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES, maxHistoryBytes);
     const replaced = replaceOversizedChatHistoryMessages({
@@ -964,15 +1074,18 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
     let thinkingLevel = entry?.thinkingLevel;
     if (!thinkingLevel) {
-      const sessionAgentId = resolveSessionAgentId({ sessionKey, config: cfg });
-      const { provider, model } = resolveSessionModelRef(cfg, entry, sessionAgentId);
-      const catalog = await context.loadGatewayModelCatalog();
-      thinkingLevel = resolveThinkingDefault({
-        cfg,
-        provider,
-        model,
-        catalog,
-      });
+      thinkingLevel = cfg.agents?.defaults?.thinkingDefault;
+      if (!thinkingLevel) {
+        const sessionAgentId = resolveSessionAgentId({ sessionKey, config: cfg });
+        const { provider, model } = resolveSessionModelRef(cfg, entry, sessionAgentId);
+        const catalog = await context.loadGatewayModelCatalog();
+        thinkingLevel = resolveThinkingDefault({
+          cfg,
+          provider,
+          model,
+          catalog,
+        });
+      }
     }
     const verboseLevel = entry?.verboseLevel ?? cfg.agents?.defaults?.verboseDefault;
     respond(true, {
@@ -1082,6 +1195,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       message: string;
       thinking?: string;
       deliver?: boolean;
+      mirror?: boolean;
       attachments?: Array<{
         type?: string;
         mimeType?: string;
@@ -1134,6 +1248,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
     let parsedMessage = inboundMessage;
     let parsedImages: ChatImageContent[] = [];
+    let parsedAudioPaths: string[] = [];
     if (normalizedAttachments.length > 0) {
       try {
         const parsed = await parseMessageWithAttachments(inboundMessage, normalizedAttachments, {
@@ -1142,6 +1257,30 @@ export const chatHandlers: GatewayRequestHandlers = {
         });
         parsedMessage = parsed.message;
         parsedImages = parsed.images;
+        for (const image of parsedImages) {
+          try {
+            const buffer = Buffer.from(image.data, "base64");
+            const saved = await saveMediaBuffer(buffer, image.mimeType, "inbound", 5_000_000);
+            image.mediaUrl = `/media/${saved.id}`;
+          } catch (err) {
+            context.logGateway.warn(`chat.send failed to save inbound image: ${formatForLog(err)}`);
+          }
+        }
+        const audio = await extractAudioAttachments(normalizedAttachments, {
+          maxBytes: 20_000_000,
+          log: context.logGateway,
+        });
+        for (const item of audio) {
+          const buffer = Buffer.from(item.data, "base64");
+          const saved = await saveMediaBuffer(
+            buffer,
+            item.mimeType,
+            "inbound",
+            20_000_000,
+            item.fileName,
+          );
+          parsedAudioPaths.push(saved.path);
+        }
       } catch (err) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, String(err)));
         return;
@@ -1222,6 +1361,13 @@ export const chatHandlers: GatewayRequestHandlers = {
         status: "started" as const,
       };
       respond(true, ackPayload, undefined, { runId: clientRunId });
+      registerAgentRunContext(clientRunId, {
+        sessionKey,
+        // [FORK-PATCH-4] Chat Mirror — preserve client override while defaulting
+        // webchat/dashboard-originated runs to mirrored delivery.
+        mirror: p.mirror ?? true,
+        isControlUiVisible: true,
+      });
 
       const trimmedMessage = parsedMessage.trim();
       const injectThinking = Boolean(
@@ -1273,6 +1419,10 @@ export const chatHandlers: GatewayRequestHandlers = {
         SenderName: clientInfo?.displayName,
         SenderUsername: clientInfo?.displayName,
         GatewayClientScopes: client?.connect?.scopes,
+        MediaPath: parsedAudioPaths[0],
+        MediaUrl: parsedAudioPaths[0],
+        MediaPaths: parsedAudioPaths.length > 0 ? parsedAudioPaths : undefined,
+        MediaUrls: parsedAudioPaths.length > 0 ? parsedAudioPaths : undefined,
       };
 
       const agentId = resolveSessionAgentId({
@@ -1377,6 +1527,32 @@ export const chatHandlers: GatewayRequestHandlers = {
               sessionKey: rawSessionKey,
               message,
             });
+            // [FORK-PATCH-4] Chat Mirror — deliver webchat-originated replies to the
+            // session's original channel (e.g. WhatsApp). Without this, responses to
+            // webchat messages on WA-scoped sessions never reach the WA group/DM.
+            if (p.mirror && combinedReply) {
+              try {
+                const keyParts = p.sessionKey.split(":").filter(Boolean);
+                // Format: agent:{agentId}:{channel}:{peerKind}:{peerId}
+                if (keyParts.length >= 5 && keyParts[0] === "agent") {
+                  const channel = keyParts[2];
+                  const peerId = keyParts.slice(4).join(":");
+                  if (channel === "whatsapp" && peerId) {
+                    void import("../../web/outbound.js").then(({ sendMessageWhatsApp }) => {
+                      sendMessageWhatsApp(peerId, combinedReply, { verbose: false })
+                        .then(() =>
+                          context.logGateway.info(`[mirror] sent to ${channel}:${peerId}`),
+                        )
+                        .catch((err) =>
+                          context.logGateway.warn(`[mirror] failed: ${String(err)}`),
+                        );
+                    });
+                  }
+                }
+              } catch (mirrorErr) {
+                context.logGateway.warn(`[mirror] error: ${String(mirrorErr)}`);
+              }
+            }
           }
           setGatewayDedupeEntry({
             dedupe: context.dedupe,

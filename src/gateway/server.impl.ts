@@ -32,6 +32,8 @@ import { isDiagnosticsEnabled } from "../infra/diagnostic-events.js";
 import { logAcceptedEnvOption } from "../infra/env.js";
 import { createExecApprovalForwarder } from "../infra/exec-approval-forwarder.js";
 import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
+// [FORK-PATCH-5] WS Inbound Push — real-time inbound message relay to WebSocket/SSE clients.
+import { onInboundMessageEvent } from "../infra/inbound-events.js";
 import { startHeartbeatRunner, type HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import { getMachineDisplayName } from "../infra/machine-name.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
@@ -742,6 +744,12 @@ export async function startGatewayServer(
         }),
       );
 
+  // [FORK-PATCH-5] WS Inbound Push — broadcast inbound messages (WA/Slack/etc.)
+  // to all connected WS/SSE clients so the webchat dashboard shows messages in real-time.
+  const inboundMessageUnsub = onInboundMessageEvent((evt) => {
+    broadcast("message.inbound", evt, { dropIfSlow: true });
+  });
+
   const heartbeatUnsub = minimalTestGateway
     ? null
     : onHeartbeatEvent((evt) => {
@@ -1034,6 +1042,7 @@ export async function startGatewayServer(
     dedupeCleanup,
     mediaCleanup,
     agentUnsub,
+    inboundMessageUnsub,
     heartbeatUnsub,
     chatRunState,
     clients,

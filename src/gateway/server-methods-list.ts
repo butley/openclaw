@@ -129,5 +129,7 @@ export const GATEWAY_EVENTS = [
   "voicewake.changed",
   "exec.approval.requested",
   "exec.approval.resolved",
+  // [FORK-PATCH-5] WS Inbound Push — allow inbound message events through WS.
+  "message.inbound",
   GATEWAY_EVENT_UPDATE_AVAILABLE,
 ];
