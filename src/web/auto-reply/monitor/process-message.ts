@@ -33,7 +33,7 @@ import { resolveWhatsAppAccount } from "../../accounts.js";
 import { newConnectionId } from "../../reconnect.js";
 import { formatError } from "../../session.js";
 import { deliverWebReply } from "../deliver-reply.js";
-import { emitInboundMessageEvent } from "../../../infra/inbound-events.js";
+import { gatewayEventBus } from "../../../gateway/server-broadcast.js";
 import { whatsappInboundLog, whatsappOutboundLog } from "../loggers.js";
 import type { WebInboundMsg } from "../types.js";
 import { elide } from "../util.js";
@@ -242,9 +242,10 @@ export async function processMessage(params: {
     whatsappInboundLog.debug(`Inbound body: ${elide(combinedBody, 400)}`);
   }
 
-  // [FORK-PATCH-5] WS Inbound Push — emit inbound message event for WebSocket/SSE broadcast
-  // so the webchat dashboard shows WA messages in real-time.
-  emitInboundMessageEvent({
+  // [FORK-PATCH-5] WS Inbound Push — emit directly on gatewayEventBus (bypasses
+  // inbound-events.ts to avoid chunk duplication issues with module-level Set).
+  // The SSE endpoint listens for "message.inbound" on this bus.
+  gatewayEventBus.emit("message.inbound", {
     messageId: correlationId,
     sessionKey: params.route.sessionKey,
     channel: "whatsapp",
