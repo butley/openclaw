@@ -10,9 +10,33 @@ import { normalizePollInput, type PollInput } from "../polls.js";
 import { toWhatsappJid } from "../utils.js";
 import { resolveWhatsAppAccount, resolveWhatsAppMediaMaxBytes } from "./accounts.js";
 import { type ActiveWebSendOptions, requireActiveWebListener } from "./active-listener.js";
+import { resolveBrazilianJid } from "./inbound/brazil-jid-resolver.js";
 import { loadWebMedia } from "./media.js";
 
 const outboundLog = createSubsystemLogger("gateway/channels/whatsapp").child("outbound");
+
+// [FORK-PATCH-2] Brazil JID Resolution — resolve +55 numbers with/without 9th digit before send.
+async function resolveJidWithBrazil(
+  active: { onWhatsApp?: (jid: string) => Promise<Array<{ exists?: boolean; jid?: string }>> },
+  to: string,
+): Promise<string> {
+  const jid = toWhatsappJid(to);
+  if (!active.onWhatsApp) {
+    return jid;
+  }
+  try {
+    const resolved = await resolveBrazilianJid({ onWhatsApp: active.onWhatsApp }, jid);
+    if (resolved !== jid) {
+      outboundLog.info(`[brazil-jid] Resolved ${jid} -> ${resolved}`);
+    }
+    return resolved;
+  } catch (err) {
+    outboundLog.warn(
+      `[brazil-jid] Resolution failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return jid;
+  }
+}
 
 export async function sendMessageWhatsApp(
   to: string,
@@ -27,10 +51,6 @@ export async function sendMessageWhatsApp(
   },
 ): Promise<{ messageId: string; toJid: string }> {
   let text = body.trimStart();
-  const jid = toWhatsappJid(to);
-  if (!text && !options.mediaUrl) {
-    return { messageId: "", toJid: jid };
-  }
   const correlationId = generateSecureUuid();
   const startedAt = Date.now();
   const { listener: active, accountId: resolvedAccountId } = requireActiveWebListener(
@@ -55,6 +75,10 @@ export async function sendMessageWhatsApp(
     to: redactedTo,
   });
   try {
+    const jid = await resolveJidWithBrazil(active, to);
+    if (!text && !options.mediaUrl) {
+      return { messageId: "", toJid: jid };
+    }
     const redactedJid = redactIdentifier(jid);
     let mediaBuffer: Buffer | undefined;
     let mediaType: string | undefined;
@@ -172,7 +196,7 @@ export async function sendPollWhatsApp(
     to: redactedTo,
   });
   try {
-    const jid = toWhatsappJid(to);
+    const jid = await resolveJidWithBrazil(active, to);
     const redactedJid = redactIdentifier(jid);
     const normalized = normalizePollInput(poll, { maxOptions: 12 });
     outboundLog.info(`Sending poll -> ${redactedJid}`);

@@ -15,6 +15,7 @@ export type MemoryQmdConfig = {
   mcporter?: MemoryQmdMcporterConfig;
   searchMode?: MemoryQmdSearchMode;
   includeDefaultMemory?: boolean;
+  maxOutputChars?: number;
   paths?: MemoryQmdIndexPath[];
   sessions?: MemoryQmdSessionConfig;
   update?: MemoryQmdUpdateConfig;

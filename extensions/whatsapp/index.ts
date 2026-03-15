@@ -11,6 +11,7 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     setWhatsAppRuntime(api.runtime);
     api.registerChannel({ plugin: whatsappPlugin });
+    // [FORK-PATCH-12] WA Login Tool Dedup — whatsapp_login is provided by core OpenClaw.
   },
 };
 

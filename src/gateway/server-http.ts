@@ -57,6 +57,7 @@ import { getBearerToken } from "./http-utils.js";
 import { resolveRequestClientIp } from "./net.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
 import { handleOpenResponsesHttpRequest } from "./openresponses-http.js";
+import { handleSseStream } from "./server-sse.js";
 import { DEDUPE_MAX, DEDUPE_TTL_MS } from "./server-constants.js";
 import {
   authorizeCanvasRequest,
@@ -787,8 +788,84 @@ export function createGatewayHttpServer(opts: {
         : null;
       const requestStages: GatewayHttpRequestStage[] = [
         {
+          name: "sse-stream",
+          run: () => handleSseStream(req, res),
+        },
+        {
           name: "hooks",
           run: () => handleHooksRequest(req, res),
+        },
+        {
+          name: "media",
+          run: async () => {
+            if (req.method !== "GET" || !requestPath.startsWith("/media/")) {
+              return false;
+            }
+            res.setHeader("Access-Control-Allow-Origin", "*");
+            res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+            res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
+            res.setHeader("Vary", "Origin");
+            const filename = requestPath.slice("/media/".length);
+            if (!filename || !/^[\w.-]+$/.test(filename)) {
+              res.statusCode = 404;
+              res.end("Not Found");
+              return true;
+            }
+            const fsMod = await import("node:fs");
+            const pathMod = await import("node:path");
+            const osMod = await import("node:os");
+            const ext = pathMod.extname(filename).toLowerCase();
+            const mimeMap: Record<string, string> = {
+              ".mp3": "audio/mpeg",
+              ".ogg": "audio/ogg",
+              ".opus": "audio/opus",
+              ".wav": "audio/wav",
+              ".webm": "audio/webm",
+              ".png": "image/png",
+              ".jpg": "image/jpeg",
+              ".jpeg": "image/jpeg",
+              ".gif": "image/gif",
+              ".webp": "image/webp",
+            };
+            const candidatePaths: string[] = [];
+            const ttsBaseDir = pathMod.join(osMod.tmpdir(), "openclaw");
+            try {
+              const entries = fsMod.readdirSync(ttsBaseDir);
+              for (const entry of entries) {
+                if (entry.startsWith("tts-")) {
+                  candidatePaths.push(pathMod.join(ttsBaseDir, entry, filename));
+                }
+              }
+            } catch {
+              // ignore
+            }
+            candidatePaths.push(pathMod.join(osMod.homedir(), ".openclaw", "media", filename));
+            candidatePaths.push(
+              pathMod.join(osMod.homedir(), ".openclaw", "media", "inbound", filename),
+            );
+            candidatePaths.push(pathMod.join("/root/clawd", filename));
+            for (const filePath of candidatePaths) {
+              try {
+                if (!fsMod.existsSync(filePath)) {
+                  continue;
+                }
+                const stat = fsMod.statSync(filePath);
+                if (!stat.isFile()) {
+                  continue;
+                }
+                res.setHeader("Content-Type", mimeMap[ext] ?? "application/octet-stream");
+                res.setHeader("Content-Length", stat.size);
+                res.setHeader("Cache-Control", "public, max-age=86400");
+                fsMod.createReadStream(filePath).pipe(res);
+                return true;
+              } catch {
+                // keep scanning candidate paths
+              }
+            }
+            res.statusCode = 404;
+            res.end("Not Found");
+            return true;
+          },
         },
         {
           name: "tools-invoke",

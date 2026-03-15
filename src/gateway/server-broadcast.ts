@@ -1,6 +1,23 @@
+import { EventEmitter } from "node:events";
 import { MAX_BUFFERED_BYTES } from "./server-constants.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 import { logWs, shouldLogWs, summarizeAgentEventForWsLog } from "./ws-log.js";
+
+const GATEWAY_EVENT_BUS_KEY = "__openclaw_gatewayEventBus__";
+
+function getGatewayEventBus() {
+  const globalState = globalThis as typeof globalThis & {
+    [GATEWAY_EVENT_BUS_KEY]?: EventEmitter;
+  };
+  if (!globalState[GATEWAY_EVENT_BUS_KEY]) {
+    globalState[GATEWAY_EVENT_BUS_KEY] = new EventEmitter();
+    globalState[GATEWAY_EVENT_BUS_KEY].setMaxListeners(100);
+  }
+  return globalState[GATEWAY_EVENT_BUS_KEY];
+}
+
+// [FORK-PATCH-31] SSE EventBus Singleton — globalThis-backed event bus survives bundler chunk duplication.
+export const gatewayEventBus = getGatewayEventBus();
 
 const ADMIN_SCOPE = "operator.admin";
 const APPROVALS_SCOPE = "operator.approvals";
@@ -63,6 +80,9 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
     opts?: GatewayBroadcastOpts,
     targetConnIds?: ReadonlySet<string>,
   ) => {
+    if (!targetConnIds) {
+      gatewayEventBus.emit(event, payload);
+    }
     if (params.clients.size === 0) {
       return;
     }

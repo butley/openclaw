@@ -150,6 +150,7 @@ type PromptBuildHookRunner = {
 
 const SESSIONS_YIELD_INTERRUPT_CUSTOM_TYPE = "openclaw.sessions_yield_interrupt";
 const SESSIONS_YIELD_CONTEXT_CUSTOM_TYPE = "openclaw.sessions_yield";
+const reasoningDebugEnabled = process.env.OPENCLAW_DEBUG_REASONING === "1";
 
 // Persist a hidden context reminder so the next turn knows why the runner stopped.
 function buildSessionsYieldContextMessage(message: string): string {
@@ -1826,7 +1827,11 @@ export async function runEmbeddedAttempt(
         agentDir,
         authStorage: params.authStorage,
         modelRegistry: params.modelRegistry,
-        model: params.model,
+        // [FORK-PATCH-6] Model Reasoning Override — Anthropic catalog may report reasoning=false.
+        model:
+          params.model.api === "anthropic-messages" && !params.model.reasoning
+            ? { ...params.model, reasoning: true }
+            : params.model,
         thinkingLevel: mapThinkingLevel(params.thinkLevel),
         tools: builtInTools,
         customTools: allCustomTools,
@@ -1902,6 +1907,12 @@ export async function runEmbeddedAttempt(
       } else {
         // Force a stable streamFn reference so vitest can reliably mock @mariozechner/pi-ai.
         activeSession.agent.streamFn = streamSimple;
+      }
+
+      if (reasoningDebugEnabled) {
+        log.info(
+          `[reasoning:agent] runId=${params.runId} provider=${params.provider} model=${params.modelId} api=${params.model.api} modelReasoning=${String(activeSession.agent.state.model?.reasoning)} thinkingLevel=${activeSession.agent.state.thinkingLevel} transport=${activeSession.agent.transport}`,
+        );
       }
 
       // Ollama with OpenAI-compatible API needs num_ctx in payload.options.
@@ -2058,6 +2069,34 @@ export async function runEmbeddedAttempt(
         activeSession.agent.streamFn = anthropicPayloadLogger.wrapStreamFn(
           activeSession.agent.streamFn,
         );
+      }
+
+      if (reasoningDebugEnabled) {
+        const wrappedStreamFn = activeSession.agent.streamFn;
+        activeSession.agent.streamFn = (model, context, options) => {
+          log.info(
+            `[reasoning:streamfn] runId=${params.runId} provider=${model.provider} model=${model.id} api=${model.api} modelReasoning=${String(model.reasoning)} optionReasoning=${String(options?.reasoning)} transport=${String(options?.transport ?? "default")}`,
+          );
+          return wrappedStreamFn(model, context, {
+            ...options,
+            onPayload: (payload, payloadModel) => {
+              if (payload && typeof payload === "object") {
+                const payloadObj = payload as Record<string, unknown>;
+                const thinking = payloadObj.thinking;
+                const outputConfig = payloadObj.output_config;
+                const reasoning = payloadObj.reasoning;
+                log.info(
+                  `[reasoning:payload] runId=${params.runId} provider=${payloadModel.provider} model=${payloadModel.id} api=${payloadModel.api} optionReasoning=${String(options?.reasoning)} hasThinking=${thinking !== undefined ? "yes" : "no"} thinkingType=${typeof thinking === "object" && thinking ? String((thinking as { type?: unknown }).type ?? "object") : typeof thinking} hasOutputConfig=${outputConfig !== undefined ? "yes" : "no"} outputEffort=${typeof outputConfig === "object" && outputConfig ? String((outputConfig as { effort?: unknown }).effort ?? "none") : "none"} hasReasoning=${reasoning !== undefined ? "yes" : "no"}`,
+                );
+              } else {
+                log.info(
+                  `[reasoning:payload] runId=${params.runId} provider=${payloadModel.provider} model=${payloadModel.id} api=${payloadModel.api} optionReasoning=${String(options?.reasoning)} payloadType=${typeof payload}`,
+                );
+              }
+              return options?.onPayload?.(payload, payloadModel);
+            },
+          });
+        };
       }
 
       try {

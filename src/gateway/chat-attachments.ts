@@ -12,6 +12,14 @@ export type ChatImageContent = {
   type: "image";
   data: string;
   mimeType: string;
+  mediaUrl?: string;
+};
+
+export type ChatAudioAttachment = {
+  label: string;
+  fileName?: string;
+  mimeType: string;
+  data: string;
 };
 
 export type ParsedMessageWithImages = {
@@ -39,6 +47,10 @@ function normalizeMime(mime?: string): string | undefined {
 
 function isImageMime(mime?: string): boolean {
   return typeof mime === "string" && mime.startsWith("image/");
+}
+
+function isAudioMime(mime?: string): boolean {
+  return typeof mime === "string" && mime.startsWith("audio/");
 }
 
 function isValidBase64(value: string): boolean {
@@ -142,6 +154,52 @@ export async function parseMessageWithAttachments(
   }
 
   return { message, images };
+}
+
+export async function extractAudioAttachments(
+  attachments: ChatAttachment[] | undefined,
+  opts?: { maxBytes?: number; log?: AttachmentLog },
+): Promise<ChatAudioAttachment[]> {
+  const maxBytes = opts?.maxBytes ?? 20_000_000;
+  const log = opts?.log;
+  if (!attachments || attachments.length === 0) {
+    return [];
+  }
+  const audio: ChatAudioAttachment[] = [];
+  for (const [idx, att] of attachments.entries()) {
+    if (!att) {
+      continue;
+    }
+    const normalized = normalizeAttachment(att, idx, {
+      stripDataUrlPrefix: true,
+      requireImageMime: false,
+    });
+    validateAttachmentBase64OrThrow(normalized, { maxBytes });
+    const { base64: b64, label, mime } = normalized;
+    const providedMime = normalizeMime(mime);
+    const sniffedMime = normalizeMime(await sniffMimeFromBase64(b64));
+    const isAudioVideoAlias =
+      providedMime &&
+      isAudioMime(providedMime) &&
+      sniffedMime &&
+      sniffedMime.replace("video/", "audio/") === providedMime;
+    const finalMime = isAudioVideoAlias ? providedMime : (sniffedMime ?? providedMime);
+    if (!finalMime || !isAudioMime(finalMime)) {
+      continue;
+    }
+    if (sniffedMime && providedMime && sniffedMime !== providedMime && !isAudioVideoAlias) {
+      log?.warn(
+        `attachment ${label}: mime mismatch (${providedMime} -> ${sniffedMime}), using sniffed`,
+      );
+    }
+    audio.push({
+      label,
+      fileName: att.fileName,
+      mimeType: finalMime,
+      data: b64,
+    });
+  }
+  return audio;
 }
 
 /**

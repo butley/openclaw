@@ -24,6 +24,7 @@ import { hasNonzeroUsage, normalizeUsage, type UsageLike } from "./usage.js";
 const THINKING_TAG_SCAN_RE = /<\s*(\/?)\s*(?:think(?:ing)?|thought|antthinking)\s*>/gi;
 const FINAL_TAG_SCAN_RE = /<\s*(\/?)\s*final\s*>/gi;
 const log = createSubsystemLogger("agent/embedded");
+const reasoningDebugEnabled = process.env.OPENCLAW_DEBUG_REASONING === "1";
 
 export type {
   BlockReplyChunking,
@@ -45,7 +46,8 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     reasoningMode,
     includeReasoning: reasoningMode === "on",
     shouldEmitPartialReplies: !(reasoningMode === "on" && !params.onBlockReply),
-    streamReasoning: reasoningMode === "stream" && typeof params.onReasoningStream === "function",
+    // [FORK-PATCH-15] Webchat Thinking Stream — always stream reasoning for WS/SSE consumers.
+    streamReasoning: true,
     deltaBuffer: "",
     blockBuffer: "",
     // Track if a streamed chunk opened a <think> block (stateful across chunks).
@@ -554,7 +556,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   };
 
   const emitReasoningStream = (text: string) => {
-    if (!state.streamReasoning || !params.onReasoningStream) {
+    if (!state.streamReasoning) {
       return;
     }
     const formatted = formatReasoningMessage(text);
@@ -569,6 +571,14 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     const prior = state.lastStreamedReasoning ?? "";
     const delta = formatted.startsWith(prior) ? formatted.slice(prior.length) : formatted;
     state.lastStreamedReasoning = formatted;
+    const rawPrior = state.lastReasoningSent ?? "";
+    const rawDelta = text.startsWith(rawPrior) ? text.slice(rawPrior.length) : text;
+    state.lastReasoningSent = text;
+    if (reasoningDebugEnabled) {
+      log.info(
+        `[reasoning:emit] runId=${params.runId} mode=${reasoningMode} rawLen=${text.length} rawDeltaLen=${rawDelta.length} formattedLen=${formatted.length} formattedDeltaLen=${delta.length} callback=${typeof params.onReasoningStream === "function"}`,
+      );
+    }
 
     // Broadcast thinking event to WebSocket clients in real-time
     emitAgentEvent({
@@ -577,12 +587,16 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       data: {
         text: formatted,
         delta,
+        rawText: text,
+        rawDelta,
       },
     });
 
-    void params.onReasoningStream({
-      text: formatted,
-    });
+    if (params.onReasoningStream) {
+      void params.onReasoningStream({
+        text: formatted,
+      });
+    }
   };
 
   const resetForCompactionRetry = () => {

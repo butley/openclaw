@@ -181,6 +181,8 @@ export const formatContextUsageShort = (
   contextTokens: number | null | undefined,
 ) => `Context ${formatTokens(total, contextTokens ?? null)}`;
 
+const padLabel = (value: string) => value.padEnd(11);
+
 const formatQueueDetails = (queue?: QueueStatus) => {
   if (!queue) {
     return "";
@@ -548,7 +550,13 @@ export function buildStatusMessage(args: StatusArgs): string {
   const queueMode = args.queue?.mode ?? "unknown";
   const queueDetails = formatQueueDetails(args.queue);
   const verboseLabel =
-    verboseLevel === "full" ? "verbose:full" : verboseLevel === "on" ? "verbose" : null;
+    verboseLevel === "full"
+      ? "verbose:full"
+      : verboseLevel === "on"
+        ? "verbose"
+        : verboseLevel === "light"
+          ? "verbose:light"
+          : null;
   const elevatedLabel =
     elevatedLevel && elevatedLevel !== "off"
       ? elevatedLevel === "on"
@@ -651,15 +659,13 @@ export function buildStatusMessage(args: StatusArgs): string {
     return "channel override";
   })();
   const modelNote = channelModelNote ? ` · ${channelModelNote}` : "";
-  const modelLine = `🧠 Model: ${selectedModelLabel}${selectedAuthLabel}${modelNote}`;
+  const _modelLine = `🧠 Model: ${selectedModelLabel}${selectedAuthLabel}${modelNote}`;
   const showFallbackAuth = activeAuthLabelValue && activeAuthLabelValue !== selectedAuthLabelValue;
-  const fallbackLine = fallbackState.active
+  const _fallbackLine = fallbackState.active
     ? `↪️ Fallback: ${activeModelLabel}${
         showFallbackAuth ? ` · 🔑 ${activeAuthLabelValue}` : ""
       } (${fallbackState.reason ?? "selected model unavailable"})`
     : null;
-  const commit = resolveCommitHash({ moduleUrl: import.meta.url });
-  const versionLine = `🦞 OpenClaw ${VERSION}${commit ? ` (${commit})` : ""}`;
   const usagePair = formatUsagePair(inputTokens, outputTokens);
   const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
   const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
@@ -668,24 +674,77 @@ export function buildStatusMessage(args: StatusArgs): string {
   const mediaLine = formatMediaUnderstandingLine(args.mediaDecisions);
   const voiceLine = formatVoiceModeLine(args.config, args.sessionEntry);
 
-  return [
-    versionLine,
-    args.timeLine,
-    modelLine,
-    fallbackLine,
-    usageCostLine,
-    cacheLine,
-    `📚 ${contextLine}`,
-    mediaLine,
-    args.usageLine,
-    `🧵 ${sessionLine}`,
-    args.subagentsLine,
-    `⚙️ ${optionsLine}`,
-    voiceLine,
-    activationLine,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  // [FORK-PATCH-8] Status Card Redesign — preserve fork-specific aligned card
+  // layout while keeping newer runtime fields from upstream in optionsLine.
+  const commit = resolveCommitHash({ moduleUrl: import.meta.url });
+  const title = `*OpenClaw* \`${VERSION}${commit ? ` (${commit})` : ""}\``;
+
+  const providerLabel = (() => {
+    const raw = selectedAuthLabelValue ?? selectedProvider;
+    const match = raw?.match(/\(([^)]+)\)/);
+    return match ? match[1] : raw;
+  })();
+
+  const rows: string[] = [];
+  rows.push(`◈ ${padLabel("Model")}${selectedModelLabel}`);
+  rows.push(`∴ ${padLabel("Key")}${providerLabel}`);
+
+  if (fallbackState.active) {
+    rows.push(
+      `↩ ${padLabel("Fallback")}${activeModelLabel} (${fallbackState.reason ?? "unavailable"})`,
+    );
+  }
+
+  if (usageCostLine) {
+    const cleanUsage = usageCostLine
+      .replace(/🧮\s*Tokens:\s*/u, "")
+      .replace(/💵\s*Cost:\s*/u, "cost: ");
+    rows.push(`↕ ${padLabel("Tokens")}${cleanUsage}`);
+  }
+
+  if (cacheLine) {
+    const cleanCache = cacheLine.replace(/🗄️\s*Cache:\s*/u, "");
+    rows.push(`≡ ${padLabel("Cache")}${cleanCache}`);
+  }
+
+  const cleanContext = contextLine
+    .replace(/^Context:\s*/, "")
+    .replace(/🧹\s*Compactions/, "compactions");
+  rows.push(`▰ ${padLabel("Context")}${cleanContext}`);
+
+  if (mediaLine) {
+    rows.push(`◇ ${padLabel("Media")}${mediaLine.replace(/^[^\w]*/u, "")}`);
+  }
+
+  const shortSession = (args.sessionKey ?? "unknown")
+    .replace(/^agent:main:/, "")
+    .replace(/(group:\d{6})\d+@g\.us/, "$1…");
+  rows.push(`► ${padLabel("Session")}${shortSession}`);
+
+  if (args.subagentsLine) {
+    rows.push(`⊞ ${padLabel("Subs")}${args.subagentsLine.replace(/^[^\w]*/u, "")}`);
+  }
+
+  const cleanOptions = optionsLine.replace(/^Runtime:\s*/, "");
+  rows.push(`△ ${padLabel("Runtime")}${cleanOptions}`);
+
+  if (voiceLine) {
+    rows.push(`♫ ${padLabel("Voice")}${voiceLine.replace(/🔊\s*Voice:\s*/u, "")}`);
+  }
+
+  if (groupActivationValue) {
+    rows.push(`⊕ ${padLabel("Activation")}${groupActivationValue}`);
+  }
+  rows.push(`⌂ ${padLabel("Queue")}${queueMode}${queueDetails}`);
+
+  const parts: string[] = [title];
+  if (args.timeLine) {
+    parts.push(args.timeLine.replace(/🕒\s*Time:\s*/u, ""));
+  }
+  parts.push("```");
+  parts.push(...rows);
+  parts[parts.length - 1] += "```";
+  return parts.join("\n");
 }
 
 const CATEGORY_LABELS: Record<CommandCategory, string> = {
@@ -731,7 +790,7 @@ export function buildHelpMessage(cfg?: OpenClawConfig): string {
   lines.push("  /new  |  /reset  |  /compact [instructions]  |  /stop");
   lines.push("");
 
-  const optionParts = ["/think <level>", "/model <id>", "/fast on|off", "/verbose on|off"];
+  const optionParts = ["/think <level>", "/model <id>", "/fast on|off", "/verbose off|light|on|full"];
   if (isCommandFlagEnabled(cfg, "config")) {
     optionParts.push("/config");
   }

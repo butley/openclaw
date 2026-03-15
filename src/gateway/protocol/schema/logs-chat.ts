@@ -37,6 +37,9 @@ export const ChatSendParamsSchema = Type.Object(
     message: Type.String(),
     thinking: Type.Optional(Type.String()),
     deliver: Type.Optional(Type.Boolean()),
+    // [FORK-PATCH-4] Chat Mirror — allow webchat/dashboard clients to request
+    // mirrored delivery back to the session's original channel (e.g. WhatsApp).
+    mirror: Type.Optional(Type.Boolean()),
     attachments: Type.Optional(Type.Array(Type.Unknown())),
     timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })),
     systemInputProvenance: Type.Optional(InputProvenanceSchema),

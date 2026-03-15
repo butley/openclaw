@@ -7,6 +7,8 @@ import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
 import { loadSessionEntry } from "./session-utils.js";
+// [FORK-PATCH-4] Chat Mirror — static import for WA delivery.
+import { sendMessageWhatsApp } from "../web/outbound.js";
 import { formatForLog } from "./ws-log.js";
 const log = createSubsystemLogger("gateway/server-chat");
 const reasoningDebugEnabled = process.env.OPENCLAW_DEBUG_REASONING === "1";
@@ -494,6 +496,7 @@ export function createAgentEventHandler({
       // [FORK-PATCH-4] Chat Mirror — re-deliver final reply to the session's
       // original channel (e.g. WhatsApp) when the run was initiated from webchat.
       const runContext = getAgentRunContext(clientRunId);
+      console.log(`[mirror:debug] clientRunId=${clientRunId} mirror=${runContext?.mirror} textLen=${text?.length ?? 0} sessionKey=${sessionKey}`);
       if (runContext?.mirror && text) {
         try {
           const keyParts = sessionKey.split(":").filter(Boolean);
@@ -502,11 +505,9 @@ export function createAgentEventHandler({
             const channel = keyParts[2];
             const peerId = keyParts.slice(4).join(":");
             if (channel === "whatsapp" && peerId) {
-              void import("../web/outbound.js").then(({ sendMessageWhatsApp }) => {
-                sendMessageWhatsApp(peerId, text, { verbose: false })
-                  .then(() => console.log(`[mirror] sent to ${channel}:${peerId}`))
-                  .catch((err: unknown) => console.warn(`[mirror] failed: ${String(err)}`));
-              });
+              sendMessageWhatsApp(peerId, text, { verbose: false })
+                .then(() => console.log(`[mirror] sent to ${channel}:${peerId}`))
+                .catch((err: unknown) => console.warn(`[mirror] failed: ${String(err)}`));
             }
           }
         } catch (mirrorErr) {
@@ -549,6 +550,9 @@ export function createAgentEventHandler({
   };
 
   return (evt: AgentEventPayload) => {
+    if (evt.stream === "lifecycle") {
+      console.log(`[mirror:lifecycle] runId=${evt.runId} phase=${evt.data?.phase} session=${evt.sessionKey}`);
+    }
     const chatLink = chatRunState.registry.peek(evt.runId);
     const eventSessionKey =
       typeof evt.sessionKey === "string" && evt.sessionKey.trim() ? evt.sessionKey : undefined;

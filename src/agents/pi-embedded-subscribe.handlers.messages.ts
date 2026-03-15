@@ -18,6 +18,8 @@ import {
   promoteThinkingTagsToBlocks,
 } from "./pi-embedded-utils.js";
 
+const reasoningDebugEnabled = process.env.OPENCLAW_DEBUG_REASONING === "1";
+
 const stripTrailingDirective = (text: string): string => {
   const openIndex = text.lastIndexOf("[[");
   if (openIndex < 0) {
@@ -95,6 +97,21 @@ export function handleMessageUpdate(
       ? (assistantEvent as Record<string, unknown>)
       : undefined;
   const evtType = typeof assistantRecord?.type === "string" ? assistantRecord.type : "";
+
+  if (reasoningDebugEnabled) {
+    appendRawStream({
+      ts: Date.now(),
+      event: "assistant_message_update_type",
+      runId: ctx.params.runId,
+      sessionId: (ctx.params.session as { id?: string }).id,
+      evtType: evtType || "(missing)",
+      contentTypes: Array.isArray((msg as { content?: unknown }).content)
+        ? ((msg as { content: Array<{ type?: unknown }> }).content
+            .map((item) => (typeof item?.type === "string" ? item.type : typeof item))
+            .join(",") || "(empty)")
+        : typeof (msg as { content?: unknown }).content,
+    });
+  }
 
   if (evtType === "thinking_start" || evtType === "thinking_delta" || evtType === "thinking_end") {
     if (evtType === "thinking_start" || evtType === "thinking_delta") {

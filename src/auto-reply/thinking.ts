@@ -1,5 +1,7 @@
 export type ThinkLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "adaptive";
-export type VerboseLevel = "off" | "on" | "full";
+// [FORK-PATCH-13] Verbose Light — add lightweight tool narration mode and stream directive enum.
+export type VerboseLevel = "off" | "light" | "on" | "full";
+export type StreamLevel = "off" | "fast" | "on" | "slow" | `custom:${number}`;
 export type NoticeLevel = "off" | "on" | "full";
 export type ElevatedLevel = "off" | "on" | "ask" | "full";
 export type ElevatedMode = "off" | "ask" | "full";
@@ -185,7 +187,34 @@ function normalizeOnOffFullLevel(raw?: string | null): OnOffFullLevel | undefine
 
 // Normalize verbose flags used to toggle agent verbosity.
 export function normalizeVerboseLevel(raw?: string | null): VerboseLevel | undefined {
+  if (raw && ["light", "narration", "narrate"].includes(raw.toLowerCase())) {
+    return "light";
+  }
   return normalizeOnOffFullLevel(raw);
+}
+
+export function normalizeStreamLevel(raw?: string | null): StreamLevel | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  const key = raw.toLowerCase();
+  if (["off", "false", "no", "0"].includes(key)) {
+    return "off";
+  }
+  if (["fast", "quick", "rapid"].includes(key)) {
+    return "fast";
+  }
+  if (["slow", "relaxed"].includes(key)) {
+    return "slow";
+  }
+  if (["on", "true", "yes", "1", "normal", "medium", "default"].includes(key)) {
+    return "on";
+  }
+  const num = Number.parseInt(key, 10);
+  if (Number.isFinite(num) && num > 0 && num <= 200) {
+    return `custom:${num}` as StreamLevel;
+  }
+  return undefined;
 }
 
 // Normalize system notice flags used to toggle system notifications.

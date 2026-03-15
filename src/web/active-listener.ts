@@ -9,6 +9,7 @@ export type ActiveWebSendOptions = {
 };
 
 export type ActiveWebListener = {
+  onWhatsApp?: (jid: string) => Promise<Array<{ exists?: boolean; jid?: string }>>;
   sendMessage: (
     to: string,
     text: string,

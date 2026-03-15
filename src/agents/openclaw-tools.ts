@@ -13,6 +13,7 @@ import type { AnyAgentTool } from "./tools/common.js";
 import { createCronTool } from "./tools/cron-tool.js";
 import { createGatewayTool } from "./tools/gateway-tool.js";
 import { createImageTool } from "./tools/image-tool.js";
+import { createImageGenerateTool } from "./tools/image-generate-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
 import { createNodesTool } from "./tools/nodes-tool.js";
 import { createPdfTool } from "./tools/pdf-tool.js";
@@ -120,6 +121,10 @@ export function createOpenClawTools(
     sandboxed: options?.sandboxed,
     runtimeFirecrawl: runtimeWebTools?.fetch.firecrawl,
   });
+  // [FORK-PATCH-20] Image Generate Tool — register the fork-only image generation tool.
+  const imageGenerateTool = createImageGenerateTool({
+    config: options?.config,
+  });
   const messageTool = options?.disableMessageTool
     ? null
     : createMessageTool({
@@ -214,6 +219,7 @@ export function createOpenClawTools(
     ...(webFetchTool ? [webFetchTool] : []),
     ...(imageTool ? [imageTool] : []),
     ...(pdfTool ? [pdfTool] : []),
+    imageGenerateTool,
   ];
 
   const pluginTools = resolvePluginTools({
