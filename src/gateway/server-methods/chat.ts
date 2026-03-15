@@ -1088,6 +1088,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       }
     }
     const verboseLevel = entry?.verboseLevel ?? cfg.agents?.defaults?.verboseDefault;
+    console.log(`[chat.send] thinkingLevel=${thinkingLevel} entry.thinkingLevel=${entry?.thinkingLevel} configured=${cfg.agents?.defaults?.thinkingDefault}`);
     respond(true, {
       sessionKey,
       sessionId,
