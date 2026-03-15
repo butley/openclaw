@@ -70,7 +70,11 @@ export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
   const isControlUiVisible = context?.isControlUiVisible ?? true;
   const eventSessionKey =
     typeof event.sessionKey === "string" && event.sessionKey.trim() ? event.sessionKey : undefined;
-  const sessionKey = isControlUiVisible ? (eventSessionKey ?? context?.sessionKey) : undefined;
+  // [FORK-PATCH-16] Always propagate sessionKey — upstream strips it when isControlUiVisible=false,
+  // but our SSE endpoint needs sessionKey to match events to subscribers. Without it, all tool
+  // events and chat deltas from WA-originated runs arrive with sessionKey=undefined and get
+  // dropped by SSE session filters.
+  const sessionKey = eventSessionKey ?? context?.sessionKey;
   const enriched: AgentEventPayload = {
     ...event,
     sessionKey,
