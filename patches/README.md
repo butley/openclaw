@@ -45,9 +45,9 @@
 | 30 | Chat History Group Context | — | Gateway | `alpha` | `grep -q "chatHistory" src/gateway/server-methods/chat.ts` |
 | 31 | SSE EventBus Singleton | — | Gateway | `alpha` | `grep -q "__openclaw_gatewayEventBus__" src/gateway/server-broadcast.ts` |
 | 32 | SSE Retryable Error Suppression | — | Gateway | `work` | `grep -q "RETRYABLE_LIFECYCLE_ERROR_RE" src/gateway/server-chat.ts` |
-| 33 | Memory Flush Context Priority | — | Agents | `work` | `grep -q "FORK-PATCH-33" src/auto-reply/reply/memory-flush.ts` |
+| ~~33~~ | ~~Memory Flush Context Priority~~ | REVERTED | ~~Agents~~ | — | Superseded by config-level `contextWindow` override |
 | 34 | Session Chain (previousSessionId) | — | Infra | `work` | `grep -q "FORK-PATCH-34" src/config/sessions/types.ts` |
-| 35 | Context1m per-model in all context token callsites | — | Agents | `work` | `grep -q "FORK-PATCH-35" src/agents/context-window-guard.ts src/auto-reply/reply/agent-runner.ts src/auto-reply/reply/followup-runner.ts src/auto-reply/reply/agent-runner-memory.ts` |
+| ~~35~~ | ~~Context1m per-model callsites~~ | REVERTED | ~~Agents~~ | — | Superseded by config-level `contextWindow` override |
 
 
 ## Re-application Order
