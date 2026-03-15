@@ -113,6 +113,7 @@ export function handleMessageUpdate(
       delta: thinkingDelta,
       content: thinkingContent,
     });
+    console.log(`[thinking:guard] streamReasoning=${ctx.state.streamReasoning} delta=${thinkingDelta.length} content=${thinkingContent.length}`);
     if (ctx.state.streamReasoning) {
       // Prefer full partial-message thinking when available; fall back to event payloads.
       const partialThinking = extractAssistantThinking(msg);

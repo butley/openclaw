@@ -1828,9 +1828,13 @@ export async function runEmbeddedAttempt(
         modelRegistry: params.modelRegistry,
         // [FORK-PATCH] Ensure reasoning:true for Anthropic models that support thinking.
         // API discovery may report reasoning:false even though Opus/Sonnet 4.6 support it.
-        model: params.model.api === "anthropic-messages" && !params.model.reasoning
-          ? { ...params.model, reasoning: true }
-          : params.model,
+        model: (() => {
+          const m = params.model.api === "anthropic-messages" && !params.model.reasoning
+            ? { ...params.model, reasoning: true }
+            : params.model;
+          console.log(`[attempt] model=${m.id} api=${m.api} reasoning=${m.reasoning} thinkLevel=${params.thinkLevel} mapped=${mapThinkingLevel(params.thinkLevel)}`);
+          return m;
+        })(),
         thinkingLevel: mapThinkingLevel(params.thinkLevel),
         tools: builtInTools,
         customTools: allCustomTools,

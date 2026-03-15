@@ -90,7 +90,7 @@ export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
     typeof event.sessionKey === "string" && event.sessionKey.trim()
       ? event.sessionKey
       : context?.sessionKey;
-  const enriched: AgentEventPayload = {
+  if (event.stream === "thinking") console.log(`[ae:thinking] sessionKey=${sessionKey ?? "NONE"} runId=${event.runId}`); const enriched: AgentEventPayload = {
     ...event,
     sessionKey,
     seq: nextSeq,
