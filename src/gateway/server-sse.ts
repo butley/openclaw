@@ -169,6 +169,7 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     res.end(JSON.stringify({ error: "sessionKey query param is required" }));
     return true;
   }
+  
 
   // ── SSE headers ──
   // Note: Do NOT include `Connection: keep-alive` — it's a hop-by-hop header
@@ -288,8 +289,7 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     }
     sseEventCount++;
     const payloadSessionKey = (payload as Record<string, unknown>).sessionKey as string | undefined;
-    // DEBUG: log all chat events arriving at SSE
-    console.log(`[sse:debug] chat event: state=${payload.state} session=${payloadSessionKey} runId=${payload.runId} textLen=${payload.message?.content?.[0]?.text?.length ?? 0}`);
+    
     // Exact session match for text deltas — only stream text from the session
     // the SSE subscriber is viewing. Prefix match (agent:main:*) leaks text
     // from other channels (e.g., Slack runs appearing in WA chat UI).
@@ -352,8 +352,7 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       return;
     }
     const agentSessionKey = payload.sessionKey;
-    // DEBUG: log all agent events arriving at SSE
-    console.log(`[sse:debug] agent event: stream=${payload.stream} phase=${payload.data?.phase} session=${agentSessionKey} tool=${payload.data?.tool ?? ''}`);
+    
     // Exact session match — only stream tools/thinking from the session the
     // SSE subscriber is viewing. Prefix match leaked events from other channels
     // (e.g., Slack tool calls appearing in WA chat UI).

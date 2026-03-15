@@ -21,9 +21,28 @@ export type AgentRunContext = {
 };
 
 // Keep per-run counters so streams stay strictly monotonic per runId.
-const seqByRun = new Map<string, number>();
-const listeners = new Set<(evt: AgentEventPayload) => void>();
-const runContextById = new Map<string, AgentRunContext>();
+// [FORK-PATCH-5] globalThis singletons — survive bundler chunk duplication.
+// Same pattern as Patch #31 (SSE EventBus). Without this, emitAgentEvent() in one chunk
+// emits to a different listeners Set than onAgentEvent() registered in another chunk,
+// causing tool events, thinking, and chat deltas to silently vanish.
+const AGENT_EVENTS_KEY = "__openclaw_agentEvents__";
+type AgentEventsState = {
+  seqByRun: Map<string, number>;
+  listeners: Set<(evt: AgentEventPayload) => void>;
+  runContextById: Map<string, AgentRunContext>;
+};
+const existing = (globalThis as Record<string, unknown>)[AGENT_EVENTS_KEY] as AgentEventsState | undefined;
+const state: AgentEventsState = existing ?? {
+  seqByRun: new Map<string, number>(),
+  listeners: new Set<(evt: AgentEventPayload) => void>(),
+  runContextById: new Map<string, AgentRunContext>(),
+};
+if (!existing) {
+  (globalThis as Record<string, unknown>)[AGENT_EVENTS_KEY] = state;
+}
+const seqByRun = state.seqByRun;
+const listeners = state.listeners;
+const runContextById = state.runContextById;
 
 export function registerAgentRunContext(runId: string, context: AgentRunContext) {
   if (!runId) {
