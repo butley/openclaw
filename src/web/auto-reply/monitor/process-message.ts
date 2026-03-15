@@ -33,6 +33,7 @@ import { resolveWhatsAppAccount } from "../../accounts.js";
 import { newConnectionId } from "../../reconnect.js";
 import { formatError } from "../../session.js";
 import { deliverWebReply } from "../deliver-reply.js";
+import { emitInboundMessageEvent } from "../../../infra/inbound-events.js";
 import { whatsappInboundLog, whatsappOutboundLog } from "../loggers.js";
 import type { WebInboundMsg } from "../types.js";
 import { elide } from "../util.js";
@@ -240,6 +241,23 @@ export async function processMessage(params: {
   if (shouldLogVerbose()) {
     whatsappInboundLog.debug(`Inbound body: ${elide(combinedBody, 400)}`);
   }
+
+  // [FORK-PATCH-5] WS Inbound Push — emit inbound message event for WebSocket/SSE broadcast
+  // so the webchat dashboard shows WA messages in real-time.
+  emitInboundMessageEvent({
+    messageId: correlationId,
+    sessionKey: params.route.sessionKey,
+    channel: "whatsapp",
+    accountId: params.route.accountId ?? "",
+    from: params.msg.from ?? "",
+    senderName: params.msg.senderName ?? params.msg.senderE164 ?? "",
+    content: combinedBody,
+    timestamp: Date.now(),
+    chatType: params.msg.chatType === "group" ? "group" : "dm",
+    conversationId: conversationId ?? "",
+    hasMedia: !!params.msg.mediaType,
+    mediaType: params.msg.mediaType,
+  });
 
   const dmRouteTarget =
     params.msg.chatType !== "group"
