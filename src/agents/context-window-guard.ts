@@ -1,5 +1,4 @@
 import type { OpenClawConfig } from "../config/config.js";
-import { resolveContextTokensForModel } from "./context.js";
 
 export const CONTEXT_WINDOW_HARD_MIN_TOKENS = 16_000;
 export const CONTEXT_WINDOW_WARN_BELOW_TOKENS = 32_000;
@@ -42,27 +41,12 @@ export function resolveContextWindowInfo(params: {
       ? { tokens: fromModel, source: "model" as const }
       : { tokens: Math.floor(params.defaultTokens), source: "default" as const };
 
-  // [FORK-PATCH-35] Check context1m per-model BEFORE applying contextTokens cap.
-  // Anthropic models report 200k in API but support 1M with context1m: true opt-in.
-  // resolveContextTokensForModel already handles this — reuse it to expand baseInfo
-  // when the model has context1m enabled in agents.defaults.models config.
-  const context1mTokens = resolveContextTokensForModel({
-    cfg: params.cfg,
-    provider: params.provider,
-    model: params.modelId,
-  });
-  const effectiveInfo =
-    context1mTokens && context1mTokens > baseInfo.tokens
-      ? { tokens: context1mTokens, source: "modelsConfig" as const }
-      : baseInfo;
-
-  // Apply contextTokens as a cap (original upstream behavior).
   const capTokens = normalizePositiveInt(params.cfg?.agents?.defaults?.contextTokens);
-  if (capTokens && capTokens < effectiveInfo.tokens) {
+  if (capTokens && capTokens < baseInfo.tokens) {
     return { tokens: capTokens, source: "agentContextTokens" };
   }
 
-  return effectiveInfo;
+  return baseInfo;
 }
 
 export type ContextWindowGuardResult = ContextWindowInfo & {
