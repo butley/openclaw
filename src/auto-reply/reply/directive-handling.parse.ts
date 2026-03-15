@@ -12,6 +12,7 @@ import type {
 import {
   extractElevatedDirective,
   extractExecDirective,
+  extractFastDirective,
   extractReasoningDirective,
   extractStatusDirective,
   extractThinkDirective,
@@ -33,6 +34,9 @@ export type InlineDirectives = {
   hasStreamDirective: boolean;
   streamLevel?: StreamLevel;
   rawStreamLevel?: string;
+  hasFastDirective: boolean;
+  fastMode?: boolean;
+  rawFastMode?: string;
   hasReasoningDirective: boolean;
   reasoningLevel?: ReasoningLevel;
   rawReasoningLevel?: string;
@@ -97,11 +101,17 @@ export function parseInlineDirectives(
     hasDirective: hasStreamDirective,
   } = extractStreamDirective(verboseCleaned);
   const {
+    cleaned: fastCleaned,
+    fastMode,
+    rawLevel: rawFastMode,
+    hasDirective: hasFastDirective,
+  } = extractFastDirective(streamCleaned);
+  const {
     cleaned: reasoningCleaned,
     reasoningLevel,
     rawLevel: rawReasoningLevel,
     hasDirective: hasReasoningDirective,
-  } = extractReasoningDirective(streamCleaned);
+  } = extractReasoningDirective(fastCleaned);
   const {
     cleaned: elevatedCleaned,
     elevatedLevel,
@@ -170,6 +180,9 @@ export function parseInlineDirectives(
     hasStreamDirective,
     streamLevel,
     rawStreamLevel,
+    hasFastDirective,
+    fastMode,
+    rawFastMode,
     hasReasoningDirective,
     reasoningLevel,
     rawReasoningLevel,
@@ -221,6 +234,7 @@ export function isDirectiveOnly(params: {
     !directives.hasThinkDirective &&
     !directives.hasStreamDirective &&
     !directives.hasVerboseDirective &&
+    !directives.hasFastDirective &&
     !directives.hasReasoningDirective &&
     !directives.hasElevatedDirective &&
     !directives.hasExecDirective &&
