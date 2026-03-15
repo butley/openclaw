@@ -83,6 +83,7 @@ function hasEventScope(client: GatewayWsClient, event: string): boolean {
 
 export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient> }) {
   let seq = 0;
+  let broadcastBusLogged = false;
 
   const broadcastInternal = (
     event: string,
@@ -95,6 +96,10 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
     // even when no WS clients are connected (e.g. WS disconnect while SSE stays open).
     // Targeted broadcasts (broadcastToConnIds) are WS-only and skip the event bus.
     if (!targetConnIds) {
+      const s = (payload as any)?.stream;
+      if (event === "agent" && (s === "tool" || s === "thinking")) {
+        console.log(`[broadcast] ${s} event: phase=${(payload as any)?.data?.phase} listeners=${gatewayEventBus.listenerCount(event)} session=${String((payload as any)?.sessionKey ?? '').substring(0,40)}`);
+      }
       gatewayEventBus.emit(event, payload);
     }
 

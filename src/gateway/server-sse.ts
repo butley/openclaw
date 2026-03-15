@@ -352,6 +352,8 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       return;
     }
     const agentSessionKey = payload.sessionKey;
+    console.log(`[sse:agent] stream=${payload.stream} session=${agentSessionKey?.substring(0,30)} phase=${payload.data?.phase} tool=${payload.data?.tool || payload.data?.name || ''}`);
+
     
     // Exact session match — only stream tools/thinking from the session the
     // SSE subscriber is viewing. Prefix match leaked events from other channels
@@ -457,9 +459,12 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
   };
 
   // ── Subscribe to event bus ──
+  console.log(`[sse] subscribing to gatewayEventBus: agent listeners before=${gatewayEventBus.listenerCount("agent")} busId=${(gatewayEventBus as any).__sseDebugId ?? 'none'}`);
+  (gatewayEventBus as any).__sseDebugId = (gatewayEventBus as any).__sseDebugId ?? Math.random().toString(36).slice(2,8);
   gatewayEventBus.on("chat", onChatEvent);
   gatewayEventBus.on("agent", onAgentEvent);
   gatewayEventBus.on("message.inbound", onInboundMessage);
+  console.log(`[sse] subscribed: agent listeners after=${gatewayEventBus.listenerCount("agent")} busId=${(gatewayEventBus as any).__sseDebugId}`);
 
   return true; // handled
 }

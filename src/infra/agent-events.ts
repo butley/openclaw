@@ -22,35 +22,40 @@ export type AgentRunContext = {
 
 // Keep per-run counters so streams stay strictly monotonic per runId.
 // [FORK-PATCH-5] globalThis singletons — survive bundler chunk duplication.
-// Same pattern as Patch #31 (SSE EventBus). Without this, emitAgentEvent() in one chunk
-// emits to a different listeners Set than onAgentEvent() registered in another chunk,
-// causing tool events, thinking, and chat deltas to silently vanish.
+// Access globalThis[KEY] via getter functions to avoid ESM import hoisting race:
+// when two chunks import this module, both evaluate `const existing = globalThis[KEY]`
+// before either writes to globalThis, causing both to create separate state.
+// By using getters, we always read the LATEST value from globalThis.
 const AGENT_EVENTS_KEY = "__openclaw_agentEvents__";
 type AgentEventsState = {
   seqByRun: Map<string, number>;
   listeners: Set<(evt: AgentEventPayload) => void>;
   runContextById: Map<string, AgentRunContext>;
 };
-const existing = (globalThis as Record<string, unknown>)[AGENT_EVENTS_KEY] as AgentEventsState | undefined;
-const state: AgentEventsState = existing ?? {
-  seqByRun: new Map<string, number>(),
-  listeners: new Set<(evt: AgentEventPayload) => void>(),
-  runContextById: new Map<string, AgentRunContext>(),
-};
-if (!existing) {
-  (globalThis as Record<string, unknown>)[AGENT_EVENTS_KEY] = state;
+function getAgentEventsState(): AgentEventsState {
+  let s = (globalThis as Record<string, unknown>)[AGENT_EVENTS_KEY] as AgentEventsState | undefined;
+  if (!s) {
+    s = {
+      seqByRun: new Map<string, number>(),
+      listeners: new Set<(evt: AgentEventPayload) => void>(),
+      runContextById: new Map<string, AgentRunContext>(),
+    };
+    (globalThis as Record<string, unknown>)[AGENT_EVENTS_KEY] = s;
+  }
+  return s;
 }
-const seqByRun = state.seqByRun;
-const listeners = state.listeners;
-const runContextById = state.runContextById;
+// Lazy accessors — always resolve from globalThis at call time
+const getSeqByRun = () => getAgentEventsState().seqByRun;
+const getListeners = () => getAgentEventsState().listeners;
+const getRunContextById = () => getAgentEventsState().runContextById;
 
 export function registerAgentRunContext(runId: string, context: AgentRunContext) {
   if (!runId) {
     return;
   }
-  const existing = runContextById.get(runId);
+  const existing = getRunContextById().get(runId);
   if (!existing) {
-    runContextById.set(runId, { ...context });
+    getRunContextById().set(runId, { ...context });
     return;
   }
   if (context.sessionKey && existing.sessionKey !== context.sessionKey) {
@@ -71,21 +76,21 @@ export function registerAgentRunContext(runId: string, context: AgentRunContext)
 }
 
 export function getAgentRunContext(runId: string) {
-  return runContextById.get(runId);
+  return getRunContextById().get(runId);
 }
 
 export function clearAgentRunContext(runId: string) {
-  runContextById.delete(runId);
+  getRunContextById().delete(runId);
 }
 
 export function resetAgentRunContextForTest() {
-  runContextById.clear();
+  getRunContextById().clear();
 }
 
 export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
-  const nextSeq = (seqByRun.get(event.runId) ?? 0) + 1;
-  seqByRun.set(event.runId, nextSeq);
-  const context = runContextById.get(event.runId);
+  const nextSeq = (getSeqByRun().get(event.runId) ?? 0) + 1;
+  getSeqByRun().set(event.runId, nextSeq);
+  const context = getRunContextById().get(event.runId);
   const isControlUiVisible = context?.isControlUiVisible ?? true;
   const eventSessionKey =
     typeof event.sessionKey === "string" && event.sessionKey.trim() ? event.sessionKey : undefined;
@@ -100,16 +105,23 @@ export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
     seq: nextSeq,
     ts: Date.now(),
   };
-  for (const listener of listeners) {
+  if (event.stream === "tool" || event.stream === "thinking") {
+    console.log(`[agent-events] emitting ${event.stream}: listeners=${getListeners().size} runId=${event.runId} session=${sessionKey?.substring(0,40)} stateId=${(getAgentEventsState() as any).__debugId ?? 'none'}`);
+    if (!(getAgentEventsState() as any).__debugId) (getAgentEventsState() as any).__debugId = Math.random().toString(36).slice(2,8);
+  }
+  const currentListeners = getListeners();
+  for (const listener of currentListeners) {
     try {
       listener(enriched);
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.error(`[agent-events] listener threw: stream=${event.stream} err=${err instanceof Error ? err.message : String(err)}`);
     }
   }
 }
 
 export function onAgentEvent(listener: (evt: AgentEventPayload) => void) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  getListeners().add(listener);
+  if (!(getAgentEventsState() as any).__debugId) (getAgentEventsState() as any).__debugId = Math.random().toString(36).slice(2,8);
+  console.log(`[agent-events] registered listener: total=${getListeners().size} stateId=${(getAgentEventsState() as any).__debugId}`);
+  return () => getListeners().delete(listener);
 }
