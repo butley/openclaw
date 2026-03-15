@@ -560,6 +560,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       return;
     }
     const formatted = formatReasoningMessage(text);
+    if (text.length > 0) console.log(`[thinking:emit] textLen=${text.length} formattedLen=${formatted?.length ?? 0}`);
     if (!formatted) {
       return;
     }

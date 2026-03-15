@@ -95,6 +95,7 @@ export function handleMessageUpdate(
       ? (assistantEvent as Record<string, unknown>)
       : undefined;
   const evtType = typeof assistantRecord?.type === "string" ? assistantRecord.type : "";
+  if (evtType.includes("thinking")) console.log(`[thinking] evtType=${evtType}`);
 
   if (evtType === "thinking_start" || evtType === "thinking_delta" || evtType === "thinking_end") {
     if (evtType === "thinking_start" || evtType === "thinking_delta") {

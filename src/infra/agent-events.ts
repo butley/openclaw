@@ -19,18 +19,37 @@ export type AgentRunContext = {
   isControlUiVisible?: boolean;
 };
 
-// Keep per-run counters so streams stay strictly monotonic per runId.
-const seqByRun = new Map<string, number>();
-const listeners = new Set<(evt: AgentEventPayload) => void>();
-const runContextById = new Map<string, AgentRunContext>();
+// [FORK-PATCH] Lazy globalThis singleton — survive bundler chunk duplication.
+// Without this, registerAgentRunContext in one chunk writes to a different Map
+// than emitAgentEvent reads from in another chunk → thinking events lose sessionKey.
+const AGENT_EVENTS_KEY = "__openclaw_agentEvents__" as const;
+type AgentEventsState = {
+  seqByRun: Map<string, number>;
+  listeners: Set<(evt: AgentEventPayload) => void>;
+  runContextById: Map<string, AgentRunContext>;
+};
+function getState(): AgentEventsState {
+  const g = globalThis as Record<string, unknown>;
+  let s = g[AGENT_EVENTS_KEY] as AgentEventsState | undefined;
+  if (!s) {
+    s = {
+      seqByRun: new Map(),
+      listeners: new Set(),
+      runContextById: new Map(),
+    };
+    g[AGENT_EVENTS_KEY] = s;
+  }
+  return s;
+}
 
 export function registerAgentRunContext(runId: string, context: AgentRunContext) {
   if (!runId) {
     return;
   }
-  const existing = runContextById.get(runId);
+  const map = getState().runContextById;
+  const existing = map.get(runId);
   if (!existing) {
-    runContextById.set(runId, { ...context });
+    map.set(runId, { ...context });
     return;
   }
   if (context.sessionKey && existing.sessionKey !== context.sessionKey) {
@@ -51,21 +70,22 @@ export function registerAgentRunContext(runId: string, context: AgentRunContext)
 }
 
 export function getAgentRunContext(runId: string) {
-  return runContextById.get(runId);
+  return getState().runContextById.get(runId);
 }
 
 export function clearAgentRunContext(runId: string) {
-  runContextById.delete(runId);
+  getState().runContextById.delete(runId);
 }
 
 export function resetAgentRunContextForTest() {
-  runContextById.clear();
+  getState().runContextById.clear();
 }
 
 export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
-  const nextSeq = (seqByRun.get(event.runId) ?? 0) + 1;
-  seqByRun.set(event.runId, nextSeq);
-  const context = runContextById.get(event.runId);
+  const state = getState();
+  const nextSeq = (state.seqByRun.get(event.runId) ?? 0) + 1;
+  state.seqByRun.set(event.runId, nextSeq);
+  const context = state.runContextById.get(event.runId);
   const sessionKey =
     typeof event.sessionKey === "string" && event.sessionKey.trim()
       ? event.sessionKey
@@ -76,7 +96,8 @@ export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
     seq: nextSeq,
     ts: Date.now(),
   };
-  for (const listener of listeners) {
+  const currentListeners = state.listeners;
+  for (const listener of currentListeners) {
     try {
       listener(enriched);
     } catch {
@@ -86,6 +107,6 @@ export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
 }
 
 export function onAgentEvent(listener: (evt: AgentEventPayload) => void) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  getState().listeners.add(listener);
+  return () => getState().listeners.delete(listener);
 }
