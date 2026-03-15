@@ -1,0 +1,14 @@
+import "./tts-core-CYHgjKkM.js";
+import "./utils-FKnHtVac.js";
+import "./paths-Dmn791zP.js";
+import "./logger-BxQoHGVb.js";
+import "./fetch-TN5GkqVm.js";
+import "./query-expansion-DreZMgcy.js";
+import "./github-copilot-token-DMvRH42f.js";
+import { t as sendMessageWhatsApp } from "./outbound-C8-ogLpc.js";
+import "./brazil-jid-resolver-CUUBpgW2.js";
+import "./session-DjS9w5Pi.js";
+import "./send-api-D3guwuhA.js";
+import "./login-BqXB1CBB.js";
+import "./web-DBLcGjIb.js";
+export { sendMessageWhatsApp };

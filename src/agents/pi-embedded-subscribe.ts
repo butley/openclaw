@@ -80,6 +80,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     pendingMessagingTargets: new Map(),
     successfulCronAdds: 0,
     pendingMessagingMediaUrls: new Map(),
+    deterministicApprovalPromptSent: false,
   };
   const usageTotals = {
     input: 0,
@@ -102,6 +103,18 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   const pendingMessagingTargets = state.pendingMessagingTargets;
   const replyDirectiveAccumulator = createStreamingDirectiveAccumulator();
   const partialReplyDirectiveAccumulator = createStreamingDirectiveAccumulator();
+  const emitBlockReplySafely = (
+    payload: Parameters<NonNullable<SubscribeEmbeddedPiSessionParams["onBlockReply"]>>[0],
+  ) => {
+    if (!params.onBlockReply) {
+      return;
+    }
+    void Promise.resolve()
+      .then(() => params.onBlockReply?.(payload))
+      .catch((err) => {
+        log.warn(`block reply callback failed: ${String(err)}`);
+      });
+  };
 
   const resetAssistantMessageState = (nextAssistantTextBaseline: number) => {
     state.deltaBuffer = "";
@@ -363,10 +376,12 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     // Enrich tool narrations with result context.
     if (name === "edit") {
       try {
-        const a = (args && typeof args === "object") ? args as Record<string, unknown> : null;
+        const a = args && typeof args === "object" ? (args as Record<string, unknown>) : null;
         if (a) {
-          const oldStr = String(a.old_string || a.oldText || "");
-          const newStr = String(a.new_string || a.newText || "");
+          const rawOld = a.old_string ?? a.oldText ?? "";
+          const rawNew = a.new_string ?? a.newText ?? "";
+          const oldStr = typeof rawOld === "string" ? rawOld : JSON.stringify(rawOld);
+          const newStr = typeof rawNew === "string" ? rawNew : JSON.stringify(rawNew);
           if (oldStr || newStr) {
             const oldLines = oldStr ? oldStr.split("\n").length : 0;
             const newLines = newStr ? newStr.split("\n").length : 0;
@@ -376,12 +391,20 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
             const charStr = charDiff >= 0 ? `+${charDiff}` : `${charDiff}`;
             // Only show diff if something actually changed
             const parts: string[] = [];
-            if (added || removed) {parts.push(`+${added}/-${removed} lines`);}
-            if (charDiff !== 0) {parts.push(`${charStr} chars`);}
-            if (parts.length) {resultInfo = " " + parts.join(", ");}
+            if (added || removed) {
+              parts.push(`+${added}/-${removed} lines`);
+            }
+            if (charDiff !== 0) {
+              parts.push(`${charStr} chars`);
+            }
+            if (parts.length) {
+              resultInfo = " " + parts.join(", ");
+            }
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     } else if (name === "web_search") {
       try {
         // Result is { content: [{ type: "text", text: "<json>" }] } — extract text then parse
@@ -390,25 +413,40 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
           const r = result as Record<string, unknown>;
           const content = Array.isArray(r.content) ? r.content : null;
           if (content) {
-            const textBlock = content.find((c: unknown) => c && typeof c === "object" && (c as Record<string, unknown>).type === "text");
+            const textBlock = content.find(
+              (c: unknown) =>
+                c && typeof c === "object" && (c as Record<string, unknown>).type === "text",
+            );
             if (textBlock) {
               const t = (textBlock as Record<string, unknown>).text;
               if (typeof t === "string") {
-                try { parsed = JSON.parse(t); } catch { /* not JSON */ }
+                try {
+                  parsed = JSON.parse(t);
+                } catch {
+                  /* not JSON */
+                }
               }
             }
           }
-          if (!parsed) {parsed = r;}
+          if (!parsed) {
+            parsed = r;
+          }
         } else if (typeof result === "string") {
           parsed = JSON.parse(result);
         }
         if (parsed) {
-          const results = Array.isArray(parsed.results) ? parsed.results : Array.isArray(parsed.web) ? parsed.web : null;
+          const results = Array.isArray(parsed.results)
+            ? parsed.results
+            : Array.isArray(parsed.web)
+              ? parsed.web
+              : null;
           if (results) {
             resultInfo = ` → ${results.length} result${results.length !== 1 ? "s" : ""}`;
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     } else if (name === "memory_search") {
       try {
         // Result may be wrapped in { content: [{ type: "text", text: "<json>" }] }
@@ -417,25 +455,40 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
           const r = result as Record<string, unknown>;
           const content = Array.isArray(r.content) ? r.content : null;
           if (content) {
-            const textBlock = content.find((c: unknown) => c && typeof c === "object" && (c as Record<string, unknown>).type === "text");
+            const textBlock = content.find(
+              (c: unknown) =>
+                c && typeof c === "object" && (c as Record<string, unknown>).type === "text",
+            );
             if (textBlock) {
               const t = (textBlock as Record<string, unknown>).text;
               if (typeof t === "string") {
-                try { parsed = JSON.parse(t); } catch { /* not JSON */ }
+                try {
+                  parsed = JSON.parse(t);
+                } catch {
+                  /* not JSON */
+                }
               }
             }
           }
-          if (!parsed) {parsed = r;}
+          if (!parsed) {
+            parsed = r;
+          }
         } else if (typeof result === "string") {
-          try { parsed = JSON.parse(result); } catch { /* ignore */ }
+          try {
+            parsed = JSON.parse(result);
+          } catch {
+            /* ignore */
+          }
         }
         if (parsed) {
-          const provider = String(parsed.provider ?? "local");
+          const provider = typeof parsed.provider === "string" ? parsed.provider : "local";
           const results = parsed.results;
           const count = Array.isArray(results) ? results.length : 0;
           resultInfo = ` [${provider}] → ${count} result${count !== 1 ? "s" : ""}`;
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
     const suffix = [error, resultInfo, duration].filter(Boolean).join("");
     emitToolResultMessage(toolName, suffix ? `${agg}${suffix}` : agg);
@@ -609,7 +662,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     if (!cleanedText && (!mediaUrls || mediaUrls.length === 0) && !audioAsVoice) {
       return;
     }
-    void params.onBlockReply({
+    emitBlockReplySafely({
       text: cleanedText,
       mediaUrls: mediaUrls?.length ? mediaUrls : undefined,
       audioAsVoice,
@@ -698,6 +751,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     pendingMessagingTargets.clear();
     state.successfulCronAdds = 0;
     state.pendingMessagingMediaUrls.clear();
+    state.deterministicApprovalPromptSent = false;
     resetAssistantMessageState(0);
   };
 
@@ -790,6 +844,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     // Used to suppress agent's confirmation text (e.g., "Respondi no Telegram!")
     // which is generated AFTER the tool sends the actual answer.
     didSendViaMessagingTool: () => messagingToolSentTexts.length > 0,
+    didSendDeterministicApprovalPrompt: () => state.deterministicApprovalPromptSent,
     getLastToolError: () => (state.lastToolError ? { ...state.lastToolError } : undefined),
     getUsageTotals,
     getCompactionCount: () => compactionCount,

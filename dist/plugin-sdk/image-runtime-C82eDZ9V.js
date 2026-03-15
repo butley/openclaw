@@ -1,0 +1,8 @@
+import { Yn as describeImageWithModel } from "./model-auth-BhZeQKSE.js";
+import "./utils-FKnHtVac.js";
+import "./paths-Dmn791zP.js";
+import "./logger-BxQoHGVb.js";
+import "./fetch-TN5GkqVm.js";
+import "./query-expansion-MVRB-zf2.js";
+import "./github-copilot-token-DMvRH42f.js";
+export { describeImageWithModel };

@@ -1,0 +1,14 @@
+import "./query-expansion-D3Y5TJkU.js";
+import { Ai as WA_WEB_AUTH_DIR, Fi as pickWebChannel, Mi as logWebSelfId, Vi as webAuthExists } from "./sessions-BO0fT50W.js";
+import "./utils-DQ-ML02Y.js";
+import "./paths-D6tDENa_.js";
+import "./logger-B-E3Q8nf.js";
+import "./fetch-xyPgDDn0.js";
+import "./github-copilot-token-Bkl_sE94.js";
+import { n as monitorWebInbox, t as monitorWebChannel } from "./channel-web-CjaoZWFJ.js";
+import { t as sendMessageWhatsApp } from "./outbound-DfhJLxM0.js";
+import "./brazil-jid-resolver-BRgFrQdQ.js";
+import { i as waitForWaConnection, t as createWaSocket } from "./session-yuatQMvq.js";
+import "./send-api-BssirKlF.js";
+import { t as loginWeb } from "./login-CKWlPhcr.js";
+export { WA_WEB_AUTH_DIR, createWaSocket, logWebSelfId, loginWeb, monitorWebChannel, monitorWebInbox, pickWebChannel, sendMessageWhatsApp, waitForWaConnection, webAuthExists };

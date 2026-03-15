@@ -16,13 +16,13 @@ import { resolveInboundSessionEnvelopeContext } from "../../../channels/session-
 import type { loadConfig } from "../../../config/config.js";
 import { resolveMarkdownTableMode } from "../../../config/markdown-tables.js";
 import { recordSessionMetaFromInbound } from "../../../config/sessions.js";
-// Butley patches: WA Streaming (extracted to avoid upstream conflicts)
-import { logToolNarrationDelivered } from "../wa-verbose-utils.js";
-import { readSessionStreamLevel, resolveStreamDelayMs } from "../wa-streaming-utils.js";
 import { logVerbose, shouldLogVerbose } from "../../../globals.js";
 import type { getChildLogger } from "../../../logging.js";
 import { getAgentScopedMediaLocalRoots } from "../../../media/local-roots.js";
-import type { resolveAgentRoute } from "../../../routing/resolve-route.js";
+import {
+  resolveInboundLastRouteSessionKey,
+  type resolveAgentRoute,
+} from "../../../routing/resolve-route.js";
 import {
   readStoreAllowFromForDmPolicy,
   resolvePinnedMainDmOwnerFromAllowlist,
@@ -36,6 +36,9 @@ import { deliverWebReply } from "../deliver-reply.js";
 import { whatsappInboundLog, whatsappOutboundLog } from "../loggers.js";
 import type { WebInboundMsg } from "../types.js";
 import { elide } from "../util.js";
+import { readSessionStreamLevel, resolveStreamDelayMs } from "../wa-streaming-utils.js";
+// Butley patches: WA Streaming (extracted to avoid upstream conflicts)
+import { logToolNarrationDelivered } from "../wa-verbose-utils.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
 import { formatGroupMembers } from "./group-members.js";
 import { trackBackgroundTask, updateLastRouteInBackground } from "./last-route.js";
@@ -264,7 +267,7 @@ export async function processMessage(params: {
       : undefined;
 
   const textLimit = params.maxMediaTextChunkLimit ?? resolveTextChunkLimit(params.cfg, "whatsapp");
-  const chunkMode = resolveChunkMode(params.cfg, "whatsapp", params.route.accountId);
+  const _chunkMode = resolveChunkMode(params.cfg, "whatsapp", params.route.accountId);
   const tableMode = resolveMarkdownTableMode({
     cfg: params.cfg,
     channel: "whatsapp",
@@ -290,7 +293,7 @@ export async function processMessage(params: {
   const responsePrefix =
     prefixOptions.responsePrefix ??
     (configuredResponsePrefix === undefined && isSelfChat
-      ? (resolveIdentityNamePrefix(params.cfg, params.route.agentId) ?? "[openclaw]")
+      ? resolveIdentityNamePrefix(params.cfg, params.route.agentId)
       : undefined);
 
   const inboundHistory =
@@ -350,9 +353,13 @@ export async function processMessage(params: {
   });
   const shouldUpdateMainLastRoute =
     !pinnedMainDmRecipient || pinnedMainDmRecipient === dmRouteTarget;
+  const inboundLastRouteSessionKey = resolveInboundLastRouteSessionKey({
+    route: params.route,
+    sessionKey: params.route.sessionKey,
+  });
   if (
     dmRouteTarget &&
-    params.route.sessionKey === params.route.mainSessionKey &&
+    inboundLastRouteSessionKey === params.route.mainSessionKey &&
     shouldUpdateMainLastRoute
   ) {
     updateLastRouteInBackground({
@@ -368,7 +375,7 @@ export async function processMessage(params: {
     });
   } else if (
     dmRouteTarget &&
-    params.route.sessionKey === params.route.mainSessionKey &&
+    inboundLastRouteSessionKey === params.route.mainSessionKey &&
     pinnedMainDmRecipient
   ) {
     logVerbose(
@@ -402,7 +409,8 @@ export async function processMessage(params: {
   // chunkMode from config is intentionally ignored here — hardcode "newline" when streaming is active
   // so that removing chunkMode:"newline" from config doesn't break /str on behavior.
   const sessionStreamLevel = readSessionStreamLevel(params.route.sessionKey, storePath);
-  const effectiveChunkMode = sessionStreamLevel === "off" ? ("length" as const) : ("newline" as const);
+  const effectiveChunkMode =
+    sessionStreamLevel === "off" ? ("length" as const) : ("newline" as const);
 
   let prevBlockText: string | null = null;
   const { queuedFinal } = await dispatchReplyWithBufferedBlockDispatcher({

@@ -12,6 +12,7 @@ import { applyLinkUnderstanding } from "../../link-understanding/apply.js";
 import { applyMediaUnderstanding } from "../../media-understanding/apply.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { defaultRuntime } from "../../runtime.js";
+import { normalizeStringEntries } from "../../shared/string-normalization.js";
 import { resolveCommandAuthorization } from "../command-auth.js";
 import type { MsgContext } from "../templating.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
@@ -27,6 +28,34 @@ import { applyResetModelOverride } from "./session-reset-model.js";
 import { initSessionState } from "./session.js";
 import { stageSandboxMedia } from "./stage-sandbox-media.js";
 import { createTypingController } from "./typing.js";
+
+function _mergeSkillFilters(
+  channelFilter?: string[],
+  agentFilter?: string[],
+): string[] | undefined {
+  const normalize = (list?: string[]) => {
+    if (!Array.isArray(list)) {
+      return undefined;
+    }
+    return normalizeStringEntries(list);
+  };
+  const channel = normalize(channelFilter);
+  const agent = normalize(agentFilter);
+  if (!channel && !agent) {
+    return undefined;
+  }
+  if (!channel) {
+    return agent;
+  }
+  if (!agent) {
+    return channel;
+  }
+  if (channel.length === 0 || agent.length === 0) {
+    return [];
+  }
+  const agentSet = new Set(agent);
+  return channel.filter((name) => agentSet.has(name));
+}
 
 export async function getReplyFromConfig(
   ctx: MsgContext,
@@ -177,6 +206,7 @@ export async function getReplyFromConfig(
 
   await applyResetModelOverride({
     cfg,
+    agentId,
     resetTriggered,
     bodyStripped,
     sessionCtx,
