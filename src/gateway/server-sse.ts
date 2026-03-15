@@ -169,7 +169,6 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     res.end(JSON.stringify({ error: "sessionKey query param is required" }));
     return true;
   }
-  
 
   // ── SSE headers ──
   // Note: Do NOT include `Connection: keep-alive` — it's a hop-by-hop header
@@ -289,7 +288,6 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     }
     sseEventCount++;
     const payloadSessionKey = (payload as Record<string, unknown>).sessionKey as string | undefined;
-    
     // Exact session match for text deltas — only stream text from the session
     // the SSE subscriber is viewing. Prefix match (agent:main:*) leaks text
     // from other channels (e.g., Slack runs appearing in WA chat UI).
@@ -352,9 +350,6 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
       return;
     }
     const agentSessionKey = payload.sessionKey;
-    console.log(`[sse:agent] stream=${payload.stream} session=${agentSessionKey?.substring(0,30)} phase=${payload.data?.phase} tool=${payload.data?.tool || payload.data?.name || ''}`);
-
-    
     // Exact session match — only stream tools/thinking from the session the
     // SSE subscriber is viewing. Prefix match leaked events from other channels
     // (e.g., Slack tool calls appearing in WA chat UI).
@@ -459,12 +454,9 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
   };
 
   // ── Subscribe to event bus ──
-  console.log(`[sse] subscribing to gatewayEventBus: agent listeners before=${gatewayEventBus.listenerCount("agent")} busId=${(gatewayEventBus as any).__sseDebugId ?? 'none'}`);
-  (gatewayEventBus as any).__sseDebugId = (gatewayEventBus as any).__sseDebugId ?? Math.random().toString(36).slice(2,8);
   gatewayEventBus.on("chat", onChatEvent);
   gatewayEventBus.on("agent", onAgentEvent);
   gatewayEventBus.on("message.inbound", onInboundMessage);
-  console.log(`[sse] subscribed: agent listeners after=${gatewayEventBus.listenerCount("agent")} busId=${(gatewayEventBus as any).__sseDebugId}`);
 
   return true; // handled
 }

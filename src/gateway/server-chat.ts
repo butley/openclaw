@@ -89,48 +89,6 @@ function isSilentReplyLeadFragment(text: string): boolean {
   return SILENT_REPLY_TOKEN.startsWith(normalized);
 }
 
-function appendUniqueSuffix(base: string, suffix: string): string {
-  if (!suffix) {
-    return base;
-  }
-  if (!base) {
-    return suffix;
-  }
-  if (base.endsWith(suffix)) {
-    return base;
-  }
-  const maxOverlap = Math.min(base.length, suffix.length);
-  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
-    if (base.slice(-overlap) === suffix.slice(0, overlap)) {
-      return base + suffix.slice(overlap);
-    }
-  }
-  return base + suffix;
-}
-
-function resolveMergedAssistantText(params: {
-  previousText: string;
-  nextText: string;
-  nextDelta: string;
-}) {
-  const { previousText, nextText, nextDelta } = params;
-  if (nextText && previousText) {
-    if (nextText.startsWith(previousText)) {
-      return nextText;
-    }
-    if (previousText.startsWith(nextText) && !nextDelta) {
-      return previousText;
-    }
-  }
-  if (nextDelta) {
-    return appendUniqueSuffix(previousText, nextDelta);
-  }
-  if (nextText) {
-    return nextText;
-  }
-  return previousText;
-}
-
 export type ChatRunEntry = {
   sessionKey: string;
   clientRunId: string;
@@ -345,25 +303,16 @@ export function createAgentEventHandler({
     sourceRunId: string,
     seq: number,
     text: string,
-    delta?: unknown,
   ) => {
-    const cleanedText = stripInlineDirectiveTagsForDisplay(text).text;
-    const cleanedDelta =
-      typeof delta === "string" ? stripInlineDirectiveTagsForDisplay(delta).text : "";
-    const previousText = chatRunState.buffers.get(clientRunId) ?? "";
-    const mergedText = resolveMergedAssistantText({
-      previousText,
-      nextText: cleanedText,
-      nextDelta: cleanedDelta,
-    });
-    if (!mergedText) {
+    const cleaned = stripInlineDirectiveTagsForDisplay(text).text;
+    if (!cleaned) {
       return;
     }
-    chatRunState.buffers.set(clientRunId, mergedText);
-    if (isSilentReplyText(mergedText, SILENT_REPLY_TOKEN)) {
+    chatRunState.buffers.set(clientRunId, cleaned);
+    if (isSilentReplyText(cleaned, SILENT_REPLY_TOKEN)) {
       return;
     }
-    if (isSilentReplyLeadFragment(mergedText)) {
+    if (isSilentReplyLeadFragment(cleaned)) {
       return;
     }
     if (shouldHideHeartbeatChatOutput(clientRunId, sourceRunId)) {
@@ -376,7 +325,7 @@ export function createAgentEventHandler({
       return;
     }
     chatRunState.deltaSentAt.set(clientRunId, now);
-    chatRunState.deltaLastBroadcastLen.set(clientRunId, mergedText.length);
+    chatRunState.deltaLastBroadcastLen.set(clientRunId, cleaned.length);
     const payload = {
       runId: clientRunId,
       sessionKey,
@@ -384,71 +333,12 @@ export function createAgentEventHandler({
       state: "delta" as const,
       message: {
         role: "assistant",
-        content: [{ type: "text", text: mergedText }],
+        content: [{ type: "text", text: cleaned }],
         timestamp: now,
       },
     };
     broadcast("chat", payload, { dropIfSlow: true });
     nodeSendToSession(sessionKey, "chat", payload);
-  };
-
-  const resolveBufferedChatTextState = (clientRunId: string, sourceRunId: string) => {
-    const bufferedText = stripInlineDirectiveTagsForDisplay(
-      chatRunState.buffers.get(clientRunId) ?? "",
-    ).text.trim();
-    const normalizedHeartbeatText = normalizeHeartbeatChatFinalText({
-      runId: clientRunId,
-      sourceRunId,
-      text: bufferedText,
-    });
-    const text = normalizedHeartbeatText.text.trim();
-    const shouldSuppressSilent =
-      normalizedHeartbeatText.suppress || isSilentReplyText(text, SILENT_REPLY_TOKEN);
-    return { text, shouldSuppressSilent };
-  };
-
-  const flushBufferedChatDeltaIfNeeded = (
-    sessionKey: string,
-    clientRunId: string,
-    sourceRunId: string,
-    seq: number,
-  ) => {
-    const { text, shouldSuppressSilent } = resolveBufferedChatTextState(clientRunId, sourceRunId);
-    const shouldSuppressSilentLeadFragment = isSilentReplyLeadFragment(text);
-    const shouldSuppressHeartbeatStreaming = shouldHideHeartbeatChatOutput(
-      clientRunId,
-      sourceRunId,
-    );
-    if (
-      !text ||
-      shouldSuppressSilent ||
-      shouldSuppressSilentLeadFragment ||
-      shouldSuppressHeartbeatStreaming
-    ) {
-      return;
-    }
-
-    const lastBroadcastLen = chatRunState.deltaLastBroadcastLen.get(clientRunId) ?? 0;
-    if (text.length <= lastBroadcastLen) {
-      return;
-    }
-
-    const now = Date.now();
-    const flushPayload = {
-      runId: clientRunId,
-      sessionKey,
-      seq,
-      state: "delta" as const,
-      message: {
-        role: "assistant",
-        content: [{ type: "text", text }],
-        timestamp: now,
-      },
-    };
-    broadcast("chat", flushPayload, { dropIfSlow: true });
-    nodeSendToSession(sessionKey, "chat", flushPayload);
-    chatRunState.deltaLastBroadcastLen.set(clientRunId, text.length);
-    chatRunState.deltaSentAt.set(clientRunId, now);
   };
 
   const emitChatFinal = (
@@ -460,12 +350,49 @@ export function createAgentEventHandler({
     error?: unknown,
     stopReason?: string,
   ) => {
-    const { text, shouldSuppressSilent } = resolveBufferedChatTextState(clientRunId, sourceRunId);
+    const bufferedText = stripInlineDirectiveTagsForDisplay(
+      chatRunState.buffers.get(clientRunId) ?? "",
+    ).text.trim();
+    const normalizedHeartbeatText = normalizeHeartbeatChatFinalText({
+      runId: clientRunId,
+      sourceRunId,
+      text: bufferedText,
+    });
+    const text = normalizedHeartbeatText.text.trim();
+    const shouldSuppressSilent =
+      normalizedHeartbeatText.suppress || isSilentReplyText(text, SILENT_REPLY_TOKEN);
+    const shouldSuppressSilentLeadFragment = isSilentReplyLeadFragment(text);
+    const shouldSuppressHeartbeatStreaming = shouldHideHeartbeatChatOutput(
+      clientRunId,
+      sourceRunId,
+    );
     // Flush any throttled delta so streaming clients receive the complete text
-    // before the final event. The 150 ms throttle in emitChatDelta may have
+    // before the final event.  The 150 ms throttle in emitChatDelta may have
     // suppressed the most recent chunk, leaving the client with stale text.
     // Only flush if the buffer has grown since the last broadcast to avoid duplicates.
-    flushBufferedChatDeltaIfNeeded(sessionKey, clientRunId, sourceRunId, seq);
+    if (
+      text &&
+      !shouldSuppressSilent &&
+      !shouldSuppressSilentLeadFragment &&
+      !shouldSuppressHeartbeatStreaming
+    ) {
+      const lastBroadcastLen = chatRunState.deltaLastBroadcastLen.get(clientRunId) ?? 0;
+      if (text.length > lastBroadcastLen) {
+        const flushPayload = {
+          runId: clientRunId,
+          sessionKey,
+          seq,
+          state: "delta" as const,
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text }],
+            timestamp: Date.now(),
+          },
+        };
+        broadcast("chat", flushPayload, { dropIfSlow: true });
+        nodeSendToSession(sessionKey, "chat", flushPayload);
+      }
+    }
     chatRunState.deltaLastBroadcastLen.delete(clientRunId);
     chatRunState.buffers.delete(clientRunId);
     chatRunState.deltaSentAt.delete(clientRunId);
@@ -548,7 +475,6 @@ export function createAgentEventHandler({
     const chatLink = chatRunState.registry.peek(evt.runId);
     const eventSessionKey =
       typeof evt.sessionKey === "string" && evt.sessionKey.trim() ? evt.sessionKey : undefined;
-    const isControlUiVisible = getAgentRunContext(evt.runId)?.isControlUiVisible ?? true;
     const sessionKey =
       chatLink?.sessionKey ?? eventSessionKey ?? resolveSessionKeyForRun(evt.runId);
     const clientRunId = chatLink?.clientRunId ?? evt.runId;
@@ -560,7 +486,6 @@ export function createAgentEventHandler({
     const agentPayload = sessionKey ? { ...eventForClients, sessionKey } : eventForClients;
     const last = agentRunSeq.get(evt.runId) ?? 0;
     const isToolEvent = evt.stream === "tool";
-    
     const toolVerbose = isToolEvent ? resolveToolVerboseLevel(evt.runId, sessionKey) : "off";
     // Build tool payload: strip result/partialResult unless verbose=full
     const toolPayload =
@@ -589,18 +514,32 @@ export function createAgentEventHandler({
     }
     agentRunSeq.set(evt.runId, evt.seq);
     if (isToolEvent) {
-      const toolPhase = typeof evt.data?.phase === "string" ? evt.data.phase : "";
-      // [FORK-PATCH-16] Flush pending assistant text before ALL tool events (not just start).
+      // Flush any pending throttled text delta before tool events.
       // The 50ms throttle in emitChatDelta may hold the last text chunk,
       // causing SSE/webchat clients to miss text right before a tool call.
-      if (sessionKey && clientRunId && !isAborted) {
-        flushBufferedChatDeltaIfNeeded(sessionKey, clientRunId, evt.runId, evt.seq);
-      }
-      // Always broadcast tool events to registered WS recipients with
-      // tool-events capability, regardless of verboseLevel.
-      const recipients = toolEventRecipients.get(evt.runId);
-      if (recipients && recipients.size > 0) {
-        broadcastToConnIds("agent", toolPayload, recipients);
+      if (sessionKey && clientRunId) {
+        const buffered = chatRunState.buffers.get(clientRunId);
+        const lastLen = chatRunState.deltaLastBroadcastLen.get(clientRunId) ?? 0;
+        if (buffered && buffered.length > lastLen) {
+          const cleaned = stripInlineDirectiveTagsForDisplay(buffered).text;
+          if (cleaned) {
+            chatRunState.deltaLastBroadcastLen.set(clientRunId, cleaned.length);
+            chatRunState.deltaSentAt.set(clientRunId, Date.now());
+            const flushPayload = {
+              runId: clientRunId,
+              sessionKey,
+              seq: evt.seq,
+              state: "delta" as const,
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: cleaned }],
+                timestamp: Date.now(),
+              },
+            };
+            broadcast("chat", flushPayload, { dropIfSlow: true });
+            nodeSendToSession(sessionKey, "chat", flushPayload);
+          }
+        }
       }
       // Broadcast tool events to ALL connected WS clients so Control UI
       // can show tool progress for any run (including WA-initiated runs
@@ -615,9 +554,6 @@ export function createAgentEventHandler({
     const lifecyclePhase =
       evt.stream === "lifecycle" && typeof evt.data?.phase === "string" ? evt.data.phase : null;
 
-    // [FORK-PATCH-16] Always emit to SSE/node subscribers regardless of isControlUiVisible.
-    // Upstream gates this on isControlUiVisible (false for WA-originated runs), but our
-    // Butley frontend watches WA sessions via SSE — we need deltas + tool events always.
     if (sessionKey) {
       // Send tool events to node/channel subscribers only when verbose is enabled;
       // WS clients already received tool events above via broadcast("agent", ...) (Patch #16).
@@ -625,7 +561,7 @@ export function createAgentEventHandler({
         nodeSendToSession(sessionKey, "agent", isToolEvent ? toolPayload : agentPayload);
       }
       if (!isAborted && evt.stream === "assistant" && typeof evt.data?.text === "string") {
-        emitChatDelta(sessionKey, clientRunId, evt.runId, evt.seq, evt.data.text, evt.data.delta);
+        emitChatDelta(sessionKey, clientRunId, evt.runId, evt.seq, evt.data.text);
       } else if (!isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
         const evtStopReason =
           typeof evt.data?.stopReason === "string" ? evt.data.stopReason : undefined;
