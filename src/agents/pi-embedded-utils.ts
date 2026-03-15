@@ -255,6 +255,13 @@ export function extractAssistantThinking(msg: AssistantMessage): string {
   if (!Array.isArray(msg.content)) {
     return "";
   }
+  // DEBUG: log content block types to diagnose thinking extraction
+  const types = msg.content.map((b: any) => b?.type ?? 'unknown').join(',');
+  if (types.includes('think')) {
+    console.log(`[thinking:extract] content types: ${types} blocks=${msg.content.length}`);
+    const thinkBlock = msg.content.find((b: any) => b?.type?.includes?.('think'));
+    if (thinkBlock) console.log(`[thinking:extract] thinkBlock keys: ${Object.keys(thinkBlock as any).join(',')}`);
+  }
   const blocks = msg.content
     .map((block) => {
       if (!block || typeof block !== "object") {
