@@ -31,7 +31,14 @@ export type ActiveWebListener = {
 
 let _currentListener: ActiveWebListener | null = null;
 
-const listeners = new Map<string, ActiveWebListener>();
+// [FORK-PATCH-4] Use globalThis singleton to survive bundler chunk duplication.
+// Without this, server-chat.ts (mirror) imports a DIFFERENT instance of this module
+// than web/auto-reply/monitor.ts (which registers the listener), causing
+// "No active WhatsApp Web listener" even though the listener exists.
+const listeners: Map<string, ActiveWebListener> =
+  ((globalThis as Record<string, unknown>).__openclaw_wa_listeners__ as Map<string, ActiveWebListener>) ??
+  new Map<string, ActiveWebListener>();
+(globalThis as Record<string, unknown>).__openclaw_wa_listeners__ = listeners;
 
 export function resolveWebAccountId(accountId?: string | null): string {
   return (accountId ?? "").trim() || DEFAULT_ACCOUNT_ID;
