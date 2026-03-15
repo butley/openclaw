@@ -245,6 +245,7 @@ export async function processMessage(params: {
   // [FORK-PATCH-5] WS Inbound Push — emit directly on gatewayEventBus (bypasses
   // inbound-events.ts to avoid chunk duplication issues with module-level Set).
   // The SSE endpoint listens for "message.inbound" on this bus.
+  const inboundListenerCount = gatewayEventBus.listenerCount("message.inbound");
   gatewayEventBus.emit("message.inbound", {
     messageId: correlationId,
     sessionKey: params.route.sessionKey,
