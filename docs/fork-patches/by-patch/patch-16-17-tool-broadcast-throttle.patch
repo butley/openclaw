@@ -1,0 +1,111 @@
+diff --git a/src/gateway/server-chat.ts b/src/gateway/server-chat.ts
+index 67da7cd8d1..3df7eec7d0 100644
+--- a/src/gateway/server-chat.ts
++++ b/src/gateway/server-chat.ts
+@@ -288,7 +288,8 @@ export type AgentEventHandlerOptions = {
+ 
+ export function createAgentEventHandler({
+   broadcast,
+-  broadcastToConnIds,
++  // [FORK-PATCH-16] Tool Events Broadcast — emits tool call/result events to all WS clients (chat UI shows inline tools). See patches/README.md #16.
++  broadcastToConnIds: _broadcastToConnIds,
+   nodeSendToSession,
+   agentRunSeq,
+   chatRunState,
+@@ -317,9 +318,10 @@ export function createAgentEventHandler({
+     if (shouldHideHeartbeatChatOutput(clientRunId, sourceRunId)) {
+       return;
+     }
++    // [FORK-PATCH-17] Streaming Throttle — 50ms debounce on chat deltas, prevents WS flood during fast generation. See patches/README.md #17.
+     const now = Date.now();
+     const last = chatRunState.deltaSentAt.get(clientRunId) ?? 0;
+-    if (now - last < 150) {
++    if (now - last < 50) {
+       return;
+     }
+     chatRunState.deltaSentAt.set(clientRunId, now);
+@@ -412,6 +414,28 @@ export function createAgentEventHandler({
+       };
+       broadcast("chat", payload);
+       nodeSendToSession(sessionKey, "chat", payload);
++      // Mirror to original channel if requested
++      const runContext = getAgentRunContext(clientRunId);
++      // [FORK-PATCH-4] Chat Mirror — re-delivers final reply to the WS client that sent the message (control UI needs it). See patches/README.md #4.
++      if (runContext?.mirror && text) {
++        try {
++          const keyParts = sessionKey.split(":").filter(Boolean);
++          // Format: agent:{agentId}:{channel}:{peerKind}:{peerId}
++          if (keyParts.length >= 5 && keyParts[0] === "agent") {
++            const channel = keyParts[2];
++            const peerId = keyParts.slice(4).join(":");
++            if (channel === "whatsapp" && peerId) {
++              void import("../web/outbound.js").then(({ sendMessageWhatsApp }) => {
++                sendMessageWhatsApp(peerId, text, { verbose: false })
++                  .then(() => console.log(`[mirror] sent to ${channel}:${peerId}`))
++                  .catch((err) => console.warn(`[mirror] failed: ${String(err)}`));
++              });
++            }
++          }
++        } catch (mirrorErr) {
++          console.warn(`[mirror] error: ${String(mirrorErr)}`);
++        }
++      }
+       return;
+     }
+     const payload = {
+@@ -490,14 +514,39 @@ export function createAgentEventHandler({
+     }
+     agentRunSeq.set(evt.runId, evt.seq);
+     if (isToolEvent) {
+-      // Always broadcast tool events to registered WS recipients with
+-      // tool-events capability, regardless of verboseLevel. The verbose
+-      // setting only controls whether tool details are sent as channel
+-      // messages to messaging surfaces (Telegram, Discord, etc.).
+-      const recipients = toolEventRecipients.get(evt.runId);
+-      if (recipients && recipients.size > 0) {
+-        broadcastToConnIds("agent", toolPayload, recipients);
++      // Flush any pending throttled text delta before tool events.
++      // The 50ms throttle in emitChatDelta may hold the last text chunk,
++      // causing SSE/webchat clients to miss text right before a tool call.
++      if (sessionKey && clientRunId) {
++        const buffered = chatRunState.buffers.get(clientRunId);
++        const lastLen = chatRunState.deltaLastBroadcastLen.get(clientRunId) ?? 0;
++        if (buffered && buffered.length > lastLen) {
++          const cleaned = stripInlineDirectiveTagsForDisplay(buffered).text;
++          if (cleaned) {
++            chatRunState.deltaLastBroadcastLen.set(clientRunId, cleaned.length);
++            chatRunState.deltaSentAt.set(clientRunId, Date.now());
++            const flushPayload = {
++              runId: clientRunId,
++              sessionKey,
++              seq: evt.seq,
++              state: "delta" as const,
++              message: {
++                role: "assistant",
++                content: [{ type: "text", text: cleaned }],
++                timestamp: Date.now(),
++              },
++            };
++            broadcast("chat", flushPayload, { dropIfSlow: true });
++            nodeSendToSession(sessionKey, "chat", flushPayload);
++          }
++        }
+       }
++      // Broadcast tool events to ALL connected WS clients so Control UI
++      // can show tool progress for any run (including WA-initiated runs
++      // where the UI never called chat.send to register).
++      // The verbose setting only controls whether tool details are sent
++      // as channel messages to messaging surfaces (Telegram, Discord, etc.).
++      broadcast("agent", toolPayload, { dropIfSlow: true });
+     } else {
+       broadcast("agent", agentPayload);
+     }
+@@ -507,7 +556,7 @@ export function createAgentEventHandler({
+ 
+     if (sessionKey) {
+       // Send tool events to node/channel subscribers only when verbose is enabled;
+-      // WS clients already received the event above via broadcastToConnIds.
++      // WS clients already received tool events above via broadcast("agent", ...) (Patch #16).
+       if (!isToolEvent || toolVerbose !== "off") {
+         nodeSendToSession(sessionKey, "agent", isToolEvent ? toolPayload : agentPayload);
+       }

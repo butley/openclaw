@@ -1,0 +1,20 @@
+diff --git a/src/cli/program/register.subclis.ts b/src/cli/program/register.subclis.ts
+index fc044dbcd9..29922283fe 100644
+--- a/src/cli/program/register.subclis.ts
++++ b/src/cli/program/register.subclis.ts
+@@ -296,6 +296,15 @@ const entries: SubCliEntry[] = [
+       mod.registerCompletionCli(program);
+     },
+   },
++  {
++    name: "qmd",
++    description: "Proxy qmd commands with agent-scoped XDG_CACHE_HOME",
++    hasSubcommands: false,
++    register: async (program) => {
++      const mod = await import("../qmd-cli.js");
++      mod.registerQmdCli(program);
++    },
++  },
+ ];
+ 
+ export function getSubCliEntries(): SubCliEntry[] {

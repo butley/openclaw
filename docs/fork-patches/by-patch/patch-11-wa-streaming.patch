@@ -1,0 +1,401 @@
+diff --git a/src/auto-reply/reply/dispatch-from-config.ts b/src/auto-reply/reply/dispatch-from-config.ts
+index c727871ca4..840acad6aa 100644
+--- a/src/auto-reply/reply/dispatch-from-config.ts
++++ b/src/auto-reply/reply/dispatch-from-config.ts
+@@ -11,6 +11,7 @@ import {
+   toPluginMessageReceivedEvent,
+ } from "../../hooks/message-hook-mappers.js";
+ import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
++import { emitInboundMessageEvent } from "../../infra/inbound-events.js";
+ import {
+   logMessageProcessed,
+   logMessageQueued,
+@@ -98,6 +99,238 @@ export type DispatchFromConfigResult = {
+   counts: Record<ReplyDispatchKind, number>;
+ };
+ 
++/** Reformat upstream verbose tool narration into clean one-liner for messaging channels. */
++function formatToolNarrationForChannel(raw: string): string {
++  // Extract duration from ANYWHERE in the raw text before truncating to first line.
++  let rawDuration = "";
++  const rawDurMatch = raw.match(/\((\d+\.\d+s|\?)\)/);
++  if (rawDurMatch) {
++    rawDuration = " " + rawDurMatch[0];
++  }
++
++  // Extract actual command from second paragraph (after \n\n).
++  let actualCmd = "";
++  const paragraphs = raw.split("\n\n");
++  if (paragraphs.length > 1) {
++    const cmdMatch = paragraphs
++      .slice(1)
++      .join(" ")
++      .match(/`([^`]+)`/);
++    if (cmdMatch) {
++      actualCmd = cmdMatch[1].trim();
++    }
++  }
++
++  const firstLine = raw.split("\n\n")[0].split("\n")[0].trim();
++  let text = firstLine.replace(/^`+|`+$/g, "").trim();
++
++  // Strip upstream emoji prefix and tool label (e.g. "🛠️ Exec: ...", "🧩 Memory Search: ...")
++  const prefixMatch = text.match(
++    /^[\p{Emoji}\p{Emoji_Presentation}\uFE0F\s]+(?:[A-Za-z_ ]+:?\s*)?/u,
++  );
++  let toolType = "";
++  if (prefixMatch) {
++    // Try "Label:" first (e.g. "Exec:"), then bare "Label" (e.g. "Message")
++    const typeMatch =
++      prefixMatch[0].match(/([A-Za-z_ ]+):/) || prefixMatch[0].match(/\s([A-Za-z_]{2,})\s*$/);
++    if (typeMatch) {
++      toolType = typeMatch[1].trim().toLowerCase().replace(/\s+/g, "_");
++    }
++    text = text.slice(prefixMatch[0].length).trim();
++  }
++
++  // For exec: prefer actual command from raw when available.
++  if ((toolType === "exec" || toolType === "bash") && actualCmd) {
++    text = actualCmd
++      .replace(/#[^\n]*/g, "")
++      .replace(/-C\s+~?\/[^\s]+\s*/g, "")
++      .replace(/2>&1/g, "")
++      .replace(/2>\/dev\/null/g, "")
++      .replace(/>\/dev\/null/g, "")
++      .replace(/\s*\(\d+\.\d+s\)/, "")
++      .trim();
++    // Truncate heredocs: "cat > file << 'EOF' ..." → "cat > file"
++    text = text.replace(/(<<-?\s*'?\w+'?).*/, "$1").trim();
++    // Truncate after pipe: "npm run build | tail -3" → "npm run build"
++    text = text.replace(/\s*\|\s*.+$/, "").trim();
++    // Take first meaningful command in chain (skip leading "cd ...")
++    const chainParts = text.split(/\s*&&\s*|\s*;\s*/).filter(Boolean);
++    if (chainParts.length > 1) {
++      const meaningful =
++        chainParts.find((p) => !/^cd\s/.test(p.trim())) || chainParts[chainParts.length - 1];
++      text = meaningful.trim();
++    }
++  }
++
++  // Remove trailing "(in ~/...)" location hints.
++  text = text.replace(/\s*\(in [^)]+\)\s*$/, "");
++
++  // Shorten paths: ~/Projects/openclaw/src/web/foo.ts → foo.ts, ~/bob/TOOLS.md → TOOLS.md
++  text = text.replace(/~\/[A-Za-z0-9_./-]+/g, (match) => {
++    const parts = match.split("/");
++    if (parts.length <= 2) {
++      return match;
++    }
++    const last = parts[parts.length - 1];
++    return last.includes(".") ? last : parts.slice(-2).join("/");
++  });
++
++  // Shorten known verbose commands.
++  text = text
++    .replace(/launchctl list \S+/g, "launchctl list")
++    .replace(/systemctl \S+ (\S+)\.service/g, "systemctl $1");
++
++  // Collapse verbose exec chain verbs.
++  text = text
++    .replace(/\bprint text(?:\s*→\s*)?/g, "")
++    .replace(/\brun\s+/g, "")
++    .replace(/\bview\s+/gi, "")
++    .replace(/\bdate(?:\s*→\s*)?/g, "")
++    .replace(/\becho\s+\S+(?:\s*→\s*)?/g, "")
++    .replace(/\bsleep\s+\S+(?:\s*→\s*)?/g, "")
++    .replace(/\bshow last \d+ lines?/g, "")
++    .replace(/\bshow first \d+ lines?/g, "")
++    .replace(/2>\/dev\/null/g, "")
++    .replace(/>\/dev\/null/g, "")
++    .replace(/->/g, "→")
++    .replace(/→\s*→/g, "→")
++    .replace(/→\s*(?:first \d+ lines?|last \d+ lines?)/gi, "")
++    .replace(/^\s*→\s*/, "")
++    .replace(/\s*→\s*$/, "")
++    .replace(/\(\+\d+ steps?\)/g, "")
++    .trim();
++
++  // Pick emoji based on tool type and command content.
++  let emoji = "🧩";
++  if (toolType === "exec" || toolType === "bash") {
++    if (/\blaunchctl|systemctl|restart|kill\b/.test(text)) {
++      emoji = "⚙️";
++    } else if (/\bgit\b/.test(text)) {
++      emoji = "📦";
++    } else if (/\bnpm|build|make\b/.test(text)) {
++      emoji = "🔨";
++    } else if (/\bgrep|search|find\b/.test(text)) {
++      emoji = "🔍";
++    } else if (/\bpython|node|bun\b/.test(text)) {
++      emoji = "🐍";
++    } else if (/\bcat|head|tail|sed|awk\b/.test(text)) {
++      emoji = "📄";
++    } else {
++      emoji = "🛠️";
++    }
++  } else if (toolType === "read") {
++    emoji = "📂";
++  } else if (toolType === "write" || toolType === "edit") {
++    emoji = "✏️";
++    text = text.replace(/^in\s+/, "");
++    // Strip upstream "(N chars)" — our enrichment adds line/char diff
++    text = text.replace(/\s*\(\d+ chars?\)/, "");
++  } else if (toolType === "web_search" || toolType === "web_fetch") {
++    emoji = "🌐";
++    // Clean "for "query" (top N)" → "query"
++    text = text.replace(/^for\s+/, "");
++    text = text.replace(/\s*\(top \d+\)/, "");
++    if (!text.startsWith('"')) {
++      const qMatch = text.match(/^"[^"]+"/);
++      if (!qMatch) {
++        text = '"' + text + '"';
++      }
++    }
++  } else if (toolType === "memory_search" || toolType === "memory_get") {
++    emoji = "🧠";
++    if (!text.startsWith('"')) {
++      text = '"' + text + '"';
++    }
++  } else if (toolType === "image") {
++    emoji = "🖼️";
++  } else if (toolType === "message") {
++    return "";
++  } else if (toolType === "process") {
++    emoji = "🧰";
++  } else if (toolType === "browser") {
++    emoji = "🌐";
++  } else if (toolType === "canvas") {
++    emoji = "🎨";
++  } else if (toolType === "nodes") {
++    emoji = "📱";
++  } else if (toolType === "cron") {
++    emoji = "⏰";
++  } else if (toolType === "gateway") {
++    emoji = "🔌";
++  } else if (toolType === "sessions_spawn") {
++    emoji = "🚀";
++  } else if (toolType === "subagents") {
++    emoji = "🤖";
++  } else if (toolType === "session_status") {
++    emoji = "📊";
++  } else if (toolType === "whatsapp_login") {
++    emoji = "🟢";
++  } else if (
++    toolType === "sessions_list" ||
++    toolType === "sessions_history" ||
++    toolType === "sessions_send"
++  ) {
++    emoji = "🗂️";
++  } else if (toolType === "agents_list") {
++    emoji = "🧭";
++  } else if (toolType === "tts") {
++    emoji = "🔊";
++  } else if (toolType === "apply_patch") {
++    emoji = "🩹";
++  }
++
++  // Extract duration suffix (e.g. "(0.1s)") to reposition at end.
++  let durationSuffix = "";
++  const durMatch = text.match(/\s*\((\d+\.\d+s|\?)\)/);
++  if (durMatch) {
++    durationSuffix = " " + durMatch[0].trim();
++    text = text.replace(durMatch[0], "").trim();
++  } else if (rawDuration) {
++    durationSuffix = rawDuration;
++  }
++
++  // Extract error/result info suffixes.
++  let resultSuffix = "";
++  const resMatch = text.match(/\s*(\[(?:qmd|local)\]\s*→\s*\d+ results?)\s*/i);
++  if (resMatch) {
++    resultSuffix = " " + resMatch[1].trim();
++    text = text.replace(resMatch[0], "").trim();
++  }
++  const errMatch = text.match(/\s*❌\s*/);
++  if (errMatch) {
++    resultSuffix = " ❌" + resultSuffix;
++    text = text.replace(errMatch[0], "").trim();
++  }
++
++  // Clean up Read tool: "first N lines of FILE" → "FILE (1-N)"
++  if (toolType === "read") {
++    const readMatch = text.match(/^first (\d+) lines of (.+)/i);
++    if (readMatch) {
++      text = readMatch[2] + " (1-" + readMatch[1] + ")";
++    }
++    const rangeMatch = text.match(/^lines? (\d+)[-–](\d+) of (.+)/i);
++    if (rangeMatch) {
++      text = rangeMatch[3] + " (" + rangeMatch[1] + "-" + rangeMatch[2] + ")";
++    }
++  }
++
++  // For exec chains, take first meaningful command
++  if ((toolType === "exec" || toolType === "bash") && /&&|;/.test(text)) {
++    const first = text.split(/\s*&&\s*|\s*;\s*/)[0].trim();
++    if (first.length > 5) {
++      text = first;
++    }
++  }
++  if (text.length > 80) {
++    text = text.slice(0, 77) + "...";
++  }
++
++  // Append result info and duration at the end.
++  const suffix = resultSuffix + durationSuffix;
++
++  return text ? emoji + " " + text + suffix : firstLine.slice(0, 80);
++}
++
+ export async function dispatchReplyFromConfig(params: {
+   ctx: FinalizedMsgContext;
+   cfg: OpenClawConfig;
+@@ -177,6 +410,23 @@ export async function dispatchReplyFromConfig(params: {
+   const hookContext = deriveInboundMessageHookContext(ctx, { messageId: messageIdForHook });
+   const { isGroup, groupId } = hookContext;
+ 
++  // Emit inbound message event for WebSocket broadcast (Butley patch)
++  emitInboundMessageEvent({
++    messageId: messageIdForHook ?? "",
++    sessionKey: ctx.SessionKey ?? "",
++    channel,
++    accountId: ctx.AccountId ?? "",
++    from: ctx.From ?? "",
++    senderName: ctx.SenderName ?? "",
++    content: ctx.BodyForCommands ?? ctx.Body ?? "",
++    timestamp: timestamp ?? Date.now(),
++    chatType: ctx.ChatType === "group" ? "group" : "dm",
++    conversationId: chatId != null ? String(chatId) : "",
++    threadId: ctx.MessageThreadId != null ? String(ctx.MessageThreadId) : undefined,
++    hasMedia: !!ctx.MediaUrl,
++    mediaType: ctx.MediaUrls?.[0] ? "media" : undefined,
++  });
++
+   // Trigger plugin hooks (fire-and-forget)
+   if (hookRunner?.hasHooks("message_received")) {
+     fireAndForgetHook(
+@@ -359,6 +609,14 @@ export async function dispatchReplyFromConfig(params: {
+       // tool results (for example TTS audio) must still be delivered.
+       const hasMedia = Boolean(payload.mediaUrl) || (payload.mediaUrls?.length ?? 0) > 0;
+       if (!hasMedia) {
++        // Check for MEDIA: markers in text (e.g. image_generate tool results).
++        // Extract paths into mediaUrls so the deliver callback can collect them
++        // for imageReady/audioReady emission.
++        const mediaMatches = (payload.text ?? "").match(/MEDIA:\/[^\s`]+/g);
++        if (mediaMatches && mediaMatches.length > 0) {
++          const urls = mediaMatches.map((m) => m.slice("MEDIA:".length).trim());
++          return { ...payload, text: undefined, mediaUrls: urls };
++        }
+         return null;
+       }
+       return { ...payload, text: undefined };
+@@ -390,10 +648,14 @@ export async function dispatchReplyFromConfig(params: {
+             if (!deliveryPayload) {
+               return;
+             }
++            // Format tool narration for messaging channels: clean one-liner with emoji.
++            const formattedPayload = deliveryPayload.text
++              ? { ...deliveryPayload, text: formatToolNarrationForChannel(deliveryPayload.text) }
++              : deliveryPayload;
+             if (shouldRouteToOriginating) {
+-              await sendPayloadAsync(deliveryPayload, undefined, false);
++              await sendPayloadAsync(formattedPayload, undefined, false);
+             } else {
+-              dispatcher.sendToolResult(deliveryPayload);
++              dispatcher.sendToolResult(formattedPayload);
+             }
+           };
+           return run();
+diff --git a/src/web/auto-reply/deliver-reply.ts b/src/web/auto-reply/deliver-reply.ts
+index 7866fea0c8..fdd578b5b5 100644
+--- a/src/web/auto-reply/deliver-reply.ts
++++ b/src/web/auto-reply/deliver-reply.ts
+@@ -32,6 +32,8 @@ export async function deliverWebReply(params: {
+   maxMediaBytes: number;
+   textLimit: number;
+   chunkMode?: ChunkMode;
++  // [FORK-PATCH-11] WA Paragraph Streaming — per-chunk delay fn for natural paragraph-by-paragraph WA delivery. See patches/README.md #11.
++  streamDelayMs?: (charCount: number) => number;
+   replyLogger: {
+     info: (obj: unknown, msg: string) => void;
+     warn: (obj: unknown, msg: string) => void;
+@@ -86,6 +88,22 @@ export async function deliverWebReply(params: {
+     const totalChunks = textChunks.length;
+     for (const [index, chunk] of textChunks.entries()) {
+       const chunkStarted = Date.now();
++      // Typing indicator before chunk (except first)
++      if (index > 0 && params.streamDelayMs) {
++        const delayMs = params.streamDelayMs(textChunks[index - 1].length);
++        if (delayMs > 0) {
++          await msg.sendComposing?.();
++          let elapsed = 0;
++          while (elapsed < delayMs) {
++            const step = Math.min(3000, delayMs - elapsed);
++            await sleep(step);
++            elapsed += step;
++            if (elapsed < delayMs) {
++              await msg.sendComposing?.();
++            }
++          }
++        }
++      }
+       await sendWithRetry(() => msg.reply(chunk), "text");
+       if (!skipLog) {
+         const durationMs = Date.now() - chunkStarted;
+diff --git a/src/web/auto-reply/wa-streaming-utils.ts b/src/web/auto-reply/wa-streaming-utils.ts
+new file mode 100644
+index 0000000000..ca66f2dfd7
+--- /dev/null
++++ b/src/web/auto-reply/wa-streaming-utils.ts
+@@ -0,0 +1,52 @@
++/**
++ * wa-streaming-utils.ts — Butley custom patch: WA Paragraph Streaming
++ *
++ * Extracted from process-message.ts to avoid upstream merge conflicts.
++ * Upstream will never touch this file. Add all streaming-related helpers here.
++ */
++
++import { normalizeStreamLevel } from "../../auto-reply/thinking.js";
++import { loadSessionStore } from "../../config/sessions.js";
++
++/** Resolve paragraph delay in ms for a given stream level and text length. */
++export function resolveStreamDelayMs(streamLevel: string, charCount: number): number {
++  switch (streamLevel) {
++    case "fast":
++      return Math.max(2000, Math.min(6000, charCount * 20));
++    case "on":
++      return Math.max(4000, Math.min(10000, charCount * 40));
++    case "slow":
++      return Math.max(6000, Math.min(15000, charCount * 70));
++    case "off":
++      return 0;
++    default: {
++      // Support "custom:XX" where XX is ms per character
++      if (streamLevel.startsWith("custom:")) {
++        const msPerChar = parseInt(streamLevel.slice(7), 10);
++        if (!isNaN(msPerChar) && msPerChar > 0) {
++          return Math.max(1000, Math.min(20000, charCount * msPerChar));
++        }
++      }
++      return 0;
++    }
++  }
++}
++
++/** Read the /str stream level for a session from the session store. */
++export function readSessionStreamLevel(sessionKey: string, storePath: string): string {
++  try {
++    const store = loadSessionStore(storePath);
++    const entry = store[sessionKey];
++    const raw = entry?.streamLevel;
++    if (!raw) {
++      return "off";
++    }
++    // Already normalized (e.g. "custom:55") — return as-is if valid, otherwise re-normalize.
++    if (raw.startsWith("custom:")) {
++      return raw;
++    }
++    return normalizeStreamLevel(raw) ?? "off";
++  } catch {
++    return "off";
++  }
++}

@@ -1,0 +1,14 @@
+diff --git a/extensions/whatsapp/index.ts b/extensions/whatsapp/index.ts
+index 9279a2c038..51ff5f749d 100644
+--- a/extensions/whatsapp/index.ts
++++ b/extensions/whatsapp/index.ts
+@@ -11,6 +11,9 @@ const plugin = {
+   register(api: OpenClawPluginApi) {
+     setWhatsAppRuntime(api.runtime);
+     api.registerChannel({ plugin: whatsappPlugin });
++    // [FORK-PATCH-12] WA Login Tool Dedup — prevents duplicate tool registration. See patches/README.md #12.
++    // whatsapp_login is provided by core tooling/runtime.
++    // Do not register tool here (would duplicate names in LLM tool list).
+   },
+ };
+ 

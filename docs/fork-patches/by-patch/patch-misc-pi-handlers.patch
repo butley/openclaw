@@ -1,0 +1,78 @@
+diff --git a/src/agents/pi-embedded-subscribe.handlers.tools.ts b/src/agents/pi-embedded-subscribe.handlers.tools.ts
+index 8abd9469bb..e6772e7257 100644
+--- a/src/agents/pi-embedded-subscribe.handlers.tools.ts
++++ b/src/agents/pi-embedded-subscribe.handlers.tools.ts
+@@ -216,7 +216,7 @@ export async function handleToolExecutionStart(
+   const meta = extendExecMeta(toolName, args, inferToolMetaFromArgs(toolName, args));
+   ctx.state.toolMetaById.set(toolCallId, buildToolCallSummary(toolName, args, meta));
+   ctx.log.debug(
+-    `embedded run tool start: runId=${ctx.params.runId} tool=${toolName} toolCallId=${toolCallId}`,
++    `embedded run tool start: runId=${ctx.params.runId} tool=${toolName} toolCallId=${toolCallId}${meta ? ` meta=${meta}` : ""}`,
+   );
+ 
+   const shouldEmitToolEvents = ctx.shouldEmitToolResult();
+@@ -242,7 +242,10 @@ export async function handleToolExecutionStart(
+     !ctx.state.toolSummaryById.has(toolCallId)
+   ) {
+     ctx.state.toolSummaryById.add(toolCallId);
+-    ctx.emitToolSummary(toolName, meta);
++    // In "light" mode, defer narration to tool END (where duration is available).
++    if (!ctx.isLightVerbose?.()) {
++      ctx.emitToolSummary(toolName, meta);
++    }
+   }
+ 
+   // Track messaging tool sends (pending until confirmed in tool_execution_end).
+@@ -424,11 +427,19 @@ export async function handleToolExecutionEnd(
+   });
+ 
+   ctx.log.debug(
+-    `embedded run tool end: runId=${ctx.params.runId} tool=${toolName} toolCallId=${toolCallId}`,
++    `embedded run tool end: runId=${ctx.params.runId} tool=${toolName} toolCallId=${toolCallId}${callSummary?.meta ? ` meta=${callSummary.meta}` : ""}`,
+   );
+ 
+   emitToolResultOutput({ ctx, toolName, meta, isToolError, result, sanitizedResult });
+ 
++  // Light mode: emit end-of-tool narration with duration.
++  if (ctx.isLightVerbose?.() && ctx.params.onToolResult) {
++    const durationMs = startData?.startTime != null ? Date.now() - startData.startTime : undefined;
++    const durationStr = durationMs != null ? ` (${(durationMs / 1000).toFixed(1)}s)` : " (?)";
++    const errorStr = isToolError ? " ❌" : "";
++    ctx.emitToolEndSummary?.(toolName, meta, sanitizedResult, durationStr, errorStr, startData?.args);
++  }
++
+   // Run after_tool_call plugin hook (fire-and-forget)
+   const hookRunnerAfter = ctx.hookRunner ?? getGlobalHookRunner();
+   if (hookRunnerAfter?.hasHooks("after_tool_call")) {
+diff --git a/src/agents/pi-embedded-subscribe.handlers.types.ts b/src/agents/pi-embedded-subscribe.handlers.types.ts
+index 1a9d48f46f..bf85720292 100644
+--- a/src/agents/pi-embedded-subscribe.handlers.types.ts
++++ b/src/agents/pi-embedded-subscribe.handlers.types.ts
+@@ -51,6 +51,7 @@ export type EmbeddedPiSubscribeState = {
+   lastStreamedAssistantCleaned?: string;
+   emittedAssistantUpdate: boolean;
+   lastStreamedReasoning?: string;
++  lastRawThinking?: string;
+   lastBlockReplyText?: string;
+   reasoningStreamOpen: boolean;
+   assistantMessageIndex: number;
+@@ -91,7 +92,9 @@ export type EmbeddedPiSubscribeContext = {
+   shouldEmitToolResult: () => boolean;
+   shouldEmitToolOutput: () => boolean;
+   emitToolSummary: (toolName?: string, meta?: string) => void;
++  emitToolEndSummary?: (toolName?: string, meta?: string, result?: unknown, duration?: string, error?: string, args?: unknown) => void;
+   emitToolOutput: (toolName?: string, meta?: string, output?: string) => void;
++  isLightVerbose?: () => boolean;
+   stripBlockTags: (
+     text: string,
+     state: { thinking: boolean; final: boolean; inlineCode?: InlineCodeState },
+@@ -166,7 +169,9 @@ export type ToolHandlerContext = {
+   shouldEmitToolResult: () => boolean;
+   shouldEmitToolOutput: () => boolean;
+   emitToolSummary: (toolName?: string, meta?: string) => void;
++  emitToolEndSummary?: (toolName?: string, meta?: string, result?: unknown, duration?: string, error?: string, args?: unknown) => void;
+   emitToolOutput: (toolName?: string, meta?: string, output?: string) => void;
++  isLightVerbose?: () => boolean;
+   trimMessagingToolSent: () => void;
+ };
+ 

@@ -1,0 +1,162 @@
+diff --git a/src/web/inbound/send-api.ts b/src/web/inbound/send-api.ts
+index f0e5ea764f..f0cf9f35d8 100644
+--- a/src/web/inbound/send-api.ts
++++ b/src/web/inbound/send-api.ts
+@@ -1,6 +1,8 @@
+ import type { AnyMessageContent, WAPresence } from "@whiskeysockets/baileys";
+ import { recordChannelActivity } from "../../infra/channel-activity.js";
+-import { toWhatsappJid } from "../../utils.js";
++import { normalizeE164, toWhatsappJid } from "../../utils.js";
++import { resolveBrazilianJid } from "./brazil-jid-resolver.js";
++import { getContactPhone, readLidForPhone } from "./contact-names.js";
+ import type { ActiveWebSendOptions } from "../active-listener.js";
+ 
+ function recordWhatsAppOutbound(accountId: string) {
+@@ -17,13 +19,98 @@ function resolveOutboundMessageId(result: unknown): string {
+     : "unknown";
+ }
+ 
++/**
++ * Process @mentions in outbound text for WhatsApp:
++ *
++ * 1. @+553196348700 or @553196348700 → resolve to display name, add JID to mentions
++ * 2. @Lucas or @Guilherme → reverse-lookup phone from contact cache, add JID to mentions
++ *
++ * The text keeps human-readable @Name; Baileys mentions array gets the JIDs.
++ */
++// [FORK-PATCH-14] WA Outbound Mentions — converts @mentions to WA mention format. See patches/README.md #14.
++export function processOutboundMentions(text: string): { text: string; mentions: string[] } {
++  const mentions: string[] = [];
++  let result = text;
++
++  const addMention = (digits: string) => {
++    const lidJid = readLidForPhone(digits);
++    const jid = lidJid ?? `${digits}@s.whatsapp.net`;
++    if (!mentions.includes(jid)) {
++      mentions.push(jid);
++    }
++  };
++
++  // Pass 1: @+phone or @phone patterns → replace with name, collect JID
++  const phonePattern = /@(\+?\d{10,15})\b/g;
++  const phoneMatches: Array<{ full: string; digits: string; e164: string }> = [];
++  let match: RegExpExecArray | null;
++  while ((match = phonePattern.exec(text)) !== null) {
++    const raw = match[1];
++    const digits = raw.replace(/^\+/, "");
++    const e164 = normalizeE164(raw) ?? `+${digits}`;
++    phoneMatches.push({ full: match[0], digits, e164 });
++    addMention(digits);
++  }
++  for (const m of phoneMatches) {
++    const lidJid = readLidForPhone(m.digits);
++    if (lidJid) {
++      const lidNum = lidJid.replace(/@.*/, "");
++      result = result.replace(m.full, `@${lidNum}`);
++    }
++  }
++
++  // Pass 2: @Name patterns (non-numeric) → reverse-lookup phone → resolve LID → replace with @LID
++  const namePattern = /@([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ0-9_ ]{0,30})\b/g;
++  const nameMatches: Array<{ full: string; name: string }> = [];
++  while ((match = namePattern.exec(result)) !== null) {
++    const name = match[1].trim();
++    if (name) {
++      nameMatches.push({ full: match[0], name });
++    }
++  }
++  for (const m of nameMatches) {
++    const phone = getContactPhone(m.name);
++    if (phone) {
++      const digits = phone.replace(/^\+/, "");
++      const lidJid = readLidForPhone(digits);
++      if (lidJid) {
++        const lidNum = lidJid.replace(/@.*/, "");
++        result = result.replace(m.full, `@${lidNum}`);
++        addMention(digits);
++      } else {
++        addMention(digits);
++      }
++    }
++  }
++
++  return { text: result, mentions };
++}
++
+ export function createWebSendApi(params: {
+   sock: {
+     sendMessage: (jid: string, content: AnyMessageContent) => Promise<unknown>;
+     sendPresenceUpdate: (presence: WAPresence, jid?: string) => Promise<unknown>;
++    onWhatsApp?: (jid: string) => Promise<Array<{ exists?: boolean; jid?: string }>>;
+   };
+   defaultAccountId: string;
+ }) {
++  const resolveJid = async (to: string): Promise<string> => {
++    const jid = toWhatsappJid(to);
++    if (!params.sock.onWhatsApp) {
++      return jid;
++    }
++    // Resolve Brazilian numbers that may have legacy 8-digit registration
++    try {
++      return await resolveBrazilianJid({ onWhatsApp: params.sock.onWhatsApp }, jid);
++    } catch (err) {
++      console.warn(
++        "[send-api] Brazil JID resolution failed, using original:",
++        err instanceof Error ? err.message : err,
++      );
++      return jid;
++    }
++  };
++
+   return {
+     sendMessage: async (
+       to: string,
+@@ -32,7 +119,7 @@ export function createWebSendApi(params: {
+       mediaType?: string,
+       sendOptions?: ActiveWebSendOptions,
+     ): Promise<{ messageId: string }> => {
+-      const jid = toWhatsappJid(to);
++      const jid = await resolveJid(to);
+       let payload: AnyMessageContent;
+       if (mediaBuffer && mediaType) {
+         if (mediaType.startsWith("image/")) {
+@@ -61,7 +148,11 @@ export function createWebSendApi(params: {
+           };
+         }
+       } else {
+-        payload = { text };
++        const processed = processOutboundMentions(text);
++        payload =
++          processed.mentions.length > 0
++            ? { text: processed.text, mentions: processed.mentions }
++            : { text };
+       }
+       const result = await params.sock.sendMessage(jid, payload);
+       const accountId = sendOptions?.accountId ?? params.defaultAccountId;
+@@ -73,7 +164,7 @@ export function createWebSendApi(params: {
+       to: string,
+       poll: { question: string; options: string[]; maxSelections?: number },
+     ): Promise<{ messageId: string }> => {
+-      const jid = toWhatsappJid(to);
++      const jid = await resolveJid(to);
+       const result = await params.sock.sendMessage(jid, {
+         poll: {
+           name: poll.question,
+@@ -92,7 +183,7 @@ export function createWebSendApi(params: {
+       fromMe: boolean,
+       participant?: string,
+     ): Promise<void> => {
+-      const jid = toWhatsappJid(chatJid);
++      const jid = await resolveJid(chatJid);
+       await params.sock.sendMessage(jid, {
+         react: {
+           text: emoji,
+@@ -106,7 +197,7 @@ export function createWebSendApi(params: {
+       } as AnyMessageContent);
+     },
+     sendComposingTo: async (to: string): Promise<void> => {
+-      const jid = toWhatsappJid(to);
++      const jid = await resolveJid(to);
+       await params.sock.sendPresenceUpdate("composing", jid);
+     },
+   } as const;

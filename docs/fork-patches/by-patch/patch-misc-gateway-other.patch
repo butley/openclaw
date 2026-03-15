@@ -1,0 +1,49 @@
+diff --git a/src/gateway/protocol/schema/logs-chat.ts b/src/gateway/protocol/schema/logs-chat.ts
+index b8d0fe1ba4..8e1f044751 100644
+--- a/src/gateway/protocol/schema/logs-chat.ts
++++ b/src/gateway/protocol/schema/logs-chat.ts
+@@ -40,6 +40,7 @@ export const ChatSendParamsSchema = Type.Object(
+     attachments: Type.Optional(Type.Array(Type.Unknown())),
+     timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })),
+     idempotencyKey: NonEmptyString,
++    mirror: Type.Optional(Type.Boolean()),
+   },
+   { additionalProperties: false },
+ );
+diff --git a/src/gateway/server-close.ts b/src/gateway/server-close.ts
+index 635f830b5e..8ab30f8902 100644
+--- a/src/gateway/server-close.ts
++++ b/src/gateway/server-close.ts
+@@ -23,6 +23,7 @@ export function createGatewayCloseHandler(params: {
+   dedupeCleanup: ReturnType<typeof setInterval>;
+   agentUnsub: (() => void) | null;
+   heartbeatUnsub: (() => void) | null;
++  inboundMessageUnsub: (() => void) | null;
+   chatRunState: { clear: () => void };
+   clients: Set<{ socket: { close: (code: number, reason: string) => void } }>;
+   configReloader: { stop: () => Promise<void> };
+@@ -101,6 +102,13 @@ export function createGatewayCloseHandler(params: {
+         /* ignore */
+       }
+     }
++    if (params.inboundMessageUnsub) {
++      try {
++        params.inboundMessageUnsub();
++      } catch {
++        /* ignore */
++      }
++    }
+     params.chatRunState.clear();
+     for (const c of params.clients) {
+       try {
+diff --git a/src/gateway/server-methods-list.ts b/src/gateway/server-methods-list.ts
+index 6449f101c1..48719d14b2 100644
+--- a/src/gateway/server-methods-list.ts
++++ b/src/gateway/server-methods-list.ts
+@@ -123,5 +123,6 @@ export const GATEWAY_EVENTS = [
+   "voicewake.changed",
+   "exec.approval.requested",
+   "exec.approval.resolved",
++  "message.inbound",
+   GATEWAY_EVENT_UPDATE_AVAILABLE,
+ ];

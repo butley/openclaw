@@ -1,0 +1,144 @@
+diff --git a/src/auto-reply/reply/get-reply.ts b/src/auto-reply/reply/get-reply.ts
+index 911cddf46e..99e2e91296 100644
+--- a/src/auto-reply/reply/get-reply.ts
++++ b/src/auto-reply/reply/get-reply.ts
+@@ -2,7 +2,6 @@ import {
+   resolveAgentDir,
+   resolveAgentWorkspaceDir,
+   resolveSessionAgentId,
+-  resolveAgentSkillsFilter,
+ } from "../../agents/agent-scope.js";
+ import { resolveModelRefFromString } from "../../agents/model-selection.js";
+ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
+@@ -11,6 +10,7 @@ import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
+ import { type OpenClawConfig, loadConfig } from "../../config/config.js";
+ import { applyLinkUnderstanding } from "../../link-understanding/apply.js";
+ import { applyMediaUnderstanding } from "../../media-understanding/apply.js";
++import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
+ import { defaultRuntime } from "../../runtime.js";
+ import { resolveCommandAuthorization } from "../command-auth.js";
+ import type { MsgContext } from "../templating.js";
+@@ -28,31 +28,6 @@ import { initSessionState } from "./session.js";
+ import { stageSandboxMedia } from "./stage-sandbox-media.js";
+ import { createTypingController } from "./typing.js";
+ 
+-function mergeSkillFilters(channelFilter?: string[], agentFilter?: string[]): string[] | undefined {
+-  const normalize = (list?: string[]) => {
+-    if (!Array.isArray(list)) {
+-      return undefined;
+-    }
+-    return list.map((entry) => String(entry).trim()).filter(Boolean);
+-  };
+-  const channel = normalize(channelFilter);
+-  const agent = normalize(agentFilter);
+-  if (!channel && !agent) {
+-    return undefined;
+-  }
+-  if (!channel) {
+-    return agent;
+-  }
+-  if (!agent) {
+-    return channel;
+-  }
+-  if (channel.length === 0 || agent.length === 0) {
+-    return [];
+-  }
+-  const agentSet = new Set(agent);
+-  return channel.filter((name) => agentSet.has(name));
+-}
+-
+ export async function getReplyFromConfig(
+   ctx: MsgContext,
+   opts?: GetReplyOptions,
+@@ -67,12 +42,6 @@ export async function getReplyFromConfig(
+     sessionKey: agentSessionKey,
+     config: cfg,
+   });
+-  const mergedSkillFilter = mergeSkillFilters(
+-    opts?.skillFilter,
+-    resolveAgentSkillsFilter(cfg, agentId),
+-  );
+-  const resolvedOpts =
+-    mergedSkillFilter !== undefined ? { ...opts, skillFilter: mergedSkillFilter } : opts;
+   const agentCfg = cfg.agents?.defaults;
+   const sessionCfg = cfg.session;
+   const { defaultProvider, defaultModel, aliasIndex } = resolveDefaultModel({
+@@ -131,6 +100,40 @@ export async function getReplyFromConfig(
+       agentDir,
+       activeModel: { provider, model },
+     });
++    // PATCH: Audio transcript hook - emit message_received with transcript
++    if (finalized.Transcript) {
++      const hookRunner = getGlobalHookRunner();
++      if (hookRunner?.hasHooks?.("message_received")) {
++        void hookRunner
++          .runMessageReceived(
++            {
++              from: finalized.From ?? "",
++              // [FORK-PATCH-3] Audio Transcript Hook — injects transcript as message content. See patches/README.md #3.
++              content: `🎤 ${finalized.Transcript}`,
++              timestamp: finalized.Timestamp,
++              metadata: {
++                to: finalized.To,
++                provider: finalized.Provider,
++                surface: finalized.Surface,
++                senderE164: finalized.SenderE164,
++                isTranscript: true,
++                originalBody: "<media:audio>",
++              },
++            },
++            {
++              channelId: (
++                finalized.OriginatingChannel ??
++                finalized.Surface ??
++                finalized.Provider ??
++                ""
++              ).toLowerCase(),
++              accountId: finalized.AccountId,
++              conversationId: finalized.OriginatingTo ?? finalized.To ?? finalized.From,
++            },
++          )
++          .catch(() => {});
++      }
++    }
+     await applyLinkUnderstanding({
+       ctx: finalized,
+       cfg,
+@@ -241,8 +244,8 @@ export async function getReplyFromConfig(
+     model,
+     hasResolvedHeartbeatModelOverride,
+     typing,
+-    opts: resolvedOpts,
+-    skillFilter: mergedSkillFilter,
++    opts,
++    skillFilter: opts?.skillFilter,
+   });
+   if (directiveResult.kind === "reply") {
+     return directiveResult.reply;
+@@ -314,7 +317,7 @@ export async function getReplyFromConfig(
+     sessionScope,
+     workspaceDir,
+     isGroup,
+-    opts: resolvedOpts,
++    opts,
+     typing,
+     allowTextCommands,
+     inlineStatusRequested,
+@@ -336,7 +339,7 @@ export async function getReplyFromConfig(
+     contextTokens,
+     directiveAck,
+     abortedLastRun,
+-    skillFilter: mergedSkillFilter,
++    skillFilter: opts?.skillFilter,
+   });
+   if (inlineActionResult.kind === "reply") {
+     await maybeEmitMissingResetHooks();
+@@ -384,7 +387,7 @@ export async function getReplyFromConfig(
+     perMessageQueueMode,
+     perMessageQueueOptions,
+     typing,
+-    opts: resolvedOpts,
++    opts,
+     defaultProvider,
+     defaultModel,
+     timeoutMs,

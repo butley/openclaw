@@ -1,0 +1,364 @@
+diff --git a/src/web/active-listener.ts b/src/web/active-listener.ts
+index 2c85289961..ac0e59900c 100644
+--- a/src/web/active-listener.ts
++++ b/src/web/active-listener.ts
+@@ -25,6 +25,7 @@ export type ActiveWebListener = {
+     participant?: string,
+   ) => Promise<void>;
+   sendComposingTo: (to: string) => Promise<void>;
++  onWhatsApp?: (jid: string) => Promise<Array<{ exists?: boolean; jid?: string }>>;
+   close?: () => Promise<void>;
+ };
+ 
+diff --git a/src/web/auto-reply/wa-verbose-utils.ts b/src/web/auto-reply/wa-verbose-utils.ts
+new file mode 100644
+index 0000000000..4a05d13bc8
+--- /dev/null
++++ b/src/web/auto-reply/wa-verbose-utils.ts
+@@ -0,0 +1,113 @@
++import { whatsappOutboundLog } from "./loggers.js";
++
++/**
++ * wa-verbose-utils.ts — Butley custom patch: Verbose Light
++ *
++ * Extracted from process-message.ts to avoid upstream merge conflicts.
++ * Upstream will never touch this file. Add all verbose-narration helpers here.
++ * Includes: formatToolNarration, logToolNarrationDelivered.
++ */
++
++/**
++ * Reformat upstream verbose tool narration into clean one-liners for WhatsApp.
++ * Strips emoji prefixes, shortens paths, collapses verbose exec chains.
++ */
++export function formatToolNarration(raw: string): string {
++  // Take first line only (upstream may include code blocks after).
++  const firstLine = raw.split("\n\n")[0].split("\n")[0].trim();
++
++  // Strip surrounding backticks/code fences if present.
++  let text = firstLine.replace(/^`+|`+$/g, "").trim();
++
++  // Strip upstream emoji prefix and tool label (e.g. "🛠️ Exec: ..." → "...")
++  // Common patterns: "🛠️ Exec: cmd", "📖 Read: path", "✍️ Write: path", "📝 Edit: path"
++  const prefixMatch = text.match(/^[\p{Emoji}\p{Emoji_Presentation}\uFE0F\s]+(?:[A-Za-z_]+:\s*)?/u);
++  let toolType = "";
++  if (prefixMatch) {
++    // Extract tool type from prefix (e.g. "Exec", "Read", "Edit")
++    const typeMatch = prefixMatch[0].match(/([A-Za-z_]+):/);
++    toolType = typeMatch ? typeMatch[1].toLowerCase() : "";
++    text = text.slice(prefixMatch[0].length).trim();
++  }
++
++  // Remove trailing "(in ~/...)" location hints.
++  text = text.replace(/\s*\(in [^)]+\)\s*$/, "");
++
++  // Shorten home paths: ~/Projects/openclaw/src/web/foo.ts → foo.ts
++  text = text.replace(/~\/[A-Za-z0-9_./-]+/g, (match) => {
++    const parts = match.split("/");
++    if (parts.length <= 3) {
++      return match;
++    }
++    const last = parts[parts.length - 1];
++    if (last.includes(".")) {
++      return last;
++    }
++    return parts.slice(-2).join("/");
++  });
++
++  // Collapse verbose exec chains
++  text = text
++    .replace(/\bprint text(?:\s*→\s*)?/g, "")
++    .replace(/\brun\s+/g, "")
++    .replace(/\bshow last \d+ lines?/g, "")
++    .replace(/\bshow first \d+ lines?/g, "")
++    .replace(/\bview\s+/gi, "")
++    .replace(/→\s*→/g, "→")
++    .replace(/^\s*→\s*/, "")
++    .replace(/\s*→\s*$/, "")
++    .trim();
++
++  // Pick emoji based on tool type and command content
++  let emoji = "🧩";
++  if (toolType === "exec" || toolType === "bash") {
++    if (/\bgit\b/.test(text)) {
++      emoji = "📦";
++    } else if (/\bnpm|build|make\b/.test(text)) {
++      emoji = "🔨";
++    } else if (/\bgrep|search|find\b/.test(text)) {
++      emoji = "🔍";
++    } else if (/\bpython|node|bun\b/.test(text)) {
++      emoji = "🐍";
++    } else if (/\blaunchctl|systemctl|restart|kill\b/.test(text)) {
++      emoji = "⚙️";
++    } else if (/\bcat|head|tail|sed|awk\b/.test(text)) {
++      emoji = "📄";
++    } else {
++      emoji = "🛠️";
++    }
++  } else if (toolType === "read") {
++    emoji = "📂";
++  } else if (toolType === "write") {
++    emoji = "✏️";
++  } else if (toolType === "edit") {
++    emoji = "✏️";
++  } else if (toolType === "web_search") {
++    emoji = "🌐";
++  } else if (toolType === "web_fetch") {
++    emoji = "🌐";
++  } else if (toolType === "memory_search") {
++    emoji = "🧠";
++  } else if (toolType === "image") {
++    emoji = "🖼️";
++  } else if (toolType === "message") {
++    emoji = "💬";
++  }
++
++  // Truncate to 80 chars
++  if (text.length > 80) {
++    text = text.slice(0, 77) + "...";
++  }
++
++  return text ? `${emoji} ${text}` : firstLine.slice(0, 80);
++}
++
++/**
++ * Log tool narration delivery at DEBUG level.
++ * Tool narrations are side-channel messages — logging them at INFO
++ * creates noise indistinguishable from final reply delivery.
++ * Tool execution is already tracked via the native tool start/end logs.
++ */
++export function logToolNarrationDelivered(fromDisplay: string, hasMedia: boolean): void {
++  whatsappOutboundLog.debug(`[narration-delivered] to=${fromDisplay}${hasMedia ? " (media)" : ""}`);
++}
+diff --git a/src/web/inbound/contact-names.ts b/src/web/inbound/contact-names.ts
+new file mode 100644
+index 0000000000..0b58e56928
+--- /dev/null
++++ b/src/web/inbound/contact-names.ts
+@@ -0,0 +1,135 @@
++/**
++ * Global contact name cache, populated from incoming messages (pushName).
++ * Persisted to disk so it survives gateway restarts.
++ * Used by outbound to resolve phone numbers to display names for @mentions.
++ */
++
++import fs from "node:fs";
++import path from "node:path";
++import { normalizeE164 } from "../../utils.js";
++
++const contactNames = new Map<string, string>();
++let cacheFilePath: string | null = null;
++let savePending = false;
++
++function defaultCachePath(): string {
++  return path.join(
++    process.env.HOME ?? "/home/ubuntu",
++    ".openclaw/credentials/whatsapp/default/contact-names.json",
++  );
++}
++
++/** Load persisted contact names from disk. Called once at startup. */
++export function loadContactNameCache(filePath?: string): void {
++  cacheFilePath = filePath ?? defaultCachePath();
++  try {
++    const data = fs.readFileSync(cacheFilePath, "utf8");
++    const parsed = JSON.parse(data) as Record<string, string>;
++    for (const [phone, name] of Object.entries(parsed)) {
++      contactNames.set(phone, name);
++    }
++  } catch {
++    // No cache file yet — start fresh
++  }
++}
++
++function scheduleSave(): void {
++  if (savePending || !cacheFilePath) {
++    return;
++  }
++  savePending = true;
++  setTimeout(() => {
++    savePending = false;
++    try {
++      const obj: Record<string, string> = {};
++      for (const [k, v] of contactNames) {
++        obj[k] = v;
++      }
++      fs.writeFileSync(cacheFilePath!, JSON.stringify(obj, null, 2));
++    } catch {
++      // Best-effort persistence
++    }
++  }, 5000);
++}
++
++/**
++ * Record a contact's display name (typically from pushName on incoming messages).
++ */
++export function noteContactName(e164: string | undefined, name: string | undefined): void {
++  if (!e164 || !name) {
++    return;
++  }
++  const normalized = normalizeE164(e164);
++  if (normalized) {
++    const existing = contactNames.get(normalized);
++    if (existing !== name) {
++      contactNames.set(normalized, name);
++      scheduleSave();
++    }
++  }
++}
++
++/**
++ * Look up a contact's display name by phone number.
++ * Returns undefined if not known.
++ */
++export function getContactName(e164: string): string | undefined {
++  const normalized = normalizeE164(e164);
++  if (!normalized) {
++    return undefined;
++  }
++  return contactNames.get(normalized);
++}
++
++/**
++ * Reverse lookup: find a phone number (E164) by display name.
++ * Case-insensitive match. Returns the first match found.
++ */
++export function getContactPhone(name: string): string | undefined {
++  const lower = name.toLowerCase();
++  for (const [phone, contactName] of contactNames.entries()) {
++    if (contactName.toLowerCase() === lower) {
++      return phone;
++    }
++  }
++  // Partial match: check if the search name is a prefix of a contact name
++  for (const [phone, contactName] of contactNames.entries()) {
++    if (contactName.toLowerCase().startsWith(lower)) {
++      return phone;
++    }
++  }
++  return undefined;
++}
++
++/**
++ * Read the LID for a phone number from the WhatsApp auth directory's lid-mapping files.
++ * Returns the LID JID (e.g., "264351109914877@lid") or undefined if not found.
++ */
++export function readLidForPhone(phone: string, authDir?: string): string | undefined {
++  const digits = phone.replace(/[^\d]/g, "");
++  if (!digits) {
++    return undefined;
++  }
++  const dirs = authDir ? [authDir] : [];
++  // Default auth dir
++  const defaultDir = path.join(
++    process.env.HOME ?? "/home/ubuntu",
++    ".openclaw/credentials/whatsapp/default",
++  );
++  if (!dirs.includes(defaultDir)) {
++    dirs.push(defaultDir);
++  }
++  for (const dir of dirs) {
++    const filePath = path.join(dir, `lid-mapping-${digits}.json`);
++    try {
++      const data = fs.readFileSync(filePath, "utf8");
++      const lid = JSON.parse(data) as string | null;
++      if (lid) {
++        return `${lid}@lid`;
++      }
++    } catch {
++      // File doesn't exist or can't be read
++    }
++  }
++  return undefined;
++}
+diff --git a/src/web/inbound/monitor.ts b/src/web/inbound/monitor.ts
+index 6dc2ce5f52..4d4d9e6d65 100644
+--- a/src/web/inbound/monitor.ts
++++ b/src/web/inbound/monitor.ts
+@@ -10,6 +10,7 @@ import { saveMediaBuffer } from "../../media/store.js";
+ import { jidToE164, resolveJidToE164 } from "../../utils.js";
+ import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.js";
+ import { checkInboundAccessControl } from "./access-control.js";
++import { loadContactNameCache, noteContactName } from "./contact-names.js";
+ import { isRecentInboundMessage } from "./dedupe.js";
+ import {
+   describeReplyContext,
+@@ -56,6 +57,9 @@ export async function monitorWebInbox(options: {
+     resolver(reason);
+   };
+ 
++  // Load persisted contact name cache for outbound @mention resolution
++  loadContactNameCache();
++
+   try {
+     await sock.sendPresenceUpdate("available");
+     if (shouldLogVerbose()) {
+@@ -327,8 +331,23 @@ export async function monitorWebInbox(options: {
+         logVerbose(`Presence update failed: ${String(err)}`);
+       }
+     };
++    // Butley patch: WA Streaming — sendAvailable for typing indicator reset
++    const sendAvailable = async () => {
++      try {
++        await sock.sendPresenceUpdate("available", chatJid);
++      } catch (err) {
++        logVerbose(`Presence available update failed: ${String(err)}`);
++      }
++    };
++    // Butley patch: WA Outbound Mentions — resolve @Name/@phone before sending
+     const reply = async (text: string) => {
+-      await sock.sendMessage(chatJid, { text });
++      const { processOutboundMentions } = await import("./send-api.js");
++      const processed = processOutboundMentions(text);
++      const payload =
++        processed.mentions.length > 0
++          ? { text: processed.text, mentions: processed.mentions }
++          : { text };
++      await sock.sendMessage(chatJid, payload);
+     };
+     const sendMedia = async (payload: AnyMessageContent) => {
+       await sock.sendMessage(chatJid, payload);
+@@ -336,6 +355,8 @@ export async function monitorWebInbox(options: {
+     const timestamp = inbound.messageTimestampMs;
+     const mentionedJids = extractMentionedJids(msg.message as proto.IMessage | undefined);
+     const senderName = msg.pushName ?? undefined;
++    // Butley patch: WA Outbound Mentions — cache sender name for @Name resolution
++    noteContactName(inbound.senderE164 ?? inbound.from, senderName);
+ 
+     inboundLogger.info(
+       {
+@@ -376,6 +397,7 @@ export async function monitorWebInbox(options: {
+       fromMe: Boolean(msg.key?.fromMe),
+       location: enriched.location ?? undefined,
+       sendComposing,
++      sendAvailable, // Butley patch: WA Streaming
+       reply,
+       sendMedia,
+       mediaPath: enriched.mediaPath,
+@@ -449,6 +471,7 @@ export async function monitorWebInbox(options: {
+     sock: {
+       sendMessage: (jid: string, content: AnyMessageContent) => sock.sendMessage(jid, content),
+       sendPresenceUpdate: (presence, jid?: string) => sock.sendPresenceUpdate(presence, jid),
++      onWhatsApp: async (jid: string) => (await sock.onWhatsApp(jid)) ?? [],
+     },
+     defaultAccountId: options.accountId,
+   });
+@@ -483,6 +506,7 @@ export async function monitorWebInbox(options: {
+       resolveClose(reason ?? { status: undefined, isLoggedOut: false, error: "closed" });
+     },
+     // IPC surface (sendMessage/sendPoll/sendReaction/sendComposingTo)
++    onWhatsApp: async (jid: string) => (await sock.onWhatsApp(jid)) ?? [],
+     ...sendApi,
+   } as const;
+ }
+diff --git a/src/web/inbound/types.ts b/src/web/inbound/types.ts
+index c9b49e945b..9ddf3446eb 100644
+--- a/src/web/inbound/types.ts
++++ b/src/web/inbound/types.ts
+@@ -34,6 +34,7 @@ export type WebInboundMessage = {
+   fromMe?: boolean;
+   location?: NormalizedLocation;
+   sendComposing: () => Promise<void>;
++  sendAvailable?: () => Promise<void>;
+   reply: (text: string) => Promise<void>;
+   sendMedia: (payload: AnyMessageContent) => Promise<void>;
+   mediaPath?: string;

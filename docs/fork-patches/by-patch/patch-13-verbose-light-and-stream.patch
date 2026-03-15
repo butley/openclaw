@@ -1,0 +1,332 @@
+diff --git a/src/auto-reply/reply/directive-handling.impl.ts b/src/auto-reply/reply/directive-handling.impl.ts
+index 979304dfb1..0438ebf150 100644
+--- a/src/auto-reply/reply/directive-handling.impl.ts
++++ b/src/auto-reply/reply/directive-handling.impl.ts
+@@ -380,13 +380,29 @@ export async function handleDirectiveOnly(
+         : `Thinking level set to ${directives.thinkLevel}.`,
+     );
+   }
++  if (directives.hasStreamDirective && directives.streamLevel) {
++    const streamAcks: Record<string, string> = {
++      off: "Paragraph streaming disabled.",
++      fast: "Paragraph streaming: fast (20ms/char).",
++      on: "Paragraph streaming: normal (40ms/char).",
++      slow: "Paragraph streaming: slow (70ms/char).",
++    };
++    let streamAck = streamAcks[directives.streamLevel];
++    if (!streamAck && directives.streamLevel.startsWith("custom:")) {
++      const ms = directives.streamLevel.slice(7);
++      streamAck = `Paragraph streaming: custom (${ms}ms/char).`;
++    }
++    parts.push(formatDirectiveAck(streamAck ?? "Paragraph streaming updated."));
++  }
+   if (directives.hasVerboseDirective && directives.verboseLevel) {
+     parts.push(
+       directives.verboseLevel === "off"
+         ? formatDirectiveAck("Verbose logging disabled.")
+         : directives.verboseLevel === "full"
+           ? formatDirectiveAck("Verbose logging set to full.")
+-          : formatDirectiveAck("Verbose logging enabled."),
++          : directives.verboseLevel === "light"
++            ? formatDirectiveAck("Tool narration enabled (light mode).")
++            : formatDirectiveAck("Verbose logging enabled."),
+     );
+   }
+   if (directives.hasReasoningDirective && directives.reasoningLevel) {
+diff --git a/src/auto-reply/reply/directive-handling.parse.ts b/src/auto-reply/reply/directive-handling.parse.ts
+index b09d5c553b..97f4a7dc59 100644
+--- a/src/auto-reply/reply/directive-handling.parse.ts
++++ b/src/auto-reply/reply/directive-handling.parse.ts
+@@ -2,13 +2,20 @@ import type { OpenClawConfig } from "../../config/config.js";
+ import type { ExecAsk, ExecHost, ExecSecurity } from "../../infra/exec-approvals.js";
+ import { extractModelDirective } from "../model.js";
+ import type { MsgContext } from "../templating.js";
+-import type { ElevatedLevel, ReasoningLevel, ThinkLevel, VerboseLevel } from "./directives.js";
++import type {
++  ElevatedLevel,
++  ReasoningLevel,
++  StreamLevel,
++  ThinkLevel,
++  VerboseLevel,
++} from "./directives.js";
+ import {
+   extractElevatedDirective,
+   extractExecDirective,
+   extractReasoningDirective,
+   extractStatusDirective,
+   extractThinkDirective,
++  extractStreamDirective,
+   extractVerboseDirective,
+ } from "./directives.js";
+ import { stripMentions, stripStructuralPrefixes } from "./mentions.js";
+@@ -23,6 +30,9 @@ export type InlineDirectives = {
+   hasVerboseDirective: boolean;
+   verboseLevel?: VerboseLevel;
+   rawVerboseLevel?: string;
++  hasStreamDirective: boolean;
++  streamLevel?: StreamLevel;
++  rawStreamLevel?: string;
+   hasReasoningDirective: boolean;
+   reasoningLevel?: ReasoningLevel;
+   rawReasoningLevel?: string;
+@@ -80,12 +90,18 @@ export function parseInlineDirectives(
+     rawLevel: rawVerboseLevel,
+     hasDirective: hasVerboseDirective,
+   } = extractVerboseDirective(thinkCleaned);
++  const {
++    cleaned: streamCleaned,
++    streamLevel,
++    rawLevel: rawStreamLevel,
++    hasDirective: hasStreamDirective,
++  } = extractStreamDirective(verboseCleaned);
+   const {
+     cleaned: reasoningCleaned,
+     reasoningLevel,
+     rawLevel: rawReasoningLevel,
+     hasDirective: hasReasoningDirective,
+-  } = extractReasoningDirective(verboseCleaned);
++  } = extractReasoningDirective(streamCleaned);
+   const {
+     cleaned: elevatedCleaned,
+     elevatedLevel,
+@@ -151,6 +167,9 @@ export function parseInlineDirectives(
+     hasVerboseDirective,
+     verboseLevel,
+     rawVerboseLevel,
++    hasStreamDirective,
++    streamLevel,
++    rawStreamLevel,
+     hasReasoningDirective,
+     reasoningLevel,
+     rawReasoningLevel,
+@@ -200,6 +219,7 @@ export function isDirectiveOnly(params: {
+   const { directives, cleanedBody, ctx, cfg, agentId, isGroup } = params;
+   if (
+     !directives.hasThinkDirective &&
++    !directives.hasStreamDirective &&
+     !directives.hasVerboseDirective &&
+     !directives.hasReasoningDirective &&
+     !directives.hasElevatedDirective &&
+diff --git a/src/auto-reply/reply/directive-handling.persist.ts b/src/auto-reply/reply/directive-handling.persist.ts
+index f408705580..a929faf0bb 100644
+--- a/src/auto-reply/reply/directive-handling.persist.ts
++++ b/src/auto-reply/reply/directive-handling.persist.ts
+@@ -85,6 +85,10 @@ export async function persistInlineDirectives(params: {
+       sessionEntry.thinkingLevel = directives.thinkLevel;
+       updated = true;
+     }
++    if (directives.hasStreamDirective && directives.streamLevel) {
++      sessionEntry.streamLevel = directives.streamLevel;
++      updated = true;
++    }
+     if (directives.hasVerboseDirective && directives.verboseLevel) {
+       applyVerboseOverride(sessionEntry, directives.verboseLevel);
+       updated = true;
+diff --git a/src/auto-reply/reply/directives.ts b/src/auto-reply/reply/directives.ts
+index e0bda738b6..935dfb5565 100644
+--- a/src/auto-reply/reply/directives.ts
++++ b/src/auto-reply/reply/directives.ts
+@@ -5,8 +5,10 @@ import {
+   normalizeElevatedLevel,
+   normalizeNoticeLevel,
+   normalizeReasoningLevel,
++  normalizeStreamLevel,
+   normalizeThinkLevel,
+   normalizeVerboseLevel,
++  type StreamLevel,
+   type ThinkLevel,
+   type VerboseLevel,
+ } from "../thinking.js";
+@@ -40,7 +42,7 @@ const matchLevelDirective = (
+     }
+   }
+   const argStart = i;
+-  while (i < body.length && /[A-Za-z-]/.test(body[i])) {
++  while (i < body.length && /[A-Za-z0-9-]/.test(body[i])) {
+     i += 1;
+   }
+   const rawLevel = i > argStart ? body.slice(argStart, i) : undefined;
+@@ -106,6 +108,21 @@ export function extractThinkDirective(body?: string): {
+   };
+ }
+ 
++export function extractStreamDirective(body?: string): {
++  cleaned: string;
++  streamLevel?: StreamLevel;
++  rawLevel?: string;
++  hasDirective: boolean;
++} {
++  const extracted = extractLevelDirective(body ?? "", ["stream", "str"], normalizeStreamLevel);
++  return {
++    cleaned: extracted.cleaned,
++    streamLevel: extracted.level,
++    rawLevel: extracted.rawLevel,
++    hasDirective: extracted.hasDirective,
++  };
++}
++
+ export function extractVerboseDirective(body?: string): {
+   cleaned: string;
+   verboseLevel?: VerboseLevel;
+@@ -188,5 +205,5 @@ export function extractStatusDirective(body?: string): {
+   return extractSimpleDirective(body, ["status"]);
+ }
+ 
+-export type { ElevatedLevel, NoticeLevel, ReasoningLevel, ThinkLevel, VerboseLevel };
++export type { ElevatedLevel, NoticeLevel, ReasoningLevel, StreamLevel, ThinkLevel, VerboseLevel };
+ export { extractExecDirective } from "./exec/directive.js";
+diff --git a/src/auto-reply/reply/get-reply-directives-apply.ts b/src/auto-reply/reply/get-reply-directives-apply.ts
+index 4232171a82..8940e0c76b 100644
+--- a/src/auto-reply/reply/get-reply-directives-apply.ts
++++ b/src/auto-reply/reply/get-reply-directives-apply.ts
+@@ -189,6 +189,28 @@ export async function applyInlineDirectiveOverrides(params: {
+         mediaDecisions: ctx.MediaUnderstandingDecisions,
+       });
+     }
++    // Persist directives before early return (directive-only messages).
++    await persistInlineDirectives({
++      directives,
++      effectiveModelDirective,
++      cfg,
++      agentDir,
++      sessionEntry,
++      sessionStore,
++      sessionKey,
++      storePath,
++      elevatedEnabled,
++      elevatedAllowed,
++      defaultProvider,
++      defaultModel,
++      aliasIndex,
++      ...directiveModelState,
++      provider,
++      model,
++      initialModelLabel,
++      formatModelSwitchEvent,
++      agentCfg,
++    });
+     typing.cleanup();
+     if (statusReply?.text && directiveReply?.text) {
+       return {
+@@ -201,6 +223,7 @@ export async function applyInlineDirectiveOverrides(params: {
+ 
+   const hasAnyDirective =
+     directives.hasThinkDirective ||
++    directives.hasStreamDirective ||
+     directives.hasVerboseDirective ||
+     directives.hasReasoningDirective ||
+     directives.hasElevatedDirective ||
+diff --git a/src/auto-reply/reply/get-reply-directives-utils.ts b/src/auto-reply/reply/get-reply-directives-utils.ts
+index 02c60a31fa..ae28dbf3e8 100644
+--- a/src/auto-reply/reply/get-reply-directives-utils.ts
++++ b/src/auto-reply/reply/get-reply-directives-utils.ts
+@@ -24,6 +24,7 @@ export function clearInlineDirectives(cleaned: string): InlineDirectives {
+     thinkLevel: undefined,
+     rawThinkLevel: undefined,
+     hasVerboseDirective: false,
++    hasStreamDirective: false,
+     verboseLevel: undefined,
+     rawVerboseLevel: undefined,
+     hasReasoningDirective: false,
+diff --git a/src/auto-reply/reply/get-reply-directives.ts b/src/auto-reply/reply/get-reply-directives.ts
+index 4c9da28dea..309d29f8dd 100644
+--- a/src/auto-reply/reply/get-reply-directives.ts
++++ b/src/auto-reply/reply/get-reply-directives.ts
+@@ -227,6 +227,7 @@ export async function resolveReplyDirectives(params: {
+   }
+   const hasInlineDirective =
+     parsedDirectives.hasThinkDirective ||
++    parsedDirectives.hasStreamDirective ||
+     parsedDirectives.hasVerboseDirective ||
+     parsedDirectives.hasReasoningDirective ||
+     parsedDirectives.hasElevatedDirective ||
+@@ -259,6 +260,7 @@ export async function resolveReplyDirectives(params: {
+     : {
+         ...parsedDirectives,
+         hasThinkDirective: false,
++        hasStreamDirective: false,
+         hasVerboseDirective: false,
+         hasReasoningDirective: false,
+         hasStatusDirective: false,
+diff --git a/src/auto-reply/thinking.ts b/src/auto-reply/thinking.ts
+index 0342e6fe7b..15bac64c31 100644
+--- a/src/auto-reply/thinking.ts
++++ b/src/auto-reply/thinking.ts
+@@ -1,5 +1,7 @@
+ export type ThinkLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "adaptive";
+-export type VerboseLevel = "off" | "on" | "full";
++// [FORK-PATCH-13] Verbose Light — adds "light" level: backtick-wrapped tool summaries without full output. See patches/README.md #13.
++export type VerboseLevel = "off" | "light" | "on" | "full";
++export type StreamLevel = "off" | "fast" | "on" | "slow" | `custom:${number}`;
+ export type NoticeLevel = "off" | "on" | "full";
+ export type ElevatedLevel = "off" | "on" | "ask" | "full";
+ export type ElevatedMode = "off" | "ask" | "full";
+@@ -146,8 +148,37 @@ function normalizeOnOffFullLevel(raw?: string | null): OnOffFullLevel | undefine
+   return undefined;
+ }
+ 
++// Normalize stream level for paragraph delivery delay.
++export function normalizeStreamLevel(raw?: string | null): StreamLevel | undefined {
++  if (!raw) {
++    return undefined;
++  }
++  const key = raw.toLowerCase();
++  if (["off", "false", "no", "0"].includes(key)) {
++    return "off";
++  }
++  if (["fast", "quick", "rapid"].includes(key)) {
++    return "fast";
++  }
++  if (["slow", "relaxed"].includes(key)) {
++    return "slow";
++  }
++  if (["on", "true", "yes", "1", "normal", "medium", "default"].includes(key)) {
++    return "on";
++  }
++  // Support numeric ms/char values (e.g. "/stream 35" → "custom:35")
++  const num = parseInt(key, 10);
++  if (!isNaN(num) && num > 0 && num <= 200) {
++    return `custom:${num}` as StreamLevel;
++  }
++  return undefined;
++}
++
+ // Normalize verbose flags used to toggle agent verbosity.
+ export function normalizeVerboseLevel(raw?: string | null): VerboseLevel | undefined {
++  if (raw && ["light", "narration", "narrate"].includes(raw.toLowerCase())) {
++    return "light";
++  }
+   return normalizeOnOffFullLevel(raw);
+ }
+ 
+diff --git a/src/tui/commands.ts b/src/tui/commands.ts
+index 039f213032..e71a42dc6d 100644
+--- a/src/tui/commands.ts
++++ b/src/tui/commands.ts
+@@ -3,7 +3,7 @@ import { listChatCommands, listChatCommandsForConfig } from "../auto-reply/comma
+ import { formatThinkingLevels, listThinkingLevelLabels } from "../auto-reply/thinking.js";
+ import type { OpenClawConfig } from "../config/types.js";
+ 
+-const VERBOSE_LEVELS = ["on", "off"];
++const VERBOSE_LEVELS = ["on", "off", "light", "full"];
+ const REASONING_LEVELS = ["on", "off"];
+ const ELEVATED_LEVELS = ["on", "off", "ask", "full"];
+ const ACTIVATION_LEVELS = ["mention", "always"];
+@@ -78,7 +78,7 @@ export function getSlashCommands(options: SlashCommandOptions = {}): SlashComman
+     },
+     {
+       name: "verbose",
+-      description: "Set verbose on/off",
++      description: "Set verbose level (off/light/on/full)",
+       getArgumentCompletions: verboseCompletions,
+     },
+     {
+@@ -142,7 +142,7 @@ export function helpText(options: SlashCommandOptions = {}): string {
+     "/session <key> (or /sessions)",
+     "/model <provider/model> (or /models)",
+     `/think <${thinkLevels}>`,
+-    "/verbose <on|off>",
++    "/verbose <off|light|on|full>",
+     "/reasoning <on|off>",
+     "/usage <off|tokens|full>",
+     "/elevated <on|off|ask|full>",
