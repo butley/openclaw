@@ -491,6 +491,28 @@ export function createAgentEventHandler({
       };
       broadcast("chat", payload);
       nodeSendToSession(sessionKey, "chat", payload);
+      // [FORK-PATCH-4] Chat Mirror — re-deliver final reply to the session's
+      // original channel (e.g. WhatsApp) when the run was initiated from webchat.
+      const runContext = getAgentRunContext(clientRunId);
+      if (runContext?.mirror && text) {
+        try {
+          const keyParts = sessionKey.split(":").filter(Boolean);
+          // Format: agent:{agentId}:{channel}:{peerKind}:{peerId}
+          if (keyParts.length >= 5 && keyParts[0] === "agent") {
+            const channel = keyParts[2];
+            const peerId = keyParts.slice(4).join(":");
+            if (channel === "whatsapp" && peerId) {
+              void import("../web/outbound.js").then(({ sendMessageWhatsApp }) => {
+                sendMessageWhatsApp(peerId, text, { verbose: false })
+                  .then(() => console.log(`[mirror] sent to ${channel}:${peerId}`))
+                  .catch((err: unknown) => console.warn(`[mirror] failed: ${String(err)}`));
+              });
+            }
+          }
+        } catch (mirrorErr) {
+          console.warn(`[mirror] error: ${String(mirrorErr)}`);
+        }
+      }
       return;
     }
     const payload = {
