@@ -496,7 +496,6 @@ export function createAgentEventHandler({
       // [FORK-PATCH-4] Chat Mirror — re-deliver final reply to the session's
       // original channel (e.g. WhatsApp) when the run was initiated from webchat.
       const runContext = getAgentRunContext(clientRunId);
-      console.log(`[mirror:debug] clientRunId=${clientRunId} mirror=${runContext?.mirror} textLen=${text?.length ?? 0} sessionKey=${sessionKey}`);
       if (runContext?.mirror && text) {
         try {
           const keyParts = sessionKey.split(":").filter(Boolean);
@@ -550,9 +549,6 @@ export function createAgentEventHandler({
   };
 
   return (evt: AgentEventPayload) => {
-    if (evt.stream === "lifecycle") {
-      console.log(`[mirror:lifecycle] runId=${evt.runId} phase=${evt.data?.phase} session=${evt.sessionKey}`);
-    }
     const chatLink = chatRunState.registry.peek(evt.runId);
     const eventSessionKey =
       typeof evt.sessionKey === "string" && evt.sessionKey.trim() ? evt.sessionKey : undefined;
