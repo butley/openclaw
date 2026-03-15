@@ -1826,7 +1826,11 @@ export async function runEmbeddedAttempt(
         agentDir,
         authStorage: params.authStorage,
         modelRegistry: params.modelRegistry,
-        model: params.model,
+        // [FORK-PATCH] Ensure reasoning:true for Anthropic models that support thinking.
+        // API discovery may report reasoning:false even though Opus/Sonnet 4.6 support it.
+        model: params.model.api === "anthropic-messages" && !params.model.reasoning
+          ? { ...params.model, reasoning: true }
+          : params.model,
         thinkingLevel: mapThinkingLevel(params.thinkLevel),
         tools: builtInTools,
         customTools: allCustomTools,
