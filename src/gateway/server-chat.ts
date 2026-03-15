@@ -4,9 +4,12 @@ import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
 import { loadSessionEntry } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
+const log = createSubsystemLogger("gateway/server-chat");
+const reasoningDebugEnabled = process.env.OPENCLAW_DEBUG_REASONING === "1";
 
 function resolveHeartbeatAckMaxChars(): number {
   try {
@@ -338,6 +341,8 @@ export function createAgentEventHandler({
   clearAgentRunContext,
   toolEventRecipients,
 }: AgentEventHandlerOptions) {
+  const _broadcastToConnIds = broadcastToConnIds;
+  // [FORK-PATCH-4] Chat Mirror — mirror/session delivery is registered in server-methods/chat.ts.
   const emitChatDelta = (
     sessionKey: string,
     clientRunId: string,
@@ -370,7 +375,8 @@ export function createAgentEventHandler({
     }
     const now = Date.now();
     const last = chatRunState.deltaSentAt.get(clientRunId) ?? 0;
-    if (now - last < 150) {
+    // [FORK-PATCH-17] Streaming Throttle — 50ms throttle for smoother UI updates.
+    if (now - last < 50) {
       return;
     }
     chatRunState.deltaSentAt.set(clientRunId, now);
@@ -524,7 +530,6 @@ export function createAgentEventHandler({
     const chatLink = chatRunState.registry.peek(evt.runId);
     const eventSessionKey =
       typeof evt.sessionKey === "string" && evt.sessionKey.trim() ? evt.sessionKey : undefined;
-    const isControlUiVisible = getAgentRunContext(evt.runId)?.isControlUiVisible ?? true;
     const sessionKey =
       chatLink?.sessionKey ?? eventSessionKey ?? resolveSessionKeyForRun(evt.runId);
     const clientRunId = chatLink?.clientRunId ?? evt.runId;
@@ -567,8 +572,16 @@ export function createAgentEventHandler({
       const toolPhase = typeof evt.data?.phase === "string" ? evt.data.phase : "";
       // Flush pending assistant text before tool-start events so clients can
       // render complete pre-tool text above tool cards (not truncated by delta throttle).
-      if (toolPhase === "start" && isControlUiVisible && sessionKey && !isAborted) {
+      if (toolPhase === "start" && sessionKey && !isAborted) {
         flushBufferedChatDeltaIfNeeded(sessionKey, clientRunId, evt.runId, evt.seq);
+        // [FORK-PATCH-16] Reset accumulated text buffer after tool-start so the
+        // next assistant turn starts fresh. The Pi SDK resets its own
+        // lastStreamedAssistantCleaned between tool calls, so the gateway
+        // buffer must match — otherwise mergedText accumulates text from ALL
+        // prior turns and the SSE subscriber (which resets lastTextLen=0 on
+        // tool-start) re-emits the entire conversation prefix.
+        chatRunState.buffers.delete(clientRunId);
+        chatRunState.deltaLastBroadcastLen.delete(clientRunId);
       }
       // Always broadcast tool events to registered WS recipients with
       // tool-events capability, regardless of verboseLevel. The verbose
@@ -576,16 +589,29 @@ export function createAgentEventHandler({
       // messages to messaging surfaces (Telegram, Discord, etc.).
       const recipients = toolEventRecipients.get(evt.runId);
       if (recipients && recipients.size > 0) {
-        broadcastToConnIds("agent", toolPayload, recipients);
+        _broadcastToConnIds("agent", toolPayload, recipients);
       }
+      // [FORK-PATCH-16] Tool Events Broadcast — also broadcast to all connected WS/SSE clients.
+      broadcast("agent", toolPayload, { dropIfSlow: true });
     } else {
       broadcast("agent", agentPayload);
+    }
+    if (reasoningDebugEnabled && evt.stream === "thinking") {
+      const rawDeltaLen =
+        typeof evt.data?.rawDelta === "string"
+          ? evt.data.rawDelta.length
+          : typeof evt.data?.delta === "string"
+            ? evt.data.delta.length
+            : 0;
+      log.info(
+        `[reasoning:gateway] runId=${evt.runId} clientRunId=${clientRunId} sessionKey=${sessionKey ?? "NONE"} visible=${String(getAgentRunContext(evt.runId)?.isControlUiVisible ?? true)} rawDeltaLen=${rawDeltaLen}`,
+      );
     }
 
     const lifecyclePhase =
       evt.stream === "lifecycle" && typeof evt.data?.phase === "string" ? evt.data.phase : null;
 
-    if (isControlUiVisible && sessionKey) {
+    if (sessionKey) {
       // Send tool events to node/channel subscribers only when verbose is enabled;
       // WS clients already received the event above via broadcastToConnIds.
       if (!isToolEvent || toolVerbose !== "off") {
