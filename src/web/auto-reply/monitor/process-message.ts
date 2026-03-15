@@ -253,7 +253,7 @@ export async function processMessage(params: {
     accountId: params.route.accountId ?? "",
     from: params.msg.from ?? "",
     senderName: params.msg.senderName ?? params.msg.senderE164 ?? "",
-    content: combinedBody,
+    content: params.msg.body ?? combinedBody,
     timestamp: Date.now(),
     chatType: params.msg.chatType === "group" ? "group" : "dm",
     conversationId: conversationId ?? "",

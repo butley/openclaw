@@ -186,23 +186,9 @@ export async function dispatchReplyFromConfig(params: {
   const hookContext = deriveInboundMessageHookContext(ctx, { messageId: messageIdForHook });
   const { isGroup, groupId } = hookContext;
 
-  // [FORK-PATCH-5] WS Inbound Push — emit inbound message event for WebSocket/SSE broadcast
-  // so the webchat dashboard shows WA/Slack/etc. messages in real-time.
-  emitInboundMessageEvent({
-    messageId: messageIdForHook ?? "",
-    sessionKey: ctx.SessionKey ?? "",
-    channel,
-    accountId: ctx.AccountId ?? "",
-    from: ctx.From ?? "",
-    senderName: ctx.SenderName ?? "",
-    content: ctx.BodyForCommands ?? ctx.Body ?? "",
-    timestamp: timestamp ?? Date.now(),
-    chatType: ctx.ChatType === "group" ? "group" : "dm",
-    conversationId: chatId != null ? String(chatId) : "",
-    threadId: ctx.MessageThreadId != null ? String(ctx.MessageThreadId) : undefined,
-    hasMedia: !!ctx.MediaUrl,
-    mediaType: ctx.MediaUrls?.[0] ? "media" : undefined,
-  });
+  // NOTE: Inbound message events for WA are emitted in process-message.ts (WA path).
+  // dispatch-from-config.ts is used by Telegram/Discord/plugin channels.
+  // Don't emit here for WA to avoid duplicates.
 
   // Trigger plugin hooks (fire-and-forget)
   if (hookRunner?.hasHooks("message_received")) {
