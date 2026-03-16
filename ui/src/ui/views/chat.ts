@@ -56,7 +56,6 @@ export type ChatProps = {
   onSessionKeyChange: (next: string) => void;
   thinkingLevel: string | null;
   showThinking: boolean;
-  showToolCalls: boolean;
   loading: boolean;
   sending: boolean;
   canAbort?: boolean;
@@ -933,7 +932,6 @@ export function renderChat(props: ChatProps) {
             return renderMessageGroup(item, {
               onOpenSidebar: props.onOpenSidebar,
               showReasoning,
-              showToolCalls: props.showToolCalls,
               assistantName: props.assistantName,
               assistantAvatar: assistantIdentity.avatar,
               basePath: props.basePath,
@@ -1411,7 +1409,7 @@ function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
       continue;
     }
 
-    if (!props.showToolCalls && normalized.role.toLowerCase() === "toolresult") {
+    if (!props.showThinking && normalized.role.toLowerCase() === "toolresult") {
       continue;
     }
 
@@ -1440,7 +1438,7 @@ function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
         startedAt: segments[i].ts,
       });
     }
-    if (i < tools.length && props.showToolCalls) {
+    if (i < tools.length) {
       items.push({
         kind: "message",
         key: messageKey(tools[i], i + history.length),

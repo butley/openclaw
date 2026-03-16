@@ -77,26 +77,6 @@ describe("normalizePluginsConfig", () => {
     });
     expect(result.entries["voice-call"]?.hooks).toBeUndefined();
   });
-
-  it("normalizes legacy plugin ids to their merged bundled plugin id", () => {
-    const result = normalizePluginsConfig({
-      allow: ["openai-codex", "minimax-portal-auth"],
-      deny: ["openai-codex", "minimax-portal-auth"],
-      entries: {
-        "openai-codex": {
-          enabled: true,
-        },
-        "minimax-portal-auth": {
-          enabled: false,
-        },
-      },
-    });
-
-    expect(result.allow).toEqual(["openai", "minimax"]);
-    expect(result.deny).toEqual(["openai", "minimax"]);
-    expect(result.entries.openai?.enabled).toBe(true);
-    expect(result.entries.minimax?.enabled).toBe(false);
-  });
 });
 
 describe("resolveEffectiveEnableState", () => {
@@ -212,10 +192,5 @@ describe("resolveEnableState", () => {
       enabled: false,
       reason: "workspace plugin (disabled by default)",
     });
-  });
-
-  it("keeps bundled provider plugins enabled when they are bundled-default providers", () => {
-    const state = resolveEnableState("google", "bundled", normalizePluginsConfig({}));
-    expect(state).toEqual({ enabled: true });
   });
 });

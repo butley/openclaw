@@ -22,7 +22,7 @@ export async function applyAuthChoiceMiniMax(
   if (params.authChoice === "minimax-global-oauth") {
     return await applyAuthChoicePluginProvider(params, {
       authChoice: "minimax-global-oauth",
-      pluginId: "minimax",
+      pluginId: "minimax-portal-auth",
       providerId: "minimax-portal",
       methodId: "oauth",
       label: "MiniMax",
@@ -32,7 +32,7 @@ export async function applyAuthChoiceMiniMax(
   if (params.authChoice === "minimax-cn-oauth") {
     return await applyAuthChoicePluginProvider(params, {
       authChoice: "minimax-cn-oauth",
-      pluginId: "minimax",
+      pluginId: "minimax-portal-auth",
       providerId: "minimax-portal",
       methodId: "oauth-cn",
       label: "MiniMax CN",

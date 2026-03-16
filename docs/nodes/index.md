@@ -285,7 +285,6 @@ Available families:
 - `photos.latest`
 - `contacts.search`, `contacts.add`
 - `calendar.events`, `calendar.add`
-- `callLog.search`
 - `motion.activity`, `motion.pedometer`
 
 Example invokes:

@@ -14,7 +14,6 @@ const {
   resolveMemorySearchConfigMock,
   resolveSessionAgentIdMock,
   estimateTokensMock,
-  sessionAbortCompactionMock,
 } = vi.hoisted(() => {
   const contextEngineCompactMock = vi.fn(async () => ({
     ok: true as boolean,
@@ -66,7 +65,6 @@ const {
     })),
     resolveSessionAgentIdMock: vi.fn(() => "main"),
     estimateTokensMock: vi.fn((_message?: unknown) => 10),
-    sessionAbortCompactionMock: vi.fn(),
   };
 });
 
@@ -123,7 +121,6 @@ vi.mock("@mariozechner/pi-coding-agent", () => {
           session.messages.splice(1);
           return await sessionCompactImpl();
         }),
-        abortCompaction: sessionAbortCompactionMock,
         dispose: vi.fn(),
       };
       return { session };
@@ -154,7 +151,6 @@ vi.mock("../models-config.js", () => ({
 }));
 
 vi.mock("../model-auth.js", () => ({
-  applyLocalNoAuthHeaderOverride: vi.fn((model: unknown) => model),
   getApiKeyForModel: vi.fn(async () => ({ apiKey: "test", mode: "env" })),
   resolveModelAuthMode: vi.fn(() => "env"),
 }));
@@ -424,7 +420,6 @@ describe("compactEmbeddedPiSessionDirect hooks", () => {
     resolveSessionAgentIdMock.mockReturnValue("main");
     estimateTokensMock.mockReset();
     estimateTokensMock.mockReturnValue(10);
-    sessionAbortCompactionMock.mockReset();
     unregisterApiProviders(getCustomApiRegistrySourceId("ollama"));
   });
 
@@ -776,24 +771,6 @@ describe("compactEmbeddedPiSessionDirect hooks", () => {
     });
 
     expect(result.ok).toBe(true);
-  });
-
-  it("aborts in-flight compaction when the caller abort signal fires", async () => {
-    const controller = new AbortController();
-    sessionCompactImpl.mockImplementationOnce(() => new Promise<never>(() => {}));
-
-    const resultPromise = compactEmbeddedPiSessionDirect(
-      directCompactionArgs({
-        abortSignal: controller.signal,
-      }),
-    );
-
-    controller.abort(new Error("request timed out"));
-    const result = await resultPromise;
-
-    expect(result.ok).toBe(false);
-    expect(result.reason).toContain("request timed out");
-    expect(sessionAbortCompactionMock).toHaveBeenCalledTimes(1);
   });
 });
 

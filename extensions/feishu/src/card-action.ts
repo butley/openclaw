@@ -20,20 +20,6 @@ export type FeishuCardActionEvent = {
   };
 };
 
-function buildCardActionTextFallback(event: FeishuCardActionEvent): string {
-  const actionValue = event.action.value;
-  if (typeof actionValue === "object" && actionValue !== null) {
-    if ("text" in actionValue && typeof actionValue.text === "string") {
-      return actionValue.text;
-    }
-    if ("command" in actionValue && typeof actionValue.command === "string") {
-      return actionValue.command;
-    }
-    return JSON.stringify(actionValue);
-  }
-  return String(actionValue);
-}
-
 export async function handleFeishuCardAction(params: {
   cfg: ClawdbotConfig;
   event: FeishuCardActionEvent;
@@ -44,7 +30,21 @@ export async function handleFeishuCardAction(params: {
   const { cfg, event, runtime, accountId } = params;
   const account = resolveFeishuAccount({ cfg, accountId });
   const log = runtime?.log ?? console.log;
-  const content = buildCardActionTextFallback(event);
+
+  // Extract action value
+  const actionValue = event.action.value;
+  let content = "";
+  if (typeof actionValue === "object" && actionValue !== null) {
+    if ("text" in actionValue && typeof actionValue.text === "string") {
+      content = actionValue.text;
+    } else if ("command" in actionValue && typeof actionValue.command === "string") {
+      content = actionValue.command;
+    } else {
+      content = JSON.stringify(actionValue);
+    }
+  } else {
+    content = String(actionValue);
+  }
 
   // Construct a synthetic message event
   const messageEvent: FeishuMessageEvent = {

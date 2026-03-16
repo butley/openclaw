@@ -110,10 +110,6 @@ class NodeRuntime(context: Context) {
     appContext = appContext,
   )
 
-  private val callLogHandler: CallLogHandler = CallLogHandler(
-    appContext = appContext,
-  )
-
   private val motionHandler: MotionHandler = MotionHandler(
     appContext = appContext,
   )
@@ -155,7 +151,6 @@ class NodeRuntime(context: Context) {
     smsHandler = smsHandlerImpl,
     a2uiHandler = a2uiHandler,
     debugHandler = debugHandler,
-    callLogHandler = callLogHandler,
     isForeground = { _isForeground.value },
     cameraEnabled = { cameraEnabled.value },
     locationEnabled = { locationMode.value != LocationMode.Off },

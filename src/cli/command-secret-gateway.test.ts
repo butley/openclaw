@@ -43,7 +43,7 @@ describe("resolveCommandSecretRefsViaGateway", () => {
   async function resolveTalkApiKey(params: {
     envKey: string;
     commandName?: string;
-    mode?: "enforce_resolved" | "read_only_status";
+    mode?: "strict" | "summary";
   }) {
     return resolveCommandSecretRefsViaGateway({
       config: makeTalkApiKeySecretRefConfig(params.envKey),
@@ -447,7 +447,7 @@ describe("resolveCommandSecretRefsViaGateway", () => {
     expect(result.diagnostics).toEqual(["memory search ref inactive"]);
   });
 
-  it("degrades unresolved refs in read-only status mode instead of throwing", async () => {
+  it("degrades unresolved refs in summary mode instead of throwing", async () => {
     const envKey = "TALK_API_KEY_SUMMARY_MISSING";
     callGateway.mockResolvedValueOnce({
       assignments: [],
@@ -457,7 +457,7 @@ describe("resolveCommandSecretRefsViaGateway", () => {
       const result = await resolveTalkApiKey({
         envKey,
         commandName: "status",
-        mode: "read_only_status",
+        mode: "summary",
       });
       expect(result.resolvedConfig.talk?.apiKey).toBeUndefined();
       expect(result.hadUnresolvedTargets).toBe(true);
@@ -467,25 +467,6 @@ describe("resolveCommandSecretRefsViaGateway", () => {
           entry.includes("talk.apiKey is unavailable in this command path"),
         ),
       ).toBe(true);
-    });
-  });
-
-  it("accepts legacy summary mode as a read-only alias", async () => {
-    const envKey = "TALK_API_KEY_LEGACY_SUMMARY_MISSING";
-    callGateway.mockResolvedValueOnce({
-      assignments: [],
-      diagnostics: [],
-    });
-    await withEnvValue(envKey, undefined, async () => {
-      const result = await resolveCommandSecretRefsViaGateway({
-        config: makeTalkApiKeySecretRefConfig(envKey),
-        commandName: "status",
-        targetIds: new Set(["talk.apiKey"]),
-        mode: "summary",
-      });
-      expect(result.resolvedConfig.talk?.apiKey).toBeUndefined();
-      expect(result.hadUnresolvedTargets).toBe(true);
-      expect(result.targetStatesByPath["talk.apiKey"]).toBe("unresolved");
     });
   });
 
@@ -499,7 +480,7 @@ describe("resolveCommandSecretRefsViaGateway", () => {
       const result = await resolveTalkApiKey({
         envKey,
         commandName: "status",
-        mode: "read_only_status",
+        mode: "summary",
       });
       expect(result.resolvedConfig.talk?.apiKey).toBe("recovered-locally");
       expect(result.hadUnresolvedTargets).toBe(false);
@@ -590,7 +571,7 @@ describe("resolveCommandSecretRefsViaGateway", () => {
         } as OpenClawConfig,
         commandName: "status",
         targetIds: new Set(["talk.apiKey"]),
-        mode: "read_only_status",
+        mode: "summary",
       });
 
       expect(result.resolvedConfig.talk?.apiKey).toBe("target-only");
@@ -610,7 +591,7 @@ describe("resolveCommandSecretRefsViaGateway", () => {
     }
   });
 
-  it("degrades unresolved refs in read-only operational mode", async () => {
+  it("degrades unresolved refs in operational read-only mode", async () => {
     const envKey = "TALK_API_KEY_OPERATIONAL_MISSING";
     const priorValue = process.env[envKey];
     delete process.env[envKey];
@@ -625,7 +606,7 @@ describe("resolveCommandSecretRefsViaGateway", () => {
         } as OpenClawConfig,
         commandName: "channels resolve",
         targetIds: new Set(["talk.apiKey"]),
-        mode: "read_only_operational",
+        mode: "operational_readonly",
       });
 
       expect(result.resolvedConfig.talk?.apiKey).toBeUndefined();

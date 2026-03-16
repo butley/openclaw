@@ -81,6 +81,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -93,6 +94,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import ai.openclaw.app.LocationMode
 import ai.openclaw.app.MainViewModel
+import ai.openclaw.app.R
 import ai.openclaw.app.node.DeviceNotificationListenerService
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
@@ -121,87 +123,101 @@ private enum class PermissionToggle {
   Calendar,
   Motion,
   Sms,
-  CallLog,
 }
 
 private enum class SpecialAccessToggle {
   NotificationListener,
 }
 
-private val onboardingBackgroundGradient: Brush
-  @Composable get() = mobileBackgroundGradient
+private val onboardingBackgroundGradient =
+  listOf(
+    Color(0xFFFFFFFF),
+    Color(0xFFF7F8FA),
+    Color(0xFFEFF1F5),
+  )
+private val onboardingSurface = Color(0xFFF6F7FA)
+private val onboardingBorder = Color(0xFFE5E7EC)
+private val onboardingBorderStrong = Color(0xFFD6DAE2)
+private val onboardingText = Color(0xFF17181C)
+private val onboardingTextSecondary = Color(0xFF4D5563)
+private val onboardingTextTertiary = Color(0xFF8A92A2)
+private val onboardingAccent = Color(0xFF1D5DD8)
+private val onboardingAccentSoft = Color(0xFFECF3FF)
+private val onboardingSuccess = Color(0xFF2F8C5A)
+private val onboardingWarning = Color(0xFFC8841A)
+private val onboardingCommandBg = Color(0xFF15171B)
+private val onboardingCommandBorder = Color(0xFF2B2E35)
+private val onboardingCommandAccent = Color(0xFF3FC97A)
+private val onboardingCommandText = Color(0xFFE8EAEE)
 
-private val onboardingSurface: Color
-  @Composable get() = mobileCardSurface
+private val onboardingFontFamily =
+  FontFamily(
+    Font(resId = R.font.manrope_400_regular, weight = FontWeight.Normal),
+    Font(resId = R.font.manrope_500_medium, weight = FontWeight.Medium),
+    Font(resId = R.font.manrope_600_semibold, weight = FontWeight.SemiBold),
+    Font(resId = R.font.manrope_700_bold, weight = FontWeight.Bold),
+  )
 
-private val onboardingBorder: Color
-  @Composable get() = mobileBorder
+private val onboardingDisplayStyle =
+  TextStyle(
+    fontFamily = onboardingFontFamily,
+    fontWeight = FontWeight.Bold,
+    fontSize = 34.sp,
+    lineHeight = 40.sp,
+    letterSpacing = (-0.8).sp,
+  )
 
-private val onboardingBorderStrong: Color
-  @Composable get() = mobileBorderStrong
+private val onboardingTitle1Style =
+  TextStyle(
+    fontFamily = onboardingFontFamily,
+    fontWeight = FontWeight.SemiBold,
+    fontSize = 24.sp,
+    lineHeight = 30.sp,
+    letterSpacing = (-0.5).sp,
+  )
 
-private val onboardingText: Color
-  @Composable get() = mobileText
+private val onboardingHeadlineStyle =
+  TextStyle(
+    fontFamily = onboardingFontFamily,
+    fontWeight = FontWeight.SemiBold,
+    fontSize = 16.sp,
+    lineHeight = 22.sp,
+    letterSpacing = (-0.1).sp,
+  )
 
-private val onboardingTextSecondary: Color
-  @Composable get() = mobileTextSecondary
+private val onboardingBodyStyle =
+  TextStyle(
+    fontFamily = onboardingFontFamily,
+    fontWeight = FontWeight.Medium,
+    fontSize = 15.sp,
+    lineHeight = 22.sp,
+  )
 
-private val onboardingTextTertiary: Color
-  @Composable get() = mobileTextTertiary
+private val onboardingCalloutStyle =
+  TextStyle(
+    fontFamily = onboardingFontFamily,
+    fontWeight = FontWeight.Medium,
+    fontSize = 14.sp,
+    lineHeight = 20.sp,
+  )
 
-private val onboardingAccent: Color
-  @Composable get() = mobileAccent
+private val onboardingCaption1Style =
+  TextStyle(
+    fontFamily = onboardingFontFamily,
+    fontWeight = FontWeight.Medium,
+    fontSize = 12.sp,
+    lineHeight = 16.sp,
+    letterSpacing = 0.2.sp,
+  )
 
-private val onboardingAccentSoft: Color
-  @Composable get() = mobileAccentSoft
-
-private val onboardingAccentBorderStrong: Color
-  @Composable get() = mobileAccentBorderStrong
-
-private val onboardingSuccess: Color
-  @Composable get() = mobileSuccess
-
-private val onboardingSuccessSoft: Color
-  @Composable get() = mobileSuccessSoft
-
-private val onboardingWarning: Color
-  @Composable get() = mobileWarning
-
-private val onboardingWarningSoft: Color
-  @Composable get() = mobileWarningSoft
-
-private val onboardingCommandBg: Color
-  @Composable get() = mobileCodeBg
-
-private val onboardingCommandBorder: Color
-  @Composable get() = mobileCodeBorder
-
-private val onboardingCommandAccent: Color
-  @Composable get() = mobileCodeAccent
-
-private val onboardingCommandText: Color
-  @Composable get() = mobileCodeText
-
-private val onboardingDisplayStyle: TextStyle
-  get() = mobileDisplay
-
-private val onboardingTitle1Style: TextStyle
-  get() = mobileTitle1
-
-private val onboardingHeadlineStyle: TextStyle
-  get() = mobileHeadline
-
-private val onboardingBodyStyle: TextStyle
-  get() = mobileBody
-
-private val onboardingCalloutStyle: TextStyle
-  get() = mobileCallout
-
-private val onboardingCaption1Style: TextStyle
-  get() = mobileCaption1
-
-private val onboardingCaption2Style: TextStyle
-  get() = mobileCaption2
+private val onboardingCaption2Style =
+  TextStyle(
+    fontFamily = onboardingFontFamily,
+    fontWeight = FontWeight.Medium,
+    fontSize = 11.sp,
+    lineHeight = 14.sp,
+    letterSpacing = 0.4.sp,
+  )
 
 @Composable
 fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
@@ -289,10 +305,6 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     rememberSaveable {
       mutableStateOf(smsAvailable && isPermissionGranted(context, Manifest.permission.SEND_SMS))
     }
-  var enableCallLog by
-    rememberSaveable {
-      mutableStateOf(isPermissionGranted(context, Manifest.permission.READ_CALL_LOG))
-    }
 
   var pendingPermissionToggle by remember { mutableStateOf<PermissionToggle?>(null) }
   var pendingSpecialAccessToggle by remember { mutableStateOf<SpecialAccessToggle?>(null) }
@@ -309,7 +321,6 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
       PermissionToggle.Calendar -> enableCalendar = enabled
       PermissionToggle.Motion -> enableMotion = enabled && motionAvailable
       PermissionToggle.Sms -> enableSms = enabled && smsAvailable
-      PermissionToggle.CallLog -> enableCallLog = enabled
     }
   }
 
@@ -337,7 +348,6 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
           isPermissionGranted(context, Manifest.permission.ACTIVITY_RECOGNITION)
       PermissionToggle.Sms ->
         !smsAvailable || isPermissionGranted(context, Manifest.permission.SEND_SMS)
-      PermissionToggle.CallLog -> isPermissionGranted(context, Manifest.permission.READ_CALL_LOG)
     }
 
   fun setSpecialAccessToggleEnabled(toggle: SpecialAccessToggle, enabled: Boolean) {
@@ -359,7 +369,6 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
       enableCalendar,
       enableMotion,
       enableSms,
-      enableCallLog,
       smsAvailable,
       motionAvailable,
     ) {
@@ -375,7 +384,6 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
       if (enableCalendar) enabled += "Calendar"
       if (enableMotion && motionAvailable) enabled += "Motion"
       if (smsAvailable && enableSms) enabled += "SMS"
-      if (enableCallLog) enabled += "Call Log"
       if (enabled.isEmpty()) "None selected" else enabled.joinToString(", ")
     }
 
@@ -464,28 +472,19 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val prompt = pendingTrust!!
     AlertDialog(
       onDismissRequest = { viewModel.declineGatewayTrustPrompt() },
-      containerColor = onboardingSurface,
-      title = { Text("Trust this gateway?", style = onboardingHeadlineStyle, color = onboardingText) },
+      title = { Text("Trust this gateway?") },
       text = {
         Text(
           "First-time TLS connection.\n\nVerify this SHA-256 fingerprint before trusting:\n${prompt.fingerprintSha256}",
-          style = onboardingCalloutStyle,
-          color = onboardingText,
         )
       },
       confirmButton = {
-        TextButton(
-          onClick = { viewModel.acceptGatewayTrustPrompt() },
-          colors = ButtonDefaults.textButtonColors(contentColor = onboardingAccent),
-        ) {
+        TextButton(onClick = { viewModel.acceptGatewayTrustPrompt() }) {
           Text("Trust and continue")
         }
       },
       dismissButton = {
-        TextButton(
-          onClick = { viewModel.declineGatewayTrustPrompt() },
-          colors = ButtonDefaults.textButtonColors(contentColor = onboardingTextSecondary),
-        ) {
+        TextButton(onClick = { viewModel.declineGatewayTrustPrompt() }) {
           Text("Cancel")
         }
       },
@@ -496,7 +495,7 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     modifier =
       modifier
         .fillMaxSize()
-        .background(onboardingBackgroundGradient),
+        .background(Brush.verticalGradient(onboardingBackgroundGradient)),
   ) {
     Column(
       modifier =
@@ -604,7 +603,6 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
               motionPermissionRequired = motionPermissionRequired,
               enableSms = enableSms,
               smsAvailable = smsAvailable,
-              enableCallLog = enableCallLog,
               context = context,
               onDiscoveryChange = { checked ->
                 requestPermissionToggle(
@@ -702,13 +700,6 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                   )
                 }
               },
-              onCallLogChange = { checked ->
-                requestPermissionToggle(
-                  PermissionToggle.CallLog,
-                  checked,
-                  listOf(Manifest.permission.READ_CALL_LOG),
-                )
-              },
             )
           OnboardingStep.FinalCheck ->
             FinalStep(
@@ -764,7 +755,13 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
               onClick = { step = OnboardingStep.Gateway },
               modifier = Modifier.weight(1f).height(52.dp),
               shape = RoundedCornerShape(14.dp),
-              colors = onboardingPrimaryButtonColors(),
+              colors =
+                ButtonDefaults.buttonColors(
+                  containerColor = onboardingAccent,
+                  contentColor = Color.White,
+                  disabledContainerColor = onboardingAccent.copy(alpha = 0.45f),
+                  disabledContentColor = Color.White,
+                ),
             ) {
               Text("Next", style = onboardingHeadlineStyle.copy(fontWeight = FontWeight.Bold))
             }
@@ -810,7 +807,13 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
               },
               modifier = Modifier.weight(1f).height(52.dp),
               shape = RoundedCornerShape(14.dp),
-              colors = onboardingPrimaryButtonColors(),
+              colors =
+                ButtonDefaults.buttonColors(
+                  containerColor = onboardingAccent,
+                  contentColor = Color.White,
+                  disabledContainerColor = onboardingAccent.copy(alpha = 0.45f),
+                  disabledContentColor = Color.White,
+                ),
             ) {
               Text("Next", style = onboardingHeadlineStyle.copy(fontWeight = FontWeight.Bold))
             }
@@ -824,7 +827,13 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
               },
               modifier = Modifier.weight(1f).height(52.dp),
               shape = RoundedCornerShape(14.dp),
-              colors = onboardingPrimaryButtonColors(),
+              colors =
+                ButtonDefaults.buttonColors(
+                  containerColor = onboardingAccent,
+                  contentColor = Color.White,
+                  disabledContainerColor = onboardingAccent.copy(alpha = 0.45f),
+                  disabledContentColor = Color.White,
+                ),
             ) {
               Text("Next", style = onboardingHeadlineStyle.copy(fontWeight = FontWeight.Bold))
             }
@@ -835,7 +844,13 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                 onClick = { viewModel.setOnboardingCompleted(true) },
                 modifier = Modifier.weight(1f).height(52.dp),
                 shape = RoundedCornerShape(14.dp),
-                colors = onboardingPrimaryButtonColors(),
+                colors =
+                  ButtonDefaults.buttonColors(
+                    containerColor = onboardingAccent,
+                    contentColor = Color.White,
+                    disabledContainerColor = onboardingAccent.copy(alpha = 0.45f),
+                    disabledContentColor = Color.White,
+                  ),
               ) {
                 Text("Finish", style = onboardingHeadlineStyle.copy(fontWeight = FontWeight.Bold))
               }
@@ -868,7 +883,13 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                 },
                 modifier = Modifier.weight(1f).height(52.dp),
                 shape = RoundedCornerShape(14.dp),
-                colors = onboardingPrimaryButtonColors(),
+                colors =
+                  ButtonDefaults.buttonColors(
+                    containerColor = onboardingAccent,
+                    contentColor = Color.White,
+                    disabledContainerColor = onboardingAccent.copy(alpha = 0.45f),
+                    disabledContentColor = Color.White,
+                  ),
               ) {
                 Text("Connect", style = onboardingHeadlineStyle.copy(fontWeight = FontWeight.Bold))
               }
@@ -879,36 +900,6 @@ fun OnboardingFlow(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     }
   }
 }
-
-@Composable
-private fun onboardingPrimaryButtonColors() =
-  ButtonDefaults.buttonColors(
-    containerColor = onboardingAccent,
-    contentColor = Color.White,
-    disabledContainerColor = onboardingAccent.copy(alpha = 0.45f),
-    disabledContentColor = Color.White.copy(alpha = 0.9f),
-  )
-
-@Composable
-private fun onboardingTextFieldColors() =
-  OutlinedTextFieldDefaults.colors(
-    focusedContainerColor = onboardingSurface,
-    unfocusedContainerColor = onboardingSurface,
-    focusedBorderColor = onboardingAccent,
-    unfocusedBorderColor = onboardingBorder,
-    focusedTextColor = onboardingText,
-    unfocusedTextColor = onboardingText,
-    cursorColor = onboardingAccent,
-  )
-
-@Composable
-private fun onboardingSwitchColors() =
-  SwitchDefaults.colors(
-    checkedTrackColor = onboardingAccent,
-    uncheckedTrackColor = onboardingBorderStrong,
-    checkedThumbColor = Color.White,
-    uncheckedThumbColor = Color.White,
-  )
 
 @Composable
 private fun StepRail(current: OnboardingStep) {
@@ -1014,7 +1005,11 @@ private fun GatewayStep(
       onClick = onScanQrClick,
       modifier = Modifier.fillMaxWidth().height(48.dp),
       shape = RoundedCornerShape(12.dp),
-      colors = onboardingPrimaryButtonColors(),
+      colors =
+        ButtonDefaults.buttonColors(
+          containerColor = onboardingAccent,
+          contentColor = Color.White,
+        ),
     ) {
       Text("Scan QR code", style = onboardingHeadlineStyle.copy(fontWeight = FontWeight.Bold))
     }
@@ -1064,7 +1059,15 @@ private fun GatewayStep(
             textStyle = onboardingBodyStyle.copy(fontFamily = FontFamily.Monospace, color = onboardingText),
             shape = RoundedCornerShape(14.dp),
             colors =
-              onboardingTextFieldColors(),
+              OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = onboardingSurface,
+                unfocusedContainerColor = onboardingSurface,
+                focusedBorderColor = onboardingAccent,
+                unfocusedBorderColor = onboardingBorder,
+                focusedTextColor = onboardingText,
+                unfocusedTextColor = onboardingText,
+                cursorColor = onboardingAccent,
+              ),
           )
           if (!resolvedEndpoint.isNullOrBlank()) {
             ResolvedEndpoint(endpoint = resolvedEndpoint)
@@ -1094,7 +1097,15 @@ private fun GatewayStep(
             textStyle = onboardingBodyStyle.copy(color = onboardingText),
             shape = RoundedCornerShape(14.dp),
             colors =
-              onboardingTextFieldColors(),
+              OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = onboardingSurface,
+                unfocusedContainerColor = onboardingSurface,
+                focusedBorderColor = onboardingAccent,
+                unfocusedBorderColor = onboardingBorder,
+                focusedTextColor = onboardingText,
+                unfocusedTextColor = onboardingText,
+                cursorColor = onboardingAccent,
+              ),
           )
 
           Text("PORT", style = onboardingCaption1Style.copy(letterSpacing = 0.9.sp), color = onboardingTextSecondary)
@@ -1108,7 +1119,15 @@ private fun GatewayStep(
             textStyle = onboardingBodyStyle.copy(fontFamily = FontFamily.Monospace, color = onboardingText),
             shape = RoundedCornerShape(14.dp),
             colors =
-              onboardingTextFieldColors(),
+              OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = onboardingSurface,
+                unfocusedContainerColor = onboardingSurface,
+                focusedBorderColor = onboardingAccent,
+                unfocusedBorderColor = onboardingBorder,
+                focusedTextColor = onboardingText,
+                unfocusedTextColor = onboardingText,
+                cursorColor = onboardingAccent,
+              ),
           )
 
           Row(
@@ -1124,7 +1143,12 @@ private fun GatewayStep(
               checked = manualTls,
               onCheckedChange = onManualTlsChange,
               colors =
-                onboardingSwitchColors(),
+                SwitchDefaults.colors(
+                  checkedTrackColor = onboardingAccent,
+                  uncheckedTrackColor = onboardingBorderStrong,
+                  checkedThumbColor = Color.White,
+                  uncheckedThumbColor = Color.White,
+                ),
             )
           }
 
@@ -1139,7 +1163,15 @@ private fun GatewayStep(
             textStyle = onboardingBodyStyle.copy(color = onboardingText),
             shape = RoundedCornerShape(14.dp),
             colors =
-              onboardingTextFieldColors(),
+              OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = onboardingSurface,
+                unfocusedContainerColor = onboardingSurface,
+                focusedBorderColor = onboardingAccent,
+                unfocusedBorderColor = onboardingBorder,
+                focusedTextColor = onboardingText,
+                unfocusedTextColor = onboardingText,
+                cursorColor = onboardingAccent,
+              ),
           )
 
           Text("PASSWORD (OPTIONAL)", style = onboardingCaption1Style.copy(letterSpacing = 0.9.sp), color = onboardingTextSecondary)
@@ -1153,7 +1185,15 @@ private fun GatewayStep(
             textStyle = onboardingBodyStyle.copy(color = onboardingText),
             shape = RoundedCornerShape(14.dp),
             colors =
-              onboardingTextFieldColors(),
+              OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = onboardingSurface,
+                unfocusedContainerColor = onboardingSurface,
+                focusedBorderColor = onboardingAccent,
+                unfocusedBorderColor = onboardingBorder,
+                focusedTextColor = onboardingText,
+                unfocusedTextColor = onboardingText,
+                cursorColor = onboardingAccent,
+              ),
           )
 
           if (!manualResolvedEndpoint.isNullOrBlank()) {
@@ -1221,7 +1261,7 @@ private fun GatewayModeChip(
         containerColor = if (active) onboardingAccent else onboardingSurface,
         contentColor = if (active) Color.White else onboardingText,
       ),
-    border = androidx.compose.foundation.BorderStroke(1.dp, if (active) onboardingAccentBorderStrong else onboardingBorderStrong),
+    border = androidx.compose.foundation.BorderStroke(1.dp, if (active) Color(0xFF184DAF) else onboardingBorderStrong),
   ) {
     Text(
       text = label,
@@ -1299,7 +1339,6 @@ private fun PermissionsStep(
   motionPermissionRequired: Boolean,
   enableSms: Boolean,
   smsAvailable: Boolean,
-  enableCallLog: Boolean,
   context: Context,
   onDiscoveryChange: (Boolean) -> Unit,
   onLocationChange: (Boolean) -> Unit,
@@ -1312,7 +1351,6 @@ private fun PermissionsStep(
   onCalendarChange: (Boolean) -> Unit,
   onMotionChange: (Boolean) -> Unit,
   onSmsChange: (Boolean) -> Unit,
-  onCallLogChange: (Boolean) -> Unit,
 ) {
   val discoveryPermission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.NEARBY_WIFI_DEVICES else Manifest.permission.ACCESS_FINE_LOCATION
   val locationGranted =
@@ -1443,15 +1481,6 @@ private fun PermissionsStep(
         onCheckedChange = onSmsChange,
       )
     }
-    InlineDivider()
-    PermissionToggleRow(
-      title = "Call Log",
-      subtitle = "callLog.search",
-      checked = enableCallLog,
-      granted = isPermissionGranted(context, Manifest.permission.READ_CALL_LOG),
-      onCheckedChange = onCallLogChange,
-    )
-    Text("All settings can be changed later in Settings.", style = onboardingCalloutStyle, color = onboardingTextSecondary)
   }
 }
 
@@ -1495,7 +1524,13 @@ private fun PermissionToggleRow(
       checked = checked,
       onCheckedChange = onCheckedChange,
       enabled = enabled,
-      colors = onboardingSwitchColors(),
+      colors =
+        SwitchDefaults.colors(
+          checkedTrackColor = onboardingAccent,
+          uncheckedTrackColor = onboardingBorderStrong,
+          checkedThumbColor = Color.White,
+          uncheckedThumbColor = Color.White,
+        ),
     )
   }
 }
@@ -1570,7 +1605,7 @@ private fun FinalStep(
       Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
-        color = onboardingSuccessSoft,
+        color = Color(0xFFEEF9F3),
         border = androidx.compose.foundation.BorderStroke(1.dp, onboardingSuccess.copy(alpha = 0.2f)),
       ) {
         Row(
@@ -1606,7 +1641,7 @@ private fun FinalStep(
       Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
-        color = onboardingWarningSoft,
+        color = Color(0xFFFFF8EC),
         border = androidx.compose.foundation.BorderStroke(1.dp, onboardingWarning.copy(alpha = 0.2f)),
       ) {
         Column(

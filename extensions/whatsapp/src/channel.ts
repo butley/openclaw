@@ -1,91 +1,45 @@
 import {
-  buildChannelConfigSchema,
   buildAccountScopedDmSecurityPolicy,
   collectAllowlistProviderGroupPolicyWarnings,
   collectOpenGroupPolicyRouteAllowlistWarnings,
+} from "openclaw/plugin-sdk/compat";
+import {
+  applyAccountNameToChannelSection,
+  buildChannelConfigSchema,
+  collectWhatsAppStatusIssues,
   createActionGate,
   createWhatsAppOutboundBase,
   DEFAULT_ACCOUNT_ID,
   getChatChannelMeta,
+  listWhatsAppAccountIds,
   listWhatsAppDirectoryGroupsFromConfig,
   listWhatsAppDirectoryPeersFromConfig,
+  looksLikeWhatsAppTargetId,
+  migrateBaseNameToDefaultAccount,
+  normalizeAccountId,
   normalizeE164,
   formatWhatsAppConfigAllowFromEntries,
+  normalizeWhatsAppMessagingTarget,
   readStringParam,
+  resolveDefaultWhatsAppAccountId,
   resolveWhatsAppOutboundTarget,
+  resolveWhatsAppAccount,
   resolveWhatsAppConfigAllowFrom,
   resolveWhatsAppConfigDefaultTo,
   resolveWhatsAppGroupRequireMention,
   resolveWhatsAppGroupIntroHint,
   resolveWhatsAppGroupToolPolicy,
   resolveWhatsAppHeartbeatRecipients,
-  resolveWhatsAppMentionStripRegexes,
+  resolveWhatsAppMentionStripPatterns,
+  whatsappOnboardingAdapter,
   WhatsAppConfigSchema,
   type ChannelMessageActionName,
   type ChannelPlugin,
-} from "openclaw/plugin-sdk/whatsapp";
-// WhatsApp-specific imports from local extension code (moved from src/web/ and src/channels/plugins/)
-import {
-  listWhatsAppAccountIds,
-  resolveDefaultWhatsAppAccountId,
-  resolveWhatsAppAccount,
   type ResolvedWhatsAppAccount,
-} from "./accounts.js";
-import { looksLikeWhatsAppTargetId, normalizeWhatsAppMessagingTarget } from "./normalize.js";
+} from "openclaw/plugin-sdk/whatsapp";
 import { getWhatsAppRuntime } from "./runtime.js";
-import { whatsappSetupAdapter } from "./setup-core.js";
-import { collectWhatsAppStatusIssues } from "./status-issues.js";
 
 const meta = getChatChannelMeta("whatsapp");
-
-async function loadWhatsAppChannelRuntime() {
-  return await import("./channel.runtime.js");
-}
-
-const whatsappSetupWizardProxy = {
-  channel: "whatsapp",
-  status: {
-    configuredLabel: "linked",
-    unconfiguredLabel: "not linked",
-    configuredHint: "linked",
-    unconfiguredHint: "not linked",
-    configuredScore: 5,
-    unconfiguredScore: 4,
-    resolveConfigured: async ({ cfg }) =>
-      await (
-        await loadWhatsAppChannelRuntime()
-      ).whatsappSetupWizard.status.resolveConfigured({
-        cfg,
-      }),
-    resolveStatusLines: async ({ cfg, configured }) =>
-      (await (
-        await loadWhatsAppChannelRuntime()
-      ).whatsappSetupWizard.status.resolveStatusLines?.({
-        cfg,
-        configured,
-      })) ?? [],
-  },
-  resolveShouldPromptAccountIds: (params) =>
-    (params.shouldPromptAccountIds || params.options?.promptWhatsAppAccountId) ?? false,
-  credentials: [],
-  finalize: async (params) =>
-    await (
-      await loadWhatsAppChannelRuntime()
-    ).whatsappSetupWizard.finalize!(params),
-  disable: (cfg) => ({
-    ...cfg,
-    channels: {
-      ...cfg.channels,
-      whatsapp: {
-        ...cfg.channels?.whatsapp,
-        enabled: false,
-      },
-    },
-  }),
-  onAccountRecorded: (accountId, options) => {
-    options?.onWhatsAppAccountId?.(accountId);
-  },
-} satisfies NonNullable<ChannelPlugin<ResolvedWhatsAppAccount>["setupWizard"]>;
 
 export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
   id: "whatsapp",
@@ -96,7 +50,7 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
     forceAccountBinding: true,
     preferSessionLookupForAnnounceTarget: true,
   },
-  setupWizard: whatsappSetupWizardProxy,
+  onboarding: whatsappOnboardingAdapter,
   agentTools: () => [getWhatsAppRuntime().channel.whatsapp.createLoginTool()],
   pairing: {
     idLabel: "whatsappSenderId",
@@ -209,14 +163,56 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
       });
     },
   },
-  setup: whatsappSetupAdapter,
+  setup: {
+    resolveAccountId: ({ accountId }) => normalizeAccountId(accountId),
+    applyAccountName: ({ cfg, accountId, name }) =>
+      applyAccountNameToChannelSection({
+        cfg,
+        channelKey: "whatsapp",
+        accountId,
+        name,
+        alwaysUseAccounts: true,
+      }),
+    applyAccountConfig: ({ cfg, accountId, input }) => {
+      const namedConfig = applyAccountNameToChannelSection({
+        cfg,
+        channelKey: "whatsapp",
+        accountId,
+        name: input.name,
+        alwaysUseAccounts: true,
+      });
+      const next = migrateBaseNameToDefaultAccount({
+        cfg: namedConfig,
+        channelKey: "whatsapp",
+        alwaysUseAccounts: true,
+      });
+      const entry = {
+        ...next.channels?.whatsapp?.accounts?.[accountId],
+        ...(input.authDir ? { authDir: input.authDir } : {}),
+        enabled: true,
+      };
+      return {
+        ...next,
+        channels: {
+          ...next.channels,
+          whatsapp: {
+            ...next.channels?.whatsapp,
+            accounts: {
+              ...next.channels?.whatsapp?.accounts,
+              [accountId]: entry,
+            },
+          },
+        },
+      };
+    },
+  },
   groups: {
     resolveRequireMention: resolveWhatsAppGroupRequireMention,
     resolveToolPolicy: resolveWhatsAppGroupToolPolicy,
     resolveGroupIntroHint: resolveWhatsAppGroupIntroHint,
   },
   mentions: {
-    stripRegexes: ({ ctx }) => resolveWhatsAppMentionStripRegexes(ctx),
+    stripPatterns: ({ ctx }) => resolveWhatsAppMentionStripPatterns(ctx),
   },
   commands: {
     enforceOwnerForCommands: true,

@@ -24,57 +24,19 @@ export type NormalizedPluginsConfig = {
 };
 
 export const BUNDLED_ENABLED_BY_DEFAULT = new Set<string>([
-  "anthropic",
-  "byteplus",
-  "cloudflare-ai-gateway",
   "device-pair",
-  "github-copilot",
-  "google",
-  "huggingface",
-  "kilocode",
-  "kimi-coding",
-  "minimax",
-  "mistral",
-  "modelstudio",
-  "moonshot",
-  "nvidia",
   "ollama",
-  "openai",
-  "opencode",
-  "opencode-go",
-  "openrouter",
   "phone-control",
-  "qianfan",
-  "qwen-portal-auth",
   "sglang",
-  "synthetic",
   "talk-voice",
-  "together",
-  "venice",
-  "vercel-ai-gateway",
   "vllm",
-  "volcengine",
-  "xiaomi",
-  "zai",
 ]);
-
-const PLUGIN_ID_ALIASES: Readonly<Record<string, string>> = {
-  "openai-codex": "openai",
-  "minimax-portal-auth": "minimax",
-};
-
-function normalizePluginId(id: string): string {
-  const trimmed = id.trim();
-  return PLUGIN_ID_ALIASES[trimmed] ?? trimmed;
-}
 
 const normalizeList = (value: unknown): string[] => {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value
-    .map((entry) => (typeof entry === "string" ? normalizePluginId(entry) : ""))
-    .filter(Boolean);
+  return value.map((entry) => (typeof entry === "string" ? entry.trim() : "")).filter(Boolean);
 };
 
 const normalizeSlotValue = (value: unknown): string | null | undefined => {
@@ -97,12 +59,11 @@ const normalizePluginEntries = (entries: unknown): NormalizedPluginsConfig["entr
   }
   const normalized: NormalizedPluginsConfig["entries"] = {};
   for (const [key, value] of Object.entries(entries)) {
-    const normalizedKey = normalizePluginId(key);
-    if (!normalizedKey) {
+    if (!key.trim()) {
       continue;
     }
     if (!value || typeof value !== "object" || Array.isArray(value)) {
-      normalized[normalizedKey] = {};
+      normalized[key] = {};
       continue;
     }
     const entry = value as Record<string, unknown>;
@@ -120,12 +81,10 @@ const normalizePluginEntries = (entries: unknown): NormalizedPluginsConfig["entr
             allowPromptInjection: hooks.allowPromptInjection,
           }
         : undefined;
-    normalized[normalizedKey] = {
-      ...normalized[normalizedKey],
-      enabled:
-        typeof entry.enabled === "boolean" ? entry.enabled : normalized[normalizedKey]?.enabled,
-      hooks: normalizedHooks ?? normalized[normalizedKey]?.hooks,
-      config: "config" in entry ? entry.config : normalized[normalizedKey]?.config,
+    normalized[key] = {
+      enabled: typeof entry.enabled === "boolean" ? entry.enabled : undefined,
+      hooks: normalizedHooks,
+      config: "config" in entry ? entry.config : undefined,
     };
   }
   return normalized;

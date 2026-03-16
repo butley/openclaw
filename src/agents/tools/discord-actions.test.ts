@@ -67,7 +67,7 @@ const {
   timeoutMemberDiscord,
 } = discordSendMocks;
 
-vi.mock("../../../extensions/discord/src/send.js", () => ({
+vi.mock("../../discord/send.js", () => ({
   ...discordSendMocks,
 }));
 

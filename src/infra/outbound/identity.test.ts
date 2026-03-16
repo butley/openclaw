@@ -20,13 +20,11 @@ describe("normalizeOutboundIdentity", () => {
         name: "  Demo Bot  ",
         avatarUrl: " https://example.com/a.png ",
         emoji: "  🤖  ",
-        theme: "  ocean  ",
       }),
     ).toEqual({
       name: "Demo Bot",
       avatarUrl: "https://example.com/a.png",
       emoji: "🤖",
-      theme: "ocean",
     });
     expect(
       normalizeOutboundIdentity({
@@ -43,7 +41,6 @@ describe("resolveAgentOutboundIdentity", () => {
     resolveAgentIdentityMock.mockReturnValueOnce({
       name: "  Agent Smith  ",
       emoji: "  🕶️  ",
-      theme: "  noir  ",
     });
     resolveAgentAvatarMock.mockReturnValueOnce({
       kind: "remote",
@@ -54,7 +51,6 @@ describe("resolveAgentOutboundIdentity", () => {
       name: "Agent Smith",
       emoji: "🕶️",
       avatarUrl: "https://example.com/avatar.png",
-      theme: "noir",
     });
   });
 

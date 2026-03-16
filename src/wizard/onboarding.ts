@@ -464,7 +464,7 @@ export async function runOnboardingWizard(
       allowKeep: true,
       ignoreAllowlist: true,
       includeProviderPluginSetups: true,
-      preferredProvider: await resolvePreferredProviderForAuthChoice({
+      preferredProvider: resolvePreferredProviderForAuthChoice({
         choice: authChoice,
         config: nextConfig,
         workspaceDir,

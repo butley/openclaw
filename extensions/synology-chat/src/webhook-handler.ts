@@ -16,8 +16,6 @@ import type { SynologyWebhookPayload, ResolvedSynologyChatAccount } from "./type
 
 // One rate limiter per account, created lazily
 const rateLimiters = new Map<string, RateLimiter>();
-const PREAUTH_MAX_BODY_BYTES = 64 * 1024;
-const PREAUTH_BODY_TIMEOUT_MS = 5_000;
 
 function getRateLimiter(account: ResolvedSynologyChatAccount): RateLimiter {
   let rl = rateLimiters.get(account.accountId);
@@ -51,8 +49,8 @@ async function readBody(req: IncomingMessage): Promise<
 > {
   try {
     const body = await readRequestBodyWithLimit(req, {
-      maxBytes: PREAUTH_MAX_BODY_BYTES,
-      timeoutMs: PREAUTH_BODY_TIMEOUT_MS,
+      maxBytes: 1_048_576,
+      timeoutMs: 30_000,
     });
     return { ok: true, body };
   } catch (err) {

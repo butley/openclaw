@@ -109,9 +109,6 @@ const hoisted = vi.hoisted(() => {
     startChannel: vi.fn(async () => {}),
     stopChannel: vi.fn(async () => {}),
     markChannelLoggedOut: vi.fn(),
-    isHealthMonitorEnabled: vi.fn(() => true),
-    isManuallyStopped: vi.fn(() => false),
-    resetRestartAttempts: vi.fn(),
   };
 
   const createChannelManager = vi.fn(() => providerManager);

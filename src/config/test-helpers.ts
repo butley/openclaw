@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { withTempHome as withTempHomeBase } from "../../test/helpers/temp-home.js";
-import type { OpenClawConfig } from "./config.js";
 
 export async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   return withTempHomeBase(fn, { prefix: "openclaw-config-" });
@@ -54,9 +53,7 @@ export async function withEnvOverride<T>(
 }
 
 export function buildWebSearchProviderConfig(params: {
-  provider: NonNullable<
-    NonNullable<NonNullable<NonNullable<OpenClawConfig["tools"]>["web"]>["search"]>["provider"]
-  >;
+  provider: string;
   enabled?: boolean;
   providerConfig?: Record<string, unknown>;
 }): Record<string, unknown> {

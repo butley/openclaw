@@ -5,7 +5,6 @@ import ai.openclaw.app.protocol.OpenClawCalendarCommand
 import ai.openclaw.app.protocol.OpenClawCanvasA2UICommand
 import ai.openclaw.app.protocol.OpenClawCanvasCommand
 import ai.openclaw.app.protocol.OpenClawCameraCommand
-import ai.openclaw.app.protocol.OpenClawCallLogCommand
 import ai.openclaw.app.protocol.OpenClawContactsCommand
 import ai.openclaw.app.protocol.OpenClawDeviceCommand
 import ai.openclaw.app.protocol.OpenClawLocationCommand
@@ -28,7 +27,6 @@ class InvokeDispatcher(
   private val smsHandler: SmsHandler,
   private val a2uiHandler: A2UIHandler,
   private val debugHandler: DebugHandler,
-  private val callLogHandler: CallLogHandler,
   private val isForeground: () -> Boolean,
   private val cameraEnabled: () -> Boolean,
   private val locationEnabled: () -> Boolean,
@@ -162,9 +160,6 @@ class InvokeDispatcher(
 
       // SMS command
       OpenClawSmsCommand.Send.rawValue -> smsHandler.handleSmsSend(paramsJson)
-
-      // CallLog command
-      OpenClawCallLogCommand.Search.rawValue -> callLogHandler.handleCallLogSearch(paramsJson)
 
       // Debug commands
       "debug.ed25519" -> debugHandler.handleEd25519()

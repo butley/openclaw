@@ -49,7 +49,6 @@ export const MESSAGE_ACTION_TARGET_MODE: Record<ChannelMessageActionName, Messag
     "category-edit": "none",
     "category-delete": "none",
     "topic-create": "to",
-    "topic-edit": "to",
     "voice-status": "none",
     "event-list": "none",
     "event-create": "none",

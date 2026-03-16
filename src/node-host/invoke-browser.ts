@@ -1,5 +1,4 @@
 import fsPromises from "node:fs/promises";
-import { redactCdpUrl } from "../browser/cdp.helpers.js";
 import { resolveBrowserConfig } from "../browser/config.js";
 import {
   createBrowserControlContext,
@@ -200,7 +199,7 @@ function formatBrowserProxyTimeoutMessage(params: {
       statusParts.push(`transport=${params.status.transport}`);
     }
     if (typeof params.status.cdpUrl === "string" && params.status.cdpUrl.trim()) {
-      statusParts.push(`cdpUrl=${redactCdpUrl(params.status.cdpUrl)}`);
+      statusParts.push(`cdpUrl=${params.status.cdpUrl}`);
     }
     parts.push(`status(${statusParts.join(", ")})`);
   }

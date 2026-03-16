@@ -9,7 +9,6 @@ function createProps(overrides: Partial<ChatProps> = {}): ChatProps {
     onSessionKeyChange: () => undefined,
     thinkingLevel: null,
     showThinking: false,
-    showToolCalls: true,
     loading: false,
     sending: false,
     canAbort: false,
@@ -31,7 +30,7 @@ function createProps(overrides: Partial<ChatProps> = {}): ChatProps {
       ts: 0,
       path: "",
       count: 1,
-      defaults: { modelProvider: "openai", model: "gpt-5", contextTokens: null },
+      defaults: { model: "gpt-5", contextTokens: null },
       sessions: [
         {
           key: "main",

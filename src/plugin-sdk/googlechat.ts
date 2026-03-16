@@ -24,12 +24,18 @@ export { createAccountStatusSink, runPassiveAccountLifecycle } from "./channel-l
 export { resolveGoogleChatGroupRequireMention } from "../channels/plugins/group-mentions.js";
 export { formatPairingApproveHint } from "../channels/plugins/helpers.js";
 export { resolveChannelMediaMaxBytes } from "../channels/plugins/media-limits.js";
+export type {
+  ChannelOnboardingAdapter,
+  ChannelOnboardingDmPolicy,
+} from "../channels/plugins/onboarding-types.js";
 export {
   addWildcardAllowFrom,
   mergeAllowFromEntries,
-  splitSetupEntries,
+  promptAccountId,
+  resolveAccountIdForConfigure,
+  splitOnboardingEntries,
   setTopLevelChannelDmPolicyWithAllowFrom,
-} from "../channels/plugins/setup-flow-helpers.js";
+} from "../channels/plugins/onboarding/helpers.js";
 export { PAIRING_APPROVED_MESSAGE } from "../channels/plugins/pairing-message.js";
 export {
   applyAccountNameToChannelSection,
@@ -66,8 +72,6 @@ export { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "../routing/session-key.j
 export { resolveDmGroupAccessWithLists } from "../security/dm-policy-shared.js";
 export { formatDocsLink } from "../terminal/links.js";
 export type { WizardPrompter } from "../wizard/prompts.js";
-export { googlechatSetupAdapter } from "../../extensions/googlechat/src/setup-core.js";
-export { googlechatSetupWizard } from "../../extensions/googlechat/src/setup-surface.js";
 export { resolveInboundRouteEnvelopeBuilderWithRuntime } from "./inbound-envelope.js";
 export { createScopedPairingAccess } from "./pairing-access.js";
 export { issuePairingChallenge } from "../pairing/pairing-challenge.js";

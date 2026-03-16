@@ -12,9 +12,6 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     setDiscordRuntime(api.runtime);
     api.registerChannel({ plugin: discordPlugin });
-    if (api.registrationMode !== "full") {
-      return;
-    }
     registerDiscordSubagentHooks(api);
   },
 };

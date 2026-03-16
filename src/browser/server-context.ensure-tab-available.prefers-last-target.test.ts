@@ -92,10 +92,10 @@ describe("browser server-context ensureTabAvailable", () => {
       getState: () => state,
     });
 
-    const chromeRelay = ctx.forProfile("chrome-relay");
-    const first = await chromeRelay.ensureTabAvailable();
+    const chrome = ctx.forProfile("chrome");
+    const first = await chrome.ensureTabAvailable();
     expect(first.targetId).toBe("A");
-    const second = await chromeRelay.ensureTabAvailable();
+    const second = await chrome.ensureTabAvailable();
     expect(second.targetId).toBe("A");
   });
 
@@ -108,8 +108,8 @@ describe("browser server-context ensureTabAvailable", () => {
     const state = makeBrowserState();
 
     const ctx = createBrowserRouteContext({ getState: () => state });
-    const chromeRelay = ctx.forProfile("chrome-relay");
-    await expect(chromeRelay.ensureTabAvailable("NOT_A_TAB")).rejects.toThrow(/tab not found/i);
+    const chrome = ctx.forProfile("chrome");
+    await expect(chrome.ensureTabAvailable("NOT_A_TAB")).rejects.toThrow(/tab not found/i);
   });
 
   it("returns a descriptive message when no extension tabs are attached", async () => {
@@ -118,8 +118,8 @@ describe("browser server-context ensureTabAvailable", () => {
     const state = makeBrowserState();
 
     const ctx = createBrowserRouteContext({ getState: () => state });
-    const chromeRelay = ctx.forProfile("chrome-relay");
-    await expect(chromeRelay.ensureTabAvailable()).rejects.toThrow(/no attached Chrome tabs/i);
+    const chrome = ctx.forProfile("chrome");
+    await expect(chrome.ensureTabAvailable()).rejects.toThrow(/no attached Chrome tabs/i);
   });
 
   it("waits briefly for extension tabs to reappear when a previous target exists", async () => {
@@ -138,11 +138,11 @@ describe("browser server-context ensureTabAvailable", () => {
       const state = makeBrowserState();
 
       const ctx = createBrowserRouteContext({ getState: () => state });
-      const chromeRelay = ctx.forProfile("chrome-relay");
-      const first = await chromeRelay.ensureTabAvailable();
+      const chrome = ctx.forProfile("chrome");
+      const first = await chrome.ensureTabAvailable();
       expect(first.targetId).toBe("A");
 
-      const secondPromise = chromeRelay.ensureTabAvailable();
+      const secondPromise = chrome.ensureTabAvailable();
       await vi.advanceTimersByTimeAsync(250);
       const second = await secondPromise;
       expect(second.targetId).toBe("A");
@@ -163,10 +163,10 @@ describe("browser server-context ensureTabAvailable", () => {
       const state = makeBrowserState();
 
       const ctx = createBrowserRouteContext({ getState: () => state });
-      const chromeRelay = ctx.forProfile("chrome-relay");
-      await chromeRelay.ensureTabAvailable();
+      const chrome = ctx.forProfile("chrome");
+      await chrome.ensureTabAvailable();
 
-      const pending = expect(chromeRelay.ensureTabAvailable()).rejects.toThrow(
+      const pending = expect(chrome.ensureTabAvailable()).rejects.toThrow(
         /no attached Chrome tabs/i,
       );
       await vi.advanceTimersByTimeAsync(3_500);

@@ -23,7 +23,7 @@ vi.mock("./auth-choice-prompt.js", () => ({
 
 vi.mock("./auth-choice.js", () => ({
   applyAuthChoice: mocks.applyAuthChoice,
-  resolvePreferredProviderForAuthChoice: vi.fn(async () => undefined),
+  resolvePreferredProviderForAuthChoice: vi.fn(() => undefined),
 }));
 
 vi.mock("./model-picker.js", async (importActual) => {

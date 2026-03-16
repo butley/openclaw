@@ -18,10 +18,13 @@ final class CanvasA2UIActionMessageHandler: NSObject, WKScriptMessageHandler {
     func userContentController(_: WKUserContentController, didReceive message: WKScriptMessage) {
         guard Self.allMessageNames.contains(message.name) else { return }
 
-        // Only accept actions from the in-app canvas scheme. Local-network HTTP
-        // pages are regular web content and must not get direct agent dispatch.
+        // Only accept actions from local Canvas content (not arbitrary web pages).
         guard let webView = message.webView, let url = webView.url else { return }
-        guard let scheme = url.scheme, CanvasScheme.allSchemes.contains(scheme) else {
+        if let scheme = url.scheme, CanvasScheme.allSchemes.contains(scheme) {
+            // ok
+        } else if Self.isLocalNetworkCanvasURL(url) {
+            // ok
+        } else {
             return
         }
 
@@ -104,5 +107,10 @@ final class CanvasA2UIActionMessageHandler: NSObject, WKScriptMessageHandler {
             }
         }
     }
+
+    static func isLocalNetworkCanvasURL(_ url: URL) -> Bool {
+        LocalNetworkURLSupport.isLocalNetworkHTTPURL(url)
+    }
+
     // Formatting helpers live in OpenClawKit (`OpenClawCanvasA2UIAction`).
 }

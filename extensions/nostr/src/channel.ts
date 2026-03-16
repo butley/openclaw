@@ -17,7 +17,6 @@ import type { MetricEvent, MetricsSnapshot } from "./metrics.js";
 import { normalizePubkey, startNostrBus, type NostrBusHandle } from "./nostr-bus.js";
 import type { ProfilePublishResult } from "./nostr-profile.js";
 import { getNostrRuntime } from "./runtime.js";
-import { nostrSetupAdapter, nostrSetupWizard } from "./setup-surface.js";
 import {
   listNostrAccountIds,
   resolveDefaultNostrAccountId,
@@ -48,8 +47,6 @@ export const nostrPlugin: ChannelPlugin<ResolvedNostrAccount> = {
   },
   reload: { configPrefixes: ["channels.nostr"] },
   configSchema: buildChannelConfigSchema(NostrConfigSchema),
-  setup: nostrSetupAdapter,
-  setupWizard: nostrSetupWizard,
 
   config: {
     listAccountIds: (cfg) => listNostrAccountIds(cfg),

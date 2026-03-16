@@ -13,7 +13,7 @@ const discordSendMocks = vi.hoisted(() => ({
 const { banMemberDiscord, kickMemberDiscord, timeoutMemberDiscord, hasAnyGuildPermissionDiscord } =
   discordSendMocks;
 
-vi.mock("../../../extensions/discord/src/send.js", () => ({
+vi.mock("../../discord/send.js", () => ({
   ...discordSendMocks,
 }));
 

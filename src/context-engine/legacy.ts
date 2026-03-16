@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import { registerContextEngineForOwner } from "./registry.js";
+import { registerContextEngine } from "./registry.js";
 import type {
   ContextEngine,
   ContextEngineInfo,
@@ -124,7 +124,5 @@ export class LegacyContextEngine implements ContextEngine {
 }
 
 export function registerLegacyContextEngine(): void {
-  registerContextEngineForOwner("legacy", () => new LegacyContextEngine(), "core", {
-    allowSameOwnerRefresh: true,
-  });
+  registerContextEngine("legacy", () => new LegacyContextEngine());
 }

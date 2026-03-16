@@ -91,10 +91,6 @@ type SessionDefaultsSnapshot = {
   scope?: string;
 };
 
-type GatewayHostWithShutdownMessage = GatewayHost & {
-  pendingShutdownMessage?: string | null;
-};
-
 export function resolveControlUiClientVersion(params: {
   gatewayUrl: string;
   serverVersion: string | null;
@@ -175,8 +171,6 @@ function applySessionDefaults(host: GatewayHost, defaults?: SessionDefaultsSnaps
 }
 
 export function connectGateway(host: GatewayHost) {
-  const shutdownHost = host as GatewayHostWithShutdownMessage;
-  shutdownHost.pendingShutdownMessage = null;
   host.lastError = null;
   host.lastErrorCode = null;
   host.hello = null;
@@ -201,7 +195,6 @@ export function connectGateway(host: GatewayHost) {
       if (host.client !== client) {
         return;
       }
-      shutdownHost.pendingShutdownMessage = null;
       host.connected = true;
       host.lastError = null;
       host.lastErrorCode = null;
@@ -241,10 +234,9 @@ export function connectGateway(host: GatewayHost) {
               : error.message;
           return;
         }
-        host.lastError =
-          shutdownHost.pendingShutdownMessage ?? `disconnected (${code}): ${reason || "no reason"}`;
+        host.lastError = `disconnected (${code}): ${reason || "no reason"}`;
       } else {
-        host.lastError = shutdownHost.pendingShutdownMessage ?? null;
+        host.lastError = null;
         host.lastErrorCode = null;
       }
     },
@@ -352,22 +344,6 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
       host.presenceError = null;
       host.presenceStatus = null;
     }
-    return;
-  }
-
-  if (evt.event === "shutdown") {
-    const payload = evt.payload as { reason?: unknown; restartExpectedMs?: unknown } | undefined;
-    const reason =
-      payload && typeof payload.reason === "string" && payload.reason.trim()
-        ? payload.reason.trim()
-        : "gateway stopping";
-    const shutdownMessage =
-      typeof payload?.restartExpectedMs === "number"
-        ? `Restarting: ${reason}`
-        : `Disconnected: ${reason}`;
-    (host as GatewayHostWithShutdownMessage).pendingShutdownMessage = shutdownMessage;
-    host.lastError = shutdownMessage;
-    host.lastErrorCode = null;
     return;
   }
 

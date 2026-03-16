@@ -217,26 +217,6 @@ describe("FeishuConfigSchema optimization flags", () => {
   });
 });
 
-describe("FeishuConfigSchema actions", () => {
-  it("accepts top-level reactions action gate", () => {
-    const result = FeishuConfigSchema.parse({
-      actions: { reactions: false },
-    });
-    expect(result.actions?.reactions).toBe(false);
-  });
-
-  it("accepts account-level reactions action gate", () => {
-    const result = FeishuConfigSchema.parse({
-      accounts: {
-        main: {
-          actions: { reactions: false },
-        },
-      },
-    });
-    expect(result.accounts?.main?.actions?.reactions).toBe(false);
-  });
-});
-
 describe("FeishuConfigSchema defaultAccount", () => {
   it("accepts defaultAccount when it matches an account key", () => {
     const result = FeishuConfigSchema.safeParse({

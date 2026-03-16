@@ -35,7 +35,6 @@ import {
   updateSessionStore,
 } from "../config/sessions.js";
 import type { AgentDefaultsConfig } from "../config/types.agent-defaults.js";
-import { resolveCronSession } from "../cron/isolated-agent/session.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getQueueSize } from "../process/command-queue.js";
 import { CommandLane } from "../process/lanes.js";
@@ -660,30 +659,6 @@ export async function runHeartbeatOnce(opts: {
   }
   const { entry, sessionKey, storePath } = preflight.session;
   const previousUpdatedAt = entry?.updatedAt;
-
-  // When isolatedSession is enabled, create a fresh session via the same
-  // pattern as cron sessionTarget: "isolated". This gives the heartbeat
-  // a new session ID (empty transcript) each run, avoiding the cost of
-  // sending the full conversation history (~100K tokens) to the LLM.
-  // Delivery routing still uses the main session entry (lastChannel, lastTo).
-  const useIsolatedSession = heartbeat?.isolatedSession === true;
-  let runSessionKey = sessionKey;
-  let runStorePath = storePath;
-  if (useIsolatedSession) {
-    const isolatedKey = `${sessionKey}:heartbeat`;
-    const cronSession = resolveCronSession({
-      cfg,
-      sessionKey: isolatedKey,
-      agentId,
-      nowMs: startedAt,
-      forceNew: true,
-    });
-    cronSession.store[isolatedKey] = cronSession.sessionEntry;
-    await saveSessionStore(cronSession.storePath, cronSession.store);
-    runSessionKey = isolatedKey;
-    runStorePath = cronSession.storePath;
-  }
-
   const delivery = resolveHeartbeatDeliveryTarget({ cfg, entry, heartbeat });
   const heartbeatAccountId = heartbeat?.accountId?.trim();
   if (delivery.reason === "unknown-account") {
@@ -732,7 +707,7 @@ export async function runHeartbeatOnce(opts: {
     AccountId: delivery.accountId,
     MessageThreadId: delivery.threadId,
     Provider: hasExecCompletion ? "exec-event" : hasCronEvents ? "cron-event" : "heartbeat",
-    SessionKey: runSessionKey,
+    SessionKey: sessionKey,
   };
   if (!visibility.showAlerts && !visibility.showOk && !visibility.useIndicator) {
     emitHeartbeatEvent({
@@ -783,11 +758,10 @@ export async function runHeartbeatOnce(opts: {
   };
 
   try {
-    // Capture transcript state before the heartbeat run so we can prune if HEARTBEAT_OK.
-    // For isolated sessions, capture the isolated transcript (not the main session's).
+    // Capture transcript state before the heartbeat run so we can prune if HEARTBEAT_OK
     const transcriptState = await captureTranscriptState({
-      storePath: runStorePath,
-      sessionKey: runSessionKey,
+      storePath,
+      sessionKey,
       agentId,
     });
 

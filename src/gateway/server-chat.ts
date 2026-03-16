@@ -8,7 +8,7 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
 import { loadSessionEntry } from "./session-utils.js";
 // [FORK-PATCH-4] Chat Mirror — static import for WA delivery.
-import { sendMessageWhatsApp } from "../../extensions/whatsapp/src/send.js";
+import { sendMessageWhatsApp } from "../web/outbound.js";
 import { formatForLog } from "./ws-log.js";
 const log = createSubsystemLogger("gateway/server-chat");
 const reasoningDebugEnabled = process.env.OPENCLAW_DEBUG_REASONING === "1";

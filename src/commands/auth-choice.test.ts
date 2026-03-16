@@ -285,7 +285,7 @@ describe("applyAuthChoice", () => {
       expectedBaseUrl: string;
       expectedModel?: string;
       shouldPromptForEndpoint: boolean;
-      expectedDetectCall?: { apiKey: string; endpoint?: "coding-global" | "coding-cn" };
+      shouldAssertDetectCall?: boolean;
     }> = [
       {
         authChoice: "zai-api-key",
@@ -298,16 +298,8 @@ describe("applyAuthChoice", () => {
       {
         authChoice: "zai-coding-global",
         token: "zai-test-key",
-        detectResult: {
-          endpoint: "coding-global",
-          modelId: "glm-4.7",
-          baseUrl: ZAI_CODING_GLOBAL_BASE_URL,
-          note: "Detected coding-global endpoint with GLM-4.7 fallback",
-        },
         expectedBaseUrl: ZAI_CODING_GLOBAL_BASE_URL,
-        expectedModel: "zai/glm-4.7",
         shouldPromptForEndpoint: false,
-        expectedDetectCall: { apiKey: "zai-test-key", endpoint: "coding-global" },
       },
       {
         authChoice: "zai-api-key",
@@ -321,7 +313,7 @@ describe("applyAuthChoice", () => {
         expectedBaseUrl: ZAI_CODING_GLOBAL_BASE_URL,
         expectedModel: "zai/glm-4.5",
         shouldPromptForEndpoint: false,
-        expectedDetectCall: { apiKey: "zai-detected-key" },
+        shouldAssertDetectCall: true,
       },
     ];
     for (const scenario of scenarios) {
@@ -352,8 +344,8 @@ describe("applyAuthChoice", () => {
         setDefaultModel: true,
       });
 
-      if (scenario.expectedDetectCall) {
-        expect(detectZaiEndpoint).toHaveBeenCalledWith(scenario.expectedDetectCall);
+      if (scenario.shouldAssertDetectCall) {
+        expect(detectZaiEndpoint).toHaveBeenCalledWith({ apiKey: scenario.token });
       }
       if (scenario.shouldPromptForEndpoint) {
         expect(select).toHaveBeenCalledWith(
@@ -1352,7 +1344,7 @@ describe("applyAuthChoice", () => {
 });
 
 describe("resolvePreferredProviderForAuthChoice", () => {
-  it("maps known and unknown auth choices", async () => {
+  it("maps known and unknown auth choices", () => {
     const scenarios = [
       { authChoice: "github-copilot" as const, expectedProvider: "github-copilot" },
       { authChoice: "qwen-portal" as const, expectedProvider: "qwen-portal" },
@@ -1361,9 +1353,9 @@ describe("resolvePreferredProviderForAuthChoice", () => {
       { authChoice: "unknown" as AuthChoice, expectedProvider: undefined },
     ] as const;
     for (const scenario of scenarios) {
-      await expect(
-        resolvePreferredProviderForAuthChoice({ choice: scenario.authChoice }),
-      ).resolves.toBe(scenario.expectedProvider);
+      expect(resolvePreferredProviderForAuthChoice({ choice: scenario.authChoice })).toBe(
+        scenario.expectedProvider,
+      );
     }
   });
 });

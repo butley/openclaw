@@ -5,7 +5,6 @@ import ai.openclaw.app.protocol.OpenClawCanvasA2UICommand
 import ai.openclaw.app.protocol.OpenClawCanvasCommand
 import ai.openclaw.app.protocol.OpenClawCameraCommand
 import ai.openclaw.app.protocol.OpenClawCapability
-import ai.openclaw.app.protocol.OpenClawCallLogCommand
 import ai.openclaw.app.protocol.OpenClawContactsCommand
 import ai.openclaw.app.protocol.OpenClawDeviceCommand
 import ai.openclaw.app.protocol.OpenClawLocationCommand
@@ -85,7 +84,6 @@ object InvokeCommandRegistry {
         name = OpenClawCapability.Motion.rawValue,
         availability = NodeCapabilityAvailability.MotionAvailable,
       ),
-      NodeCapabilitySpec(name = OpenClawCapability.CallLog.rawValue),
     )
 
   val all: List<InvokeCommandSpec> =
@@ -188,9 +186,6 @@ object InvokeCommandRegistry {
       InvokeCommandSpec(
         name = OpenClawSmsCommand.Send.rawValue,
         availability = InvokeCommandAvailability.SmsAvailable,
-      ),
-      InvokeCommandSpec(
-        name = OpenClawCallLogCommand.Search.rawValue,
       ),
       InvokeCommandSpec(
         name = "debug.logs",

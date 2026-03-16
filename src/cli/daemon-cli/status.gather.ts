@@ -16,7 +16,7 @@ import type { ServiceConfigAudit } from "../../daemon/service-audit.js";
 import { auditGatewayServiceConfig } from "../../daemon/service-audit.js";
 import type { GatewayServiceRuntime } from "../../daemon/service-runtime.js";
 import { resolveGatewayService } from "../../daemon/service.js";
-import { isGatewaySecretRefUnavailableError, trimToUndefined } from "../../gateway/credentials.js";
+import { trimToUndefined } from "../../gateway/credentials.js";
 import { resolveGatewayBindHost } from "../../gateway/net.js";
 import { resolveGatewayProbeAuthWithSecretInputs } from "../../gateway/probe-auth.js";
 import { parseStrictPositiveInteger } from "../../infra/parse-finite-number.js";
@@ -29,7 +29,6 @@ import {
 import { pickPrimaryTailnetIPv4 } from "../../infra/tailnet.js";
 import { loadGatewayTlsRuntime } from "../../infra/tls/gateway.js";
 import { probeGatewayStatus } from "./probe.js";
-import { inspectGatewayRestart } from "./restart-health.js";
 import { normalizeListenerAddress, parsePortFromArgs, pickProbeHostForBind } from "./shared.js";
 import type { GatewayRpcOpts } from "./types.js";
 
@@ -112,11 +111,6 @@ export type DaemonStatus = {
     ok: boolean;
     error?: string;
     url?: string;
-    authWarning?: string;
-  };
-  health?: {
-    healthy: boolean;
-    staleGatewayPids: number[];
   };
   extraServices: Array<{ label: string; detail: string; scope: string }>;
 };
@@ -129,10 +123,6 @@ function shouldReportPortUsage(status: PortUsageStatus | undefined, rpcOk?: bool
     return false;
   }
   return true;
-}
-
-function parseGatewaySecretRefPathFromError(error: unknown): string | null {
-  return isGatewaySecretRefUnavailableError(error) ? error.path : null;
 }
 
 async function loadDaemonConfigContext(
@@ -315,11 +305,8 @@ export async function gatherDaemonStatus(
   const tlsRuntime = shouldUseLocalTlsRuntime
     ? await loadGatewayTlsRuntime(daemonCfg.gateway?.tls)
     : undefined;
-  let daemonProbeAuth: { token?: string; password?: string } | undefined;
-  let rpcAuthWarning: string | undefined;
-  if (opts.probe) {
-    try {
-      daemonProbeAuth = await resolveGatewayProbeAuthWithSecretInputs({
+  const daemonProbeAuth = opts.probe
+    ? await resolveGatewayProbeAuthWithSecretInputs({
         cfg: daemonCfg,
         mode: daemonCfg.gateway?.mode === "remote" ? "remote" : "local",
         env: mergedDaemonEnv as NodeJS.ProcessEnv,
@@ -327,16 +314,8 @@ export async function gatherDaemonStatus(
           token: opts.rpc.token,
           password: opts.rpc.password,
         },
-      });
-    } catch (error) {
-      const refPath = parseGatewaySecretRefPathFromError(error);
-      if (!refPath) {
-        throw error;
-      }
-      daemonProbeAuth = undefined;
-      rpcAuthWarning = `${refPath} SecretRef is unavailable in this command path; probing without configured auth credentials.`;
-    }
-  }
+      })
+    : undefined;
 
   const rpc = opts.probe
     ? await probeGatewayStatus({
@@ -352,17 +331,6 @@ export async function gatherDaemonStatus(
         configPath: daemonConfigSummary.path,
       })
     : undefined;
-  if (rpc?.ok) {
-    rpcAuthWarning = undefined;
-  }
-  const health =
-    opts.probe && loaded
-      ? await inspectGatewayRestart({
-          service,
-          port: daemonPort,
-          env: serviceEnv,
-        }).catch(() => undefined)
-      : undefined;
 
   let lastError: string | undefined;
   if (loaded && runtime?.status === "running" && portStatus && portStatus.status !== "busy") {
@@ -388,23 +356,7 @@ export async function gatherDaemonStatus(
     port: portStatus,
     ...(portCliStatus ? { portCli: portCliStatus } : {}),
     lastError,
-    ...(rpc
-      ? {
-          rpc: {
-            ...rpc,
-            url: gateway.probeUrl,
-            ...(rpcAuthWarning ? { authWarning: rpcAuthWarning } : {}),
-          },
-        }
-      : {}),
-    ...(health
-      ? {
-          health: {
-            healthy: health.healthy,
-            staleGatewayPids: health.staleGatewayPids,
-          },
-        }
-      : {}),
+    ...(rpc ? { rpc: { ...rpc, url: gateway.probeUrl } } : {}),
     extraServices,
   };
 }

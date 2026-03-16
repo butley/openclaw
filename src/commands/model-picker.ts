@@ -11,8 +11,14 @@ import {
 } from "../agents/model-selection.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
-import type { ProviderPlugin } from "../plugins/types.js";
+import {
+  resolveProviderPluginChoice,
+  resolveProviderModelPickerEntries,
+  runProviderModelSelectedHook,
+} from "../plugins/provider-wizard.js";
+import { resolvePluginProviders } from "../plugins/providers.js";
 import type { WizardPrompter, WizardSelectOption } from "../wizard/prompts.js";
+import { runProviderPluginAuthMethod } from "./auth-choice.apply.plugin-provider.js";
 import { formatTokenK } from "./models/shared.js";
 import { OPENAI_CODEX_DEFAULT_MODEL } from "./openai-codex-model-default.js";
 
@@ -42,10 +48,6 @@ type PromptDefaultModelParams = {
 
 type PromptDefaultModelResult = { model?: string; config?: OpenClawConfig };
 type PromptModelAllowlistResult = { models?: string[] };
-
-async function loadModelPickerRuntime() {
-  return import("./model-picker.runtime.js");
-}
 
 function hasAuthForProvider(
   provider: string,
@@ -293,7 +295,6 @@ export async function promptDefaultModel(
     options.push({ value: MANUAL_VALUE, label: "Enter model manually" });
   }
   if (includeProviderPluginSetups && agentDir) {
-    const { resolveProviderModelPickerEntries } = await loadModelPickerRuntime();
     options.push(
       ...resolveProviderModelPickerEntries({
         config: cfg,
@@ -346,24 +347,20 @@ export async function promptDefaultModel(
       initialValue: configuredRaw || resolvedKey || undefined,
     });
   }
-
-  let pluginResolution: string | null = null;
-  let pluginProviders: ProviderPlugin[] = [];
-  if (selection.startsWith("provider-plugin:")) {
-    pluginResolution = selection;
-  } else if (!selection.includes("/")) {
-    const { resolvePluginProviders } = await loadModelPickerRuntime();
-    pluginProviders = resolvePluginProviders({
-      config: cfg,
-      workspaceDir: params.workspaceDir,
-      env: params.env,
-    });
-    pluginResolution = pluginProviders.some(
-      (provider) => normalizeProviderId(provider.id) === normalizeProviderId(selection),
-    )
-      ? selection
-      : null;
-  }
+  const pluginProviders = resolvePluginProviders({
+    config: cfg,
+    workspaceDir: params.workspaceDir,
+    env: params.env,
+  });
+  const pluginResolution = selection.startsWith("provider-plugin:")
+    ? selection
+    : selection.includes("/")
+      ? null
+      : pluginProviders.some(
+            (provider) => normalizeProviderId(provider.id) === normalizeProviderId(selection),
+          )
+        ? selection
+        : null;
   if (pluginResolution) {
     if (!agentDir || !params.runtime) {
       await params.prompter.note(
@@ -371,19 +368,6 @@ export async function promptDefaultModel(
         "Provider setup unavailable",
       );
       return {};
-    }
-    const {
-      resolvePluginProviders,
-      resolveProviderPluginChoice,
-      runProviderModelSelectedHook,
-      runProviderPluginAuthMethod,
-    } = await loadModelPickerRuntime();
-    if (pluginProviders.length === 0) {
-      pluginProviders = resolvePluginProviders({
-        config: cfg,
-        workspaceDir: params.workspaceDir,
-        env: params.env,
-      });
     }
     const resolved = resolveProviderPluginChoice({
       providers: pluginProviders,
@@ -413,7 +397,6 @@ export async function promptDefaultModel(
     return { model: applied.defaultModel, config: applied.config };
   }
   const model = String(selection);
-  const { runProviderModelSelectedHook } = await loadModelPickerRuntime();
   await runProviderModelSelectedHook({
     config: cfg,
     model,

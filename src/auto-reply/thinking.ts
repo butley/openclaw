@@ -1,9 +1,3 @@
-import {
-  resolveProviderBinaryThinking,
-  resolveProviderDefaultThinkingLevel,
-  resolveProviderXHighThinking,
-} from "../plugins/provider-runtime.js";
-
 export type ThinkLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "adaptive";
 // [FORK-PATCH-13] Verbose Light — add lightweight tool narration mode and stream directive enum.
 export type VerboseLevel = "off" | "light" | "on" | "full";
@@ -35,24 +29,8 @@ function normalizeProviderId(provider?: string | null): string {
   return normalized;
 }
 
-export function isBinaryThinkingProvider(provider?: string | null, model?: string | null): boolean {
-  const normalizedProvider = normalizeProviderId(provider);
-  if (!normalizedProvider) {
-    return false;
-  }
-
-  const pluginDecision = resolveProviderBinaryThinking({
-    provider: normalizedProvider,
-    context: {
-      provider: normalizedProvider,
-      modelId: model?.trim() ?? "",
-    },
-  });
-  if (typeof pluginDecision === "boolean") {
-    return pluginDecision;
-  }
-
-  return normalizedProvider === "zai";
+export function isBinaryThinkingProvider(provider?: string | null): boolean {
+  return normalizeProviderId(provider) === "zai";
 }
 
 export const XHIGH_MODEL_REFS = [
@@ -119,19 +97,7 @@ export function supportsXHighThinking(provider?: string | null, model?: string |
   if (!modelKey) {
     return false;
   }
-  const providerKey = normalizeProviderId(provider);
-  if (providerKey) {
-    const pluginDecision = resolveProviderXHighThinking({
-      provider: providerKey,
-      context: {
-        provider: providerKey,
-        modelId: modelKey,
-      },
-    });
-    if (typeof pluginDecision === "boolean") {
-      return pluginDecision;
-    }
-  }
+  const providerKey = provider?.trim().toLowerCase();
   if (providerKey) {
     return XHIGH_MODEL_SET.has(`${providerKey}/${modelKey}`);
   }
@@ -148,7 +114,7 @@ export function listThinkingLevels(provider?: string | null, model?: string | nu
 }
 
 export function listThinkingLevelLabels(provider?: string | null, model?: string | null): string[] {
-  if (isBinaryThinkingProvider(provider, model)) {
+  if (isBinaryThinkingProvider(provider)) {
     return ["off", "on"];
   }
   return listThinkingLevels(provider, model);
@@ -183,21 +149,6 @@ export function resolveThinkingDefaultForModel(params: {
 }): ThinkLevel {
   const normalizedProvider = normalizeProviderId(params.provider);
   const modelLower = params.model.trim().toLowerCase();
-  const candidate = params.catalog?.find(
-    (entry) => entry.provider === params.provider && entry.id === params.model,
-  );
-  const pluginDecision = resolveProviderDefaultThinkingLevel({
-    provider: normalizedProvider,
-    context: {
-      provider: normalizedProvider,
-      modelId: params.model,
-      reasoning: candidate?.reasoning,
-    },
-  });
-  if (pluginDecision) {
-    return pluginDecision;
-  }
-
   const isAnthropicFamilyModel =
     normalizedProvider === "anthropic" ||
     normalizedProvider === "amazon-bedrock" ||
@@ -206,6 +157,9 @@ export function resolveThinkingDefaultForModel(params: {
   if (isAnthropicFamilyModel && CLAUDE_46_MODEL_RE.test(modelLower)) {
     return "adaptive";
   }
+  const candidate = params.catalog?.find(
+    (entry) => entry.provider === params.provider && entry.id === params.model,
+  );
   if (candidate?.reasoning) {
     return "low";
   }

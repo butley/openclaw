@@ -32,7 +32,6 @@ function fakeApi(overrides: Partial<OpenClawPluginApi> = {}): OpenClawPluginApi 
     id: "lobster",
     name: "lobster",
     source: "test",
-    registrationMode: "full",
     config: {},
     pluginConfig: {},
     // oxlint-disable-next-line typescript/no-explicit-any
@@ -44,8 +43,6 @@ function fakeApi(overrides: Partial<OpenClawPluginApi> = {}): OpenClawPluginApi 
     registerCli() {},
     registerService() {},
     registerProvider() {},
-    registerWebSearchProvider() {},
-    registerInteractiveHandler() {},
     registerHook() {},
     registerHttpRoute() {},
     registerCommand() {},

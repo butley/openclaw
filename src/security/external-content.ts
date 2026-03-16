@@ -250,13 +250,12 @@ export function wrapExternalContent(content: string, options: WrapExternalConten
   const sanitized = replaceMarkers(content);
   const sourceLabel = EXTERNAL_SOURCE_LABELS[source] ?? "External";
   const metadataLines: string[] = [`Source: ${sourceLabel}`];
-  const sanitizeMetadataValue = (value: string) => replaceMarkers(value).replace(/[\r\n]+/g, " ");
 
   if (sender) {
-    metadataLines.push(`From: ${sanitizeMetadataValue(sender)}`);
+    metadataLines.push(`From: ${sender}`);
   }
   if (subject) {
-    metadataLines.push(`Subject: ${sanitizeMetadataValue(subject)}`);
+    metadataLines.push(`Subject: ${subject}`);
   }
 
   const metadata = metadataLines.join("\n");

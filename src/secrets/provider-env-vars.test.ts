@@ -10,11 +10,9 @@ describe("provider env vars", () => {
     expect(listKnownProviderAuthEnvVarNames()).toEqual(
       expect.arrayContaining(["GITHUB_TOKEN", "GH_TOKEN", "ANTHROPIC_OAUTH_TOKEN"]),
     );
-    expect(listKnownSecretEnvVarNames()).toEqual(
+    expect(listKnownSecretEnvVarNames()).not.toEqual(listKnownProviderAuthEnvVarNames());
+    expect(listKnownSecretEnvVarNames()).not.toEqual(
       expect.arrayContaining(["GITHUB_TOKEN", "GH_TOKEN", "ANTHROPIC_OAUTH_TOKEN"]),
-    );
-    expect(listKnownProviderAuthEnvVarNames()).toEqual(
-      expect.arrayContaining(["MINIMAX_CODE_PLAN_KEY"]),
     );
     expect(listKnownSecretEnvVarNames()).not.toContain("OPENCLAW_API_KEY");
   });

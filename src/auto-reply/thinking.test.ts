@@ -1,16 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const providerRuntimeMocks = vi.hoisted(() => ({
-  resolveProviderBinaryThinking: vi.fn(),
-  resolveProviderDefaultThinkingLevel: vi.fn(),
-  resolveProviderXHighThinking: vi.fn(),
-}));
-
-vi.mock("../plugins/provider-runtime.js", () => ({
-  resolveProviderBinaryThinking: providerRuntimeMocks.resolveProviderBinaryThinking,
-  resolveProviderDefaultThinkingLevel: providerRuntimeMocks.resolveProviderDefaultThinkingLevel,
-  resolveProviderXHighThinking: providerRuntimeMocks.resolveProviderXHighThinking,
-}));
+import { describe, expect, it } from "vitest";
 import {
   listThinkingLevelLabels,
   listThinkingLevels,
@@ -18,15 +6,6 @@ import {
   normalizeThinkLevel,
   resolveThinkingDefaultForModel,
 } from "./thinking.js";
-
-beforeEach(() => {
-  providerRuntimeMocks.resolveProviderBinaryThinking.mockReset();
-  providerRuntimeMocks.resolveProviderBinaryThinking.mockReturnValue(undefined);
-  providerRuntimeMocks.resolveProviderDefaultThinkingLevel.mockReset();
-  providerRuntimeMocks.resolveProviderDefaultThinkingLevel.mockReturnValue(undefined);
-  providerRuntimeMocks.resolveProviderXHighThinking.mockReset();
-  providerRuntimeMocks.resolveProviderXHighThinking.mockReturnValue(undefined);
-});
 
 describe("normalizeThinkLevel", () => {
   it("accepts mid as medium", () => {
@@ -64,12 +43,6 @@ describe("normalizeThinkLevel", () => {
 });
 
 describe("listThinkingLevels", () => {
-  it("uses provider runtime hooks for xhigh support", () => {
-    providerRuntimeMocks.resolveProviderXHighThinking.mockReturnValue(true);
-
-    expect(listThinkingLevels("demo", "demo-model")).toContain("xhigh");
-  });
-
   it("includes xhigh for codex models", () => {
     expect(listThinkingLevels(undefined, "gpt-5.2-codex")).toContain("xhigh");
     expect(listThinkingLevels(undefined, "gpt-5.3-codex")).toContain("xhigh");
@@ -102,12 +75,6 @@ describe("listThinkingLevels", () => {
 });
 
 describe("listThinkingLevelLabels", () => {
-  it("uses provider runtime hooks for binary thinking providers", () => {
-    providerRuntimeMocks.resolveProviderBinaryThinking.mockReturnValue(true);
-
-    expect(listThinkingLevelLabels("demo", "demo-model")).toEqual(["off", "on"]);
-  });
-
   it("returns on/off for ZAI", () => {
     expect(listThinkingLevelLabels("zai", "glm-4.7")).toEqual(["off", "on"]);
   });
@@ -119,14 +86,6 @@ describe("listThinkingLevelLabels", () => {
 });
 
 describe("resolveThinkingDefaultForModel", () => {
-  it("uses provider runtime hooks for default thinking levels", () => {
-    providerRuntimeMocks.resolveProviderDefaultThinkingLevel.mockReturnValue("adaptive");
-
-    expect(resolveThinkingDefaultForModel({ provider: "demo", model: "demo-model" })).toBe(
-      "adaptive",
-    );
-  });
-
   it("defaults Claude 4.6 models to adaptive", () => {
     expect(
       resolveThinkingDefaultForModel({ provider: "anthropic", model: "claude-opus-4-6" }),

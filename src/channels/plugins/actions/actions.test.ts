@@ -15,7 +15,7 @@ vi.mock("../../../agents/tools/telegram-actions.js", () => ({
   handleTelegramAction,
 }));
 
-vi.mock("../../../../extensions/signal/src/send-reactions.js", () => ({
+vi.mock("../../../signal/send-reactions.js", () => ({
   sendReactionSignal,
   removeReactionSignal,
 }));
@@ -540,21 +540,6 @@ describe("telegramMessageActions", () => {
     expect(actions).toContain("poll");
   });
 
-  it("lists topic-edit when telegram topic edits are enabled", () => {
-    const cfg = {
-      channels: {
-        telegram: {
-          botToken: "tok",
-          actions: { editForumTopic: true },
-        },
-      },
-    } as OpenClawConfig;
-
-    const actions = telegramMessageActions.listActions?.({ cfg }) ?? [];
-
-    expect(actions).toContain("topic-edit");
-  });
-
   it("omits poll when sendMessage is disabled", () => {
     const cfg = {
       channels: {
@@ -805,24 +790,6 @@ describe("telegramMessageActions", () => {
           name: "Build Updates",
           iconColor: undefined,
           iconCustomEmojiId: undefined,
-          accountId: undefined,
-        },
-      },
-      {
-        name: "topic-edit maps to editForumTopic",
-        action: "topic-edit" as const,
-        params: {
-          to: "telegram:group:-1001234567890:topic:271",
-          threadId: 271,
-          name: "Build Updates",
-          iconCustomEmojiId: "emoji-123",
-        },
-        expectedPayload: {
-          action: "editForumTopic",
-          chatId: "telegram:group:-1001234567890:topic:271",
-          messageThreadId: 271,
-          name: "Build Updates",
-          iconCustomEmojiId: "emoji-123",
           accountId: undefined,
         },
       },

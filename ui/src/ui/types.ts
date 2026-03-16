@@ -316,12 +316,9 @@ export type PresenceEntry = {
 };
 
 export type GatewaySessionsDefaults = {
-  modelProvider: string | null;
   model: string | null;
   contextTokens: number | null;
 };
-
-export type ChatModelOverride = import("./chat-model-ref.ts").ChatModelOverride;
 
 export type GatewayAgentRow = SharedGatewayAgentRow;
 
@@ -404,12 +401,7 @@ export type SessionsPatchResult = SessionsPatchResultBase<{
   verboseLevel?: string;
   reasoningLevel?: string;
   elevatedLevel?: string;
-}> & {
-  resolved?: {
-    modelProvider?: string;
-    model?: string;
-  };
-};
+}>;
 
 export type {
   CostUsageDailyEntry,
@@ -435,7 +427,7 @@ export type CronSchedule =
   | { kind: "every"; everyMs: number; anchorMs?: number }
   | { kind: "cron"; expr: string; tz?: string; staggerMs?: number };
 
-export type CronSessionTarget = "main" | "isolated" | "current" | `session:${string}`;
+export type CronSessionTarget = "main" | "isolated";
 export type CronWakeMode = "next-heartbeat" | "now";
 
 export type CronPayload =

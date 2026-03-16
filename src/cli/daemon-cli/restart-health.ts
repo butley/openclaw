@@ -182,7 +182,7 @@ export async function inspectGatewayRestart(params: {
             return true;
           }
           if (runtimePid == null) {
-            return false;
+            return true;
           }
           return !listenerOwnedByRuntimePid({ listener, runtimePid });
         })

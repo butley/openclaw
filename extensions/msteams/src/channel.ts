@@ -16,7 +16,11 @@ import {
   MSTeamsConfigSchema,
   PAIRING_APPROVED_MESSAGE,
 } from "openclaw/plugin-sdk/msteams";
+import { listMSTeamsDirectoryGroupsLive, listMSTeamsDirectoryPeersLive } from "./directory-live.js";
+import { msteamsOnboardingAdapter } from "./onboarding.js";
+import { msteamsOutbound } from "./outbound.js";
 import { resolveMSTeamsGroupToolPolicy } from "./policy.js";
+import { probeMSTeams } from "./probe.js";
 import {
   normalizeMSTeamsMessagingTarget,
   normalizeMSTeamsUserInput,
@@ -25,9 +29,7 @@ import {
   resolveMSTeamsChannelAllowlist,
   resolveMSTeamsUserAllowlist,
 } from "./resolve-allowlist.js";
-import { getMSTeamsRuntime } from "./runtime.js";
-import { msteamsSetupAdapter } from "./setup-core.js";
-import { msteamsSetupWizard } from "./setup-surface.js";
+import { sendAdaptiveCardMSTeams, sendMessageMSTeams } from "./send.js";
 import { resolveMSTeamsCredentials } from "./token.js";
 
 type ResolvedMSTeamsAccount = {
@@ -47,22 +49,17 @@ const meta = {
   order: 60,
 } as const;
 
-async function loadMSTeamsChannelRuntime() {
-  return await import("./channel.runtime.js");
-}
-
 export const msteamsPlugin: ChannelPlugin<ResolvedMSTeamsAccount> = {
   id: "msteams",
   meta: {
     ...meta,
     aliases: [...meta.aliases],
   },
-  setupWizard: msteamsSetupWizard,
+  onboarding: msteamsOnboardingAdapter,
   pairing: {
     idLabel: "msteamsUserId",
     normalizeAllowEntry: (entry) => entry.replace(/^(msteams|user):/i, ""),
     notifyApproval: async ({ cfg, id }) => {
-      const { sendMessageMSTeams } = await loadMSTeamsChannelRuntime();
       await sendMessageMSTeams({
         cfg,
         to: id,
@@ -146,7 +143,19 @@ export const msteamsPlugin: ChannelPlugin<ResolvedMSTeamsAccount> = {
       });
     },
   },
-  setup: msteamsSetupAdapter,
+  setup: {
+    resolveAccountId: () => DEFAULT_ACCOUNT_ID,
+    applyAccountConfig: ({ cfg }) => ({
+      ...cfg,
+      channels: {
+        ...cfg.channels,
+        msteams: {
+          ...cfg.channels?.msteams,
+          enabled: true,
+        },
+      },
+    }),
+  },
   messaging: {
     normalizeTarget: normalizeMSTeamsMessagingTarget,
     targetResolver: {
@@ -224,9 +233,9 @@ export const msteamsPlugin: ChannelPlugin<ResolvedMSTeamsAccount> = {
         .map((id) => ({ kind: "group", id }) as const);
     },
     listPeersLive: async ({ cfg, query, limit }) =>
-      (await loadMSTeamsChannelRuntime()).listMSTeamsDirectoryPeersLive({ cfg, query, limit }),
+      listMSTeamsDirectoryPeersLive({ cfg, query, limit }),
     listGroupsLive: async ({ cfg, query, limit }) =>
-      (await loadMSTeamsChannelRuntime()).listMSTeamsDirectoryGroupsLive({ cfg, query, limit }),
+      listMSTeamsDirectoryGroupsLive({ cfg, query, limit }),
   },
   resolver: {
     resolveTargets: async ({ cfg, inputs, kind, runtime }) => {
@@ -389,7 +398,6 @@ export const msteamsPlugin: ChannelPlugin<ResolvedMSTeamsAccount> = {
             details: { error: "Card send requires a target (to)." },
           };
         }
-        const { sendAdaptiveCardMSTeams } = await loadMSTeamsChannelRuntime();
         const result = await sendAdaptiveCardMSTeams({
           cfg: ctx.cfg,
           to,
@@ -414,27 +422,14 @@ export const msteamsPlugin: ChannelPlugin<ResolvedMSTeamsAccount> = {
       return null as never;
     },
   },
-  outbound: {
-    deliveryMode: "direct",
-    chunker: (text, limit) => getMSTeamsRuntime().channel.text.chunkMarkdownText(text, limit),
-    chunkerMode: "markdown",
-    textChunkLimit: 4000,
-    pollMaxOptions: 12,
-    sendText: async (params) =>
-      (await loadMSTeamsChannelRuntime()).msteamsOutbound.sendText!(params),
-    sendMedia: async (params) =>
-      (await loadMSTeamsChannelRuntime()).msteamsOutbound.sendMedia!(params),
-    sendPoll: async (params) =>
-      (await loadMSTeamsChannelRuntime()).msteamsOutbound.sendPoll!(params),
-  },
+  outbound: msteamsOutbound,
   status: {
     defaultRuntime: createDefaultChannelRuntimeState(DEFAULT_ACCOUNT_ID, { port: null }),
     buildChannelSummary: ({ snapshot }) =>
       buildProbeChannelStatusSummary(snapshot, {
         port: snapshot.port ?? null,
       }),
-    probeAccount: async ({ cfg }) =>
-      await (await loadMSTeamsChannelRuntime()).probeMSTeams(cfg.channels?.msteams),
+    probeAccount: async ({ cfg }) => await probeMSTeams(cfg.channels?.msteams),
     buildAccountSnapshot: ({ account, runtime, probe }) => ({
       accountId: account.accountId,
       enabled: account.enabled,

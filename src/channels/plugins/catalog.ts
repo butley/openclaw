@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { MANIFEST_KEY } from "../../compat/legacy-names.js";
 import { discoverOpenClawPlugins } from "../../plugins/discovery.js";
-import { loadPluginManifest } from "../../plugins/manifest.js";
 import type { OpenClawPackageManifest } from "../../plugins/manifest.js";
 import type { PluginOrigin } from "../../plugins/types.js";
 import { isRecord, resolveConfigDir, resolveUserPath } from "../../utils.js";
@@ -26,7 +25,6 @@ export type ChannelUiCatalog = {
 
 export type ChannelPluginCatalogEntry = {
   id: string;
-  pluginId?: string;
   meta: ChannelMeta;
   install: {
     npmSpec: string;
@@ -198,26 +196,9 @@ function resolveInstallInfo(params: {
   };
 }
 
-function resolveCatalogPluginId(params: {
-  packageDir?: string;
-  rootDir?: string;
-  origin?: PluginOrigin;
-}): string | undefined {
-  const manifestDir = params.packageDir ?? params.rootDir;
-  if (manifestDir) {
-    const manifest = loadPluginManifest(manifestDir, params.origin !== "bundled");
-    if (manifest.ok) {
-      return manifest.manifest.id;
-    }
-  }
-  return undefined;
-}
-
 function buildCatalogEntry(candidate: {
   packageName?: string;
   packageDir?: string;
-  rootDir?: string;
-  origin?: PluginOrigin;
   workspaceDir?: string;
   packageManifest?: OpenClawPackageManifest;
 }): ChannelPluginCatalogEntry | null {
@@ -242,17 +223,7 @@ function buildCatalogEntry(candidate: {
   if (!install) {
     return null;
   }
-  const pluginId = resolveCatalogPluginId({
-    packageDir: candidate.packageDir,
-    rootDir: candidate.rootDir,
-    origin: candidate.origin,
-  });
-  return {
-    id,
-    ...(pluginId ? { pluginId } : {}),
-    meta,
-    install,
-  };
+  return { id, meta, install };
 }
 
 function buildExternalCatalogEntry(entry: ExternalCatalogEntry): ChannelPluginCatalogEntry | null {

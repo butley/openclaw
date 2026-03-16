@@ -218,18 +218,6 @@ fun SettingsSheet(viewModel: MainViewModel) {
       calendarPermissionGranted = readOk && writeOk
     }
 
-  var callLogPermissionGranted by
-    remember {
-      mutableStateOf(
-        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) ==
-          PackageManager.PERMISSION_GRANTED,
-      )
-    }
-  val callLogPermissionLauncher =
-    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-      callLogPermissionGranted = granted
-    }
-
   var motionPermissionGranted by
     remember {
       mutableStateOf(
@@ -277,9 +265,6 @@ fun SettingsSheet(viewModel: MainViewModel) {
             ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) ==
               PackageManager.PERMISSION_GRANTED &&
               ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) ==
-              PackageManager.PERMISSION_GRANTED
-          callLogPermissionGranted =
-            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) ==
               PackageManager.PERMISSION_GRANTED
           motionPermissionGranted =
             !motionPermissionRequired ||
@@ -616,31 +601,6 @@ fun SettingsSheet(viewModel: MainViewModel) {
               }
             },
           )
-          HorizontalDivider(color = mobileBorder)
-          ListItem(
-            modifier = Modifier.fillMaxWidth(),
-            colors = listItemColors,
-            headlineContent = { Text("Call Log", style = mobileHeadline) },
-            supportingContent = { Text("Search recent call history.", style = mobileCallout) },
-            trailingContent = {
-              Button(
-                onClick = {
-                  if (callLogPermissionGranted) {
-                    openAppSettings(context)
-                  } else {
-                    callLogPermissionLauncher.launch(Manifest.permission.READ_CALL_LOG)
-                  }
-                },
-                colors = settingsPrimaryButtonColors(),
-                shape = RoundedCornerShape(14.dp),
-              ) {
-                Text(
-                  if (callLogPermissionGranted) "Manage" else "Grant",
-                  style = mobileCallout.copy(fontWeight = FontWeight.Bold),
-                )
-              }
-            },
-          )
           if (motionAvailable) {
             HorizontalDivider(color = mobileBorder)
             ListItem(
@@ -776,12 +736,11 @@ private fun settingsTextFieldColors() =
     cursorColor = mobileAccent,
   )
 
-@Composable
 private fun Modifier.settingsRowModifier() =
   this
     .fillMaxWidth()
     .border(width = 1.dp, color = mobileBorder, shape = RoundedCornerShape(14.dp))
-    .background(mobileCardSurface, RoundedCornerShape(14.dp))
+    .background(Color.White, RoundedCornerShape(14.dp))
 
 @Composable
 private fun settingsPrimaryButtonColors() =
@@ -822,7 +781,7 @@ private fun openNotificationListenerSettings(context: Context) {
 private fun hasNotificationsPermission(context: Context): Boolean {
   if (Build.VERSION.SDK_INT < 33) return true
   return ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-          PackageManager.PERMISSION_GRANTED
+    PackageManager.PERMISSION_GRANTED
 }
 
 private fun isNotificationListenerEnabled(context: Context): Boolean {
@@ -832,5 +791,5 @@ private fun isNotificationListenerEnabled(context: Context): Boolean {
 private fun hasMotionCapabilities(context: Context): Boolean {
   val sensorManager = context.getSystemService(SensorManager::class.java) ?: return false
   return sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null ||
-          sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) != null
+    sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) != null
 }

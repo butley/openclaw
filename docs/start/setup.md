@@ -96,8 +96,7 @@ pnpm install
 pnpm gateway:watch
 ```
 
-`gateway:watch` runs the gateway in watch mode and reloads on relevant source,
-config, and bundled-plugin metadata changes.
+`gateway:watch` runs the gateway in watch mode and reloads on TypeScript changes.
 
 ### 2) Point the macOS app at your running Gateway
 

@@ -3,7 +3,7 @@ import { loadOutboundMediaFromUrl } from "./outbound-media.js";
 
 const loadWebMediaMock = vi.hoisted(() => vi.fn());
 
-vi.mock("../../extensions/whatsapp/src/media.js", () => ({
+vi.mock("../web/media.js", () => ({
   loadWebMedia: loadWebMediaMock,
 }));
 

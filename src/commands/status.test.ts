@@ -286,7 +286,7 @@ vi.mock("../channels/plugins/index.js", () => ({
       },
     ] as unknown,
 }));
-vi.mock("../../extensions/whatsapp/src/session.js", () => ({
+vi.mock("../web/session.js", () => ({
   webAuthExists: mocks.webAuthExists,
   getWebAuthAgeMs: mocks.getWebAuthAgeMs,
   readWebSelfId: mocks.readWebSelfId,
@@ -398,7 +398,7 @@ describe("statusCommand", () => {
   it("prints JSON when requested", async () => {
     await statusCommand({ json: true }, runtime as never);
     const payload = JSON.parse(String(runtimeLogMock.mock.calls[0]?.[0]));
-    expect(payload.linkChannel).toBeUndefined();
+    expect(payload.linkChannel.linked).toBe(true);
     expect(payload.memory.agentId).toBe("main");
     expect(payload.memoryPlugin.enabled).toBe(true);
     expect(payload.memoryPlugin.slot).toBe("memory-core");
@@ -417,12 +417,6 @@ describe("statusCommand", () => {
     expect(payload.securityAudit.summary.warn).toBe(1);
     expect(payload.gatewayService.label).toBe("LaunchAgent");
     expect(payload.nodeService.label).toBe("LaunchAgent");
-    expect(mocks.runSecurityAudit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        includeFilesystem: true,
-        includeChannelSecurity: true,
-      }),
-    );
   });
 
   it("surfaces unknown usage when totalTokens is missing", async () => {
@@ -511,13 +505,8 @@ describe("statusCommand", () => {
 
     await statusCommand({ json: true }, runtime as never);
     const payload = JSON.parse(String(runtimeLogMock.mock.calls.at(-1)?.[0]));
-    expect(payload.gateway.error ?? payload.gateway.authWarning ?? null).not.toBeNull();
-    if (Array.isArray(payload.secretDiagnostics) && payload.secretDiagnostics.length > 0) {
-      expect(
-        payload.secretDiagnostics.some((entry: string) => entry.includes("gateway.auth.token")),
-      ).toBe(true);
-    }
-    expect(runtime.error).not.toHaveBeenCalled();
+    expect(payload.gateway.error).toContain("gateway.auth.token");
+    expect(payload.gateway.error).toContain("SecretRef");
   });
 
   it("surfaces channel runtime errors from the gateway", async () => {

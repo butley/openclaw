@@ -1,4 +1,3 @@
-import { resolveProviderCapabilitiesWithPlugin } from "../plugins/provider-runtime.js";
 import { normalizeProviderId } from "./model-selection.js";
 
 export type ProviderCapabilities = {
@@ -27,17 +26,19 @@ const DEFAULT_PROVIDER_CAPABILITIES: ProviderCapabilities = {
   dropThinkingBlockModelHints: [],
 };
 
-const CORE_PROVIDER_CAPABILITIES: Record<string, Partial<ProviderCapabilities>> = {
+const PROVIDER_CAPABILITIES: Record<string, Partial<ProviderCapabilities>> = {
+  anthropic: {
+    providerFamily: "anthropic",
+    dropThinkingBlockModelHints: ["claude"],
+  },
   "amazon-bedrock": {
     providerFamily: "anthropic",
     dropThinkingBlockModelHints: ["claude"],
   },
-};
-
-const PLUGIN_CAPABILITIES_FALLBACKS: Record<string, Partial<ProviderCapabilities>> = {
-  anthropic: {
-    providerFamily: "anthropic",
-    dropThinkingBlockModelHints: ["claude"],
+  // kimi-coding natively supports Anthropic tool framing (input_schema);
+  // converting to OpenAI format causes XML text fallback instead of tool_use blocks.
+  "kimi-coding": {
+    preserveAnthropicThinkingSignatures: false,
   },
   mistral: {
     transcriptToolCallIdMode: "strict9",
@@ -51,6 +52,17 @@ const PLUGIN_CAPABILITIES_FALLBACKS: Record<string, Partial<ProviderCapabilities
       "mistralai",
     ],
   },
+  openai: {
+    providerFamily: "openai",
+  },
+  "openai-codex": {
+    providerFamily: "openai",
+  },
+  openrouter: {
+    openAiCompatTurnValidation: false,
+    geminiThoughtSignatureSanitization: true,
+    geminiThoughtSignatureModelHints: ["gemini"],
+  },
   opencode: {
     openAiCompatTurnValidation: false,
     geminiThoughtSignatureSanitization: true,
@@ -61,20 +73,20 @@ const PLUGIN_CAPABILITIES_FALLBACKS: Record<string, Partial<ProviderCapabilities
     geminiThoughtSignatureSanitization: true,
     geminiThoughtSignatureModelHints: ["gemini"],
   },
-  openai: {
-    providerFamily: "openai",
+  kilocode: {
+    geminiThoughtSignatureSanitization: true,
+    geminiThoughtSignatureModelHints: ["gemini"],
+  },
+  "github-copilot": {
+    dropThinkingBlockModelHints: ["claude"],
   },
 };
 
 export function resolveProviderCapabilities(provider?: string | null): ProviderCapabilities {
   const normalized = normalizeProviderId(provider ?? "");
-  const pluginCapabilities = normalized
-    ? resolveProviderCapabilitiesWithPlugin({ provider: normalized })
-    : undefined;
   return {
     ...DEFAULT_PROVIDER_CAPABILITIES,
-    ...CORE_PROVIDER_CAPABILITIES[normalized],
-    ...(pluginCapabilities ?? PLUGIN_CAPABILITIES_FALLBACKS[normalized]),
+    ...PROVIDER_CAPABILITIES[normalized],
   };
 }
 

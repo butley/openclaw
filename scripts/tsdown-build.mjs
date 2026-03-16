@@ -3,10 +3,9 @@
 import { spawnSync } from "node:child_process";
 
 const logLevel = process.env.OPENCLAW_BUILD_VERBOSE ? "info" : "warn";
-const extraArgs = process.argv.slice(2);
 const result = spawnSync(
   "pnpm",
-  ["exec", "tsdown", "--config-loader", "unrun", "--logLevel", logLevel, ...extraArgs],
+  ["exec", "tsdown", "--config-loader", "unrun", "--logLevel", logLevel],
   {
     stdio: "inherit",
     shell: process.platform === "win32",

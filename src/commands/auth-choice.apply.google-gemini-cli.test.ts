@@ -77,7 +77,7 @@ describe("applyAuthChoiceGoogleGeminiCli", () => {
     expect(result).toBe(expected);
     expect(mockedApplyAuthChoicePluginProvider).toHaveBeenCalledWith(params, {
       authChoice: "google-gemini-cli",
-      pluginId: "google",
+      pluginId: "google-gemini-cli-auth",
       providerId: "google-gemini-cli",
       methodId: "oauth",
       label: "Google Gemini CLI",

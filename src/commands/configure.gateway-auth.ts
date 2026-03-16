@@ -110,7 +110,7 @@ export async function promptAuthConfig(
       allowKeep: true,
       ignoreAllowlist: true,
       includeProviderPluginSetups: true,
-      preferredProvider: await resolvePreferredProviderForAuthChoice({
+      preferredProvider: resolvePreferredProviderForAuthChoice({
         choice: authChoice,
         config: next,
       }),

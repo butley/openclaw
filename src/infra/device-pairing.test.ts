@@ -13,7 +13,6 @@ import {
   rotateDeviceToken,
   verifyDeviceToken,
   type PairedDevice,
-  type RotateDeviceTokenResult,
 } from "./device-pairing.js";
 import { resolvePairingPaths } from "./pairing-files.js";
 
@@ -54,14 +53,6 @@ function requireToken(token: string | undefined): string {
     throw new Error("expected operator token to be issued");
   }
   return token;
-}
-
-function requireRotatedEntry(result: RotateDeviceTokenResult) {
-  expect(result.ok).toBe(true);
-  if (!result.ok) {
-    throw new Error(`expected rotated token entry, got ${result.reason}`);
-  }
-  return result.entry;
 }
 
 async function overwritePairedOperatorTokenScopes(baseDir: string, scopes: string[]) {
@@ -213,24 +204,22 @@ describe("device pairing tokens", () => {
     const baseDir = await mkdtemp(join(tmpdir(), "openclaw-device-pairing-"));
     await setupPairedOperatorDevice(baseDir, ["operator.admin"]);
 
-    const downscoped = await rotateDeviceToken({
+    await rotateDeviceToken({
       deviceId: "device-1",
       role: "operator",
       scopes: ["operator.read"],
       baseDir,
     });
-    expect(downscoped.ok).toBe(true);
     let paired = await getPairedDevice("device-1", baseDir);
     expect(paired?.tokens?.operator?.scopes).toEqual(["operator.read"]);
     expect(paired?.scopes).toEqual(["operator.admin"]);
     expect(paired?.approvedScopes).toEqual(["operator.admin"]);
 
-    const reused = await rotateDeviceToken({
+    await rotateDeviceToken({
       deviceId: "device-1",
       role: "operator",
       baseDir,
     });
-    expect(reused.ok).toBe(true);
     paired = await getPairedDevice("device-1", baseDir);
     expect(paired?.tokens?.operator?.scopes).toEqual(["operator.read"]);
   });
@@ -266,7 +255,7 @@ describe("device pairing tokens", () => {
       scopes: ["operator.admin"],
       baseDir,
     });
-    expect(rotated).toEqual({ ok: false, reason: "scope-outside-approved-baseline" });
+    expect(rotated).toBeNull();
 
     const after = await getPairedDevice("device-1", baseDir);
     expect(after?.tokens?.operator?.token).toEqual(before?.tokens?.operator?.token);
@@ -368,13 +357,12 @@ describe("device pairing tokens", () => {
       scopes: ["operator.talk.secrets"],
       baseDir,
     });
-    const entry = requireRotatedEntry(rotated);
-    expect(entry.scopes).toEqual(["operator.talk.secrets"]);
+    expect(rotated?.scopes).toEqual(["operator.talk.secrets"]);
 
     await expect(
       verifyOperatorToken({
         baseDir,
-        token: requireToken(entry.token),
+        token: requireToken(rotated?.token),
         scopes: ["operator.talk.secrets"],
       }),
     ).resolves.toEqual({ ok: true });
@@ -407,7 +395,7 @@ describe("device pairing tokens", () => {
         scopes: ["operator.admin"],
         baseDir,
       }),
-    ).resolves.toEqual({ ok: false, reason: "missing-approved-scope-baseline" });
+    ).resolves.toBeNull();
   });
 
   test("treats multibyte same-length token input as mismatch without throwing", async () => {

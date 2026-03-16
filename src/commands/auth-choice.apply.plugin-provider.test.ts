@@ -9,12 +9,15 @@ import {
 } from "./auth-choice.apply.plugin-provider.js";
 
 const resolvePluginProviders = vi.hoisted(() => vi.fn<() => ProviderPlugin[]>(() => []));
+vi.mock("../plugins/providers.js", () => ({
+  resolvePluginProviders,
+}));
+
 const resolveProviderPluginChoice = vi.hoisted(() =>
   vi.fn<() => { provider: ProviderPlugin; method: ProviderAuthMethod } | null>(),
 );
 const runProviderModelSelectedHook = vi.hoisted(() => vi.fn(async () => {}));
-vi.mock("./auth-choice.apply.plugin-provider.runtime.js", () => ({
-  resolvePluginProviders,
+vi.mock("../plugins/provider-wizard.js", () => ({
   resolveProviderPluginChoice,
   runProviderModelSelectedHook,
 }));

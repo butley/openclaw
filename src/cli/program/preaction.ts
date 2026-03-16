@@ -32,6 +32,7 @@ const PLUGIN_REQUIRED_COMMANDS = new Set([
   "directory",
   "agents",
   "configure",
+  "onboard",
   "status",
   "health",
 ]);
@@ -66,24 +67,6 @@ function loadPluginRegistryModule() {
   return pluginRegistryModulePromise;
 }
 
-function resolvePluginRegistryScope(commandPath: string[]): "channels" | "all" {
-  return commandPath[0] === "status" || commandPath[0] === "health" ? "channels" : "all";
-}
-
-function shouldLoadPluginsForCommand(commandPath: string[], argv: string[]): boolean {
-  const [primary, secondary] = commandPath;
-  if (!primary || !PLUGIN_REQUIRED_COMMANDS.has(primary)) {
-    return false;
-  }
-  if ((primary === "status" || primary === "health") && hasFlag(argv, "--json")) {
-    return false;
-  }
-  // Onboarding/setup should stay manifest-first and load selected plugins on demand.
-  if (primary === "onboard" || (primary === "channels" && secondary === "add")) {
-    return false;
-  }
-  return true;
-}
 function getRootCommand(command: Command): Command {
   let current = command;
   while (current.parent) {
@@ -151,9 +134,9 @@ export function registerPreActionHooks(program: Command, programVersion: string)
       ...(suppressDoctorStdout ? { suppressDoctorStdout: true } : {}),
     });
     // Load plugins for commands that need channel access
-    if (shouldLoadPluginsForCommand(commandPath, argv)) {
+    if (PLUGIN_REQUIRED_COMMANDS.has(commandPath[0])) {
       const { ensurePluginRegistryLoaded } = await loadPluginRegistryModule();
-      ensurePluginRegistryLoaded({ scope: resolvePluginRegistryScope(commandPath) });
+      ensurePluginRegistryLoaded();
     }
   });
 }

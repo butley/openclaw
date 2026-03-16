@@ -114,6 +114,7 @@ export async function handleNextcloudTalkInbound(params: {
   const roomMatch = resolveNextcloudTalkRoomMatch({
     rooms: account.config.rooms,
     roomToken,
+    roomName,
   });
   const roomConfig = roomMatch.roomConfig;
   if (isGroup && !roomMatch.allowed) {

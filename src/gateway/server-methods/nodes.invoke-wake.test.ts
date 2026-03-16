@@ -2,18 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorCodes } from "../protocol/index.js";
 import { maybeWakeNodeWithApns, nodeHandlers } from "./nodes.js";
 
-type MockNodeCommandPolicyParams = {
-  command: string;
-  declaredCommands?: string[];
-  allowlist: Set<string>;
-};
-
 const mocks = vi.hoisted(() => ({
   loadConfig: vi.fn(() => ({})),
-  resolveNodeCommandAllowlist: vi.fn<() => Set<string>>(() => new Set()),
-  isNodeCommandAllowed: vi.fn<
-    (params: MockNodeCommandPolicyParams) => { ok: true } | { ok: false; reason: string }
-  >(() => ({ ok: true })),
+  resolveNodeCommandAllowlist: vi.fn(() => []),
+  isNodeCommandAllowed: vi.fn(() => ({ ok: true })),
   sanitizeNodeInvokeParamsForForwarding: vi.fn(({ rawParams }: { rawParams: unknown }) => ({
     ok: true,
     params: rawParams,
@@ -221,10 +213,9 @@ async function invokeNode(params: {
   return respond;
 }
 
-function createNodeClient(nodeId: string, commands?: string[]) {
+function createNodeClient(nodeId: string) {
   return {
     connect: {
-      ...(commands ? { commands } : {}),
       role: "node" as const,
       client: {
         id: nodeId,
@@ -237,26 +228,26 @@ function createNodeClient(nodeId: string, commands?: string[]) {
   };
 }
 
-async function pullPending(nodeId: string, commands?: string[]) {
+async function pullPending(nodeId: string) {
   const respond = vi.fn();
   await nodeHandlers["node.pending.pull"]({
     params: {},
     respond: respond as never,
     context: {} as never,
-    client: createNodeClient(nodeId, commands) as never,
+    client: createNodeClient(nodeId) as never,
     req: { type: "req", id: "req-node-pending", method: "node.pending.pull" },
     isWebchatConnect: () => false,
   });
   return respond;
 }
 
-async function ackPending(nodeId: string, ids: string[], commands?: string[]) {
+async function ackPending(nodeId: string, ids: string[]) {
   const respond = vi.fn();
   await nodeHandlers["node.pending.ack"]({
     params: { ids },
     respond: respond as never,
     context: {} as never,
-    client: createNodeClient(nodeId, commands) as never,
+    client: createNodeClient(nodeId) as never,
     req: { type: "req", id: "req-node-pending-ack", method: "node.pending.ack" },
     isWebchatConnect: () => false,
   });
@@ -268,7 +259,7 @@ describe("node.invoke APNs wake path", () => {
     mocks.loadConfig.mockClear();
     mocks.loadConfig.mockReturnValue({});
     mocks.resolveNodeCommandAllowlist.mockClear();
-    mocks.resolveNodeCommandAllowlist.mockReturnValue(new Set());
+    mocks.resolveNodeCommandAllowlist.mockReturnValue([]);
     mocks.isNodeCommandAllowed.mockClear();
     mocks.isNodeCommandAllowed.mockReturnValue({ ok: true });
     mocks.sanitizeNodeInvokeParamsForForwarding.mockClear();
@@ -479,7 +470,7 @@ describe("node.invoke APNs wake path", () => {
     expect(call?.[2]?.message).toBe("node command queued until iOS returns to foreground");
     expect(mocks.sendApnsBackgroundWake).not.toHaveBeenCalled();
 
-    const pullRespond = await pullPending("ios-node-queued", ["canvas.navigate"]);
+    const pullRespond = await pullPending("ios-node-queued");
     const pullCall = pullRespond.mock.calls[0] as RespondCall | undefined;
     expect(pullCall?.[0]).toBe(true);
     expect(pullCall?.[1]).toMatchObject({
@@ -492,7 +483,7 @@ describe("node.invoke APNs wake path", () => {
       ],
     });
 
-    const repeatedPullRespond = await pullPending("ios-node-queued", ["canvas.navigate"]);
+    const repeatedPullRespond = await pullPending("ios-node-queued");
     const repeatedPullCall = repeatedPullRespond.mock.calls[0] as RespondCall | undefined;
     expect(repeatedPullCall?.[0]).toBe(true);
     expect(repeatedPullCall?.[1]).toMatchObject({
@@ -509,7 +500,7 @@ describe("node.invoke APNs wake path", () => {
       ?.actions?.[0]?.id;
     expect(queuedActionId).toBeTruthy();
 
-    const ackRespond = await ackPending("ios-node-queued", [queuedActionId!], ["canvas.navigate"]);
+    const ackRespond = await ackPending("ios-node-queued", [queuedActionId!]);
     const ackCall = ackRespond.mock.calls[0] as RespondCall | undefined;
     expect(ackCall?.[0]).toBe(true);
     expect(ackCall?.[1]).toMatchObject({
@@ -518,79 +509,11 @@ describe("node.invoke APNs wake path", () => {
       remainingCount: 0,
     });
 
-    const emptyPullRespond = await pullPending("ios-node-queued", ["canvas.navigate"]);
+    const emptyPullRespond = await pullPending("ios-node-queued");
     const emptyPullCall = emptyPullRespond.mock.calls[0] as RespondCall | undefined;
     expect(emptyPullCall?.[0]).toBe(true);
     expect(emptyPullCall?.[1]).toMatchObject({
       nodeId: "ios-node-queued",
-      actions: [],
-    });
-  });
-
-  it("drops queued actions that are no longer allowed at pull time", async () => {
-    mocks.loadApnsRegistration.mockResolvedValue(null);
-    const allowlistedCommands = new Set(["camera.snap", "canvas.navigate"]);
-    mocks.resolveNodeCommandAllowlist.mockImplementation(() => new Set(allowlistedCommands));
-    mocks.isNodeCommandAllowed.mockImplementation(
-      ({ command, declaredCommands, allowlist }: MockNodeCommandPolicyParams) => {
-        if (!allowlist.has(command)) {
-          return { ok: false, reason: "command not allowlisted" };
-        }
-        if (!declaredCommands?.includes(command)) {
-          return { ok: false, reason: "command not declared by node" };
-        }
-        return { ok: true };
-      },
-    );
-
-    const nodeRegistry = {
-      get: vi.fn(() => ({
-        nodeId: "ios-node-policy",
-        commands: ["camera.snap", "canvas.navigate"],
-        platform: "iOS 26.4.0",
-      })),
-      invoke: vi.fn().mockResolvedValue({
-        ok: false,
-        error: {
-          code: "NODE_BACKGROUND_UNAVAILABLE",
-          message: "NODE_BACKGROUND_UNAVAILABLE: canvas/camera/screen commands require foreground",
-        },
-      }),
-    };
-
-    await invokeNode({
-      nodeRegistry,
-      requestParams: {
-        nodeId: "ios-node-policy",
-        command: "camera.snap",
-        params: { facing: "front" },
-        idempotencyKey: "idem-policy",
-      },
-    });
-
-    const preChangePullRespond = await pullPending("ios-node-policy", [
-      "camera.snap",
-      "canvas.navigate",
-    ]);
-    const preChangePullCall = preChangePullRespond.mock.calls[0] as RespondCall | undefined;
-    expect(preChangePullCall?.[0]).toBe(true);
-    expect(preChangePullCall?.[1]).toMatchObject({
-      nodeId: "ios-node-policy",
-      actions: [
-        expect.objectContaining({
-          command: "camera.snap",
-          paramsJSON: JSON.stringify({ facing: "front" }),
-        }),
-      ],
-    });
-
-    allowlistedCommands.delete("camera.snap");
-
-    const pullRespond = await pullPending("ios-node-policy", ["camera.snap", "canvas.navigate"]);
-    const pullCall = pullRespond.mock.calls[0] as RespondCall | undefined;
-    expect(pullCall?.[0]).toBe(true);
-    expect(pullCall?.[1]).toMatchObject({
-      nodeId: "ios-node-policy",
       actions: [],
     });
   });
@@ -632,7 +555,7 @@ describe("node.invoke APNs wake path", () => {
       },
     });
 
-    const pullRespond = await pullPending("ios-node-dedupe", ["canvas.navigate"]);
+    const pullRespond = await pullPending("ios-node-dedupe");
     const pullCall = pullRespond.mock.calls[0] as RespondCall | undefined;
     expect(pullCall?.[0]).toBe(true);
     expect(pullCall?.[1]).toMatchObject({

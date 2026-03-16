@@ -213,13 +213,6 @@ class DeviceHandler(
             ),
           )
           put(
-            "callLog",
-            permissionStateJson(
-              granted = hasPermission(Manifest.permission.READ_CALL_LOG),
-              promptableWhenDenied = true,
-            ),
-          )
-          put(
             "motion",
             permissionStateJson(
               granted = motionGranted,

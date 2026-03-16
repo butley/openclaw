@@ -266,6 +266,10 @@ describe("browser server-context listKnownProfileNames", () => {
       ]),
     };
 
-    expect(listKnownProfileNames(state).toSorted()).toEqual(["openclaw", "stale-removed", "user"]);
+    expect(listKnownProfileNames(state).toSorted()).toEqual([
+      "chrome",
+      "openclaw",
+      "stale-removed",
+    ]);
   });
 });

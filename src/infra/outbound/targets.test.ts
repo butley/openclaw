@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { telegramOutbound } from "../../channels/plugins/outbound/telegram.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import type { SessionEntry } from "../../config/sessions/types.js";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
 import { createOutboundTestPlugin, createTestRegistry } from "../../test-utils/channel-plugins.js";
 import {
@@ -327,7 +326,10 @@ describe("resolveSessionDeliveryTarget", () => {
     expect(resolved.to).toBe("63448508");
   });
 
-  const resolveHeartbeatTarget = (entry: SessionEntry, directPolicy?: "allow" | "block") =>
+  const resolveHeartbeatTarget = (
+    entry: Parameters<typeof resolveHeartbeatDeliveryTarget>[0]["entry"],
+    directPolicy?: "allow" | "block",
+  ) =>
     resolveHeartbeatDeliveryTarget({
       cfg: {},
       entry,
@@ -339,7 +341,7 @@ describe("resolveSessionDeliveryTarget", () => {
 
   const expectHeartbeatTarget = (params: {
     name: string;
-    entry: SessionEntry;
+    entry: Parameters<typeof resolveHeartbeatDeliveryTarget>[0]["entry"];
     directPolicy?: "allow" | "block";
     expectedChannel: string;
     expectedTo?: string;

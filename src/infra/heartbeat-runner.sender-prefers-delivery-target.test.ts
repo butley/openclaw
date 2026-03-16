@@ -47,7 +47,7 @@ describe("runHeartbeatOnce", () => {
         await runHeartbeatOnce({
           cfg,
           deps: {
-            slack: sendSlack,
+            sendSlack,
             getQueueSize: () => 0,
             nowMs: () => 0,
           },

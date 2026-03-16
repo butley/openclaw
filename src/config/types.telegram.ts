@@ -8,10 +8,7 @@ import type {
   ReplyToMode,
   SessionThreadBindingsConfig,
 } from "./types.base.js";
-import type {
-  ChannelHealthMonitorConfig,
-  ChannelHeartbeatVisibilityConfig,
-} from "./types.channels.js";
+import type { ChannelHeartbeatVisibilityConfig } from "./types.channels.js";
 import type { DmConfig, ProviderCommandsConfig } from "./types.messages.js";
 import type { GroupToolPolicyBySenderConfig, GroupToolPolicyConfig } from "./types.tools.js";
 
@@ -26,8 +23,6 @@ export type TelegramActionConfig = {
   sticker?: boolean;
   /** Enable forum topic creation. */
   createForumTopic?: boolean;
-  /** Enable forum topic editing (rename / change icon). */
-  editForumTopic?: boolean;
 };
 
 export type TelegramNetworkConfig = {
@@ -184,8 +179,6 @@ export type TelegramAccountConfig = {
   reactionLevel?: "off" | "ack" | "minimal" | "extensive";
   /** Heartbeat visibility settings for this channel. */
   heartbeat?: ChannelHeartbeatVisibilityConfig;
-  /** Channel health monitor overrides for this channel/account. */
-  healthMonitor?: ChannelHealthMonitorConfig;
   /** Controls whether link previews are shown in outbound messages. Default: true. */
   linkPreview?: boolean;
   /**

@@ -1,5 +1,3 @@
-import { buildTelegramExecApprovalButtons } from "../../extensions/telegram/src/approval-buttons.js";
-import { sendTypingTelegram } from "../../extensions/telegram/src/send.js";
 import type { ReplyPayload } from "../auto-reply/types.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { loadConfig } from "../config/config.js";
@@ -9,8 +7,9 @@ import type {
 } from "../config/types.approvals.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { normalizeAccountId, parseAgentSessionKey } from "../routing/session-key.js";
-import { compileConfigRegex } from "../security/config-regex.js";
-import { testRegexWithBoundedInput } from "../security/safe-regex.js";
+import { compileSafeRegex, testRegexWithBoundedInput } from "../security/safe-regex.js";
+import { buildTelegramExecApprovalButtons } from "../telegram/approval-buttons.js";
+import { sendTypingTelegram } from "../telegram/send.js";
 import {
   isDeliverableMessageChannel,
   normalizeMessageChannel,
@@ -64,8 +63,8 @@ function matchSessionFilter(sessionKey: string, patterns: string[]): boolean {
     if (sessionKey.includes(pattern)) {
       return true;
     }
-    const compiled = compileConfigRegex(pattern);
-    return compiled?.regex ? testRegexWithBoundedInput(compiled.regex, sessionKey) : false;
+    const regex = compileSafeRegex(pattern);
+    return regex ? testRegexWithBoundedInput(regex, sessionKey) : false;
   });
 }
 

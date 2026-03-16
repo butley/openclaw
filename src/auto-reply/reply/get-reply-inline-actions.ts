@@ -1,6 +1,5 @@
 import { collectTextContentBlocks } from "../../agents/content-blocks.js";
 import { createOpenClawTools } from "../../agents/openclaw-tools.js";
-import type { BlockReplyChunking } from "../../agents/pi-embedded-block-chunker.js";
 import type { SkillCommandSpec } from "../../agents/skills.js";
 import { applyOwnerOnlyToolPolicy } from "../../agents/tool-policy.js";
 import { getChannelDock } from "../../channels/dock.js";
@@ -38,7 +37,6 @@ function getBuiltinSlashCommands(): Set<string> {
     return builtinSlashCommands;
   }
   builtinSlashCommands = listReservedChatSlashCommandNames([
-    "btw",
     "think",
     "verbose",
     "reasoning",
@@ -115,8 +113,6 @@ export async function handleInlineActions(params: {
   resolvedVerboseLevel: VerboseLevel | undefined;
   resolvedReasoningLevel: ReasoningLevel;
   resolvedElevatedLevel: ElevatedLevel;
-  blockReplyChunking?: BlockReplyChunking;
-  resolvedBlockStreamingBreak?: "text_end" | "message_end";
   resolveDefaultThinkingLevel: Awaited<
     ReturnType<typeof createModelSelectionState>
   >["resolveDefaultThinkingLevel"];
@@ -156,8 +152,6 @@ export async function handleInlineActions(params: {
     resolvedVerboseLevel,
     resolvedReasoningLevel,
     resolvedElevatedLevel,
-    blockReplyChunking,
-    resolvedBlockStreamingBreak,
     resolveDefaultThinkingLevel,
     provider,
     model,
@@ -363,21 +357,17 @@ export async function handleInlineActions(params: {
       storePath,
       sessionScope,
       workspaceDir,
-      opts,
       defaultGroupActivation: defaultActivation,
       resolvedThinkLevel,
       resolvedVerboseLevel: resolvedVerboseLevel ?? "off",
       resolvedReasoningLevel,
       resolvedElevatedLevel,
-      blockReplyChunking,
-      resolvedBlockStreamingBreak,
       resolveDefaultThinkingLevel,
       provider,
       model,
       contextTokens,
       isGroup,
       skillCommands,
-      typing,
     });
 
   if (inlineCommand) {

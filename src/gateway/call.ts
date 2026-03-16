@@ -330,8 +330,11 @@ async function resolveGatewaySecretInputString(params: {
     value: params.value,
     env: params.env,
     normalize: trimToUndefined,
-    onResolveRefError: () => {
-      throw new GatewaySecretRefUnavailableError(params.path);
+    onResolveRefError: (error) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`${params.path} secret reference could not be resolved: ${detail}`, {
+        cause: error,
+      });
     },
   });
   if (!value) {

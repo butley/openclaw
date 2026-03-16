@@ -1,5 +1,4 @@
 import type { Command } from "commander";
-import { redactCdpUrl } from "../browser/cdp.helpers.js";
 import type {
   BrowserTransport,
   BrowserCreateProfileResult,
@@ -153,7 +152,7 @@ export function registerBrowserManageCommands(
             ...(!usesChromeMcpTransport(status)
               ? [
                   `cdpPort: ${status.cdpPort ?? "(unset)"}`,
-                  `cdpUrl: ${redactCdpUrl(status.cdpUrl ?? `http://127.0.0.1:${status.cdpPort}`)}`,
+                  `cdpUrl: ${status.cdpUrl ?? `http://127.0.0.1:${status.cdpPort}`}`,
                 ]
               : []),
             `browser: ${status.chosenBrowser ?? "unknown"}`,

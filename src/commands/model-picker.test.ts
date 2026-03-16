@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import {
   applyModelAllowlist,
@@ -37,13 +37,19 @@ vi.mock("../agents/model-auth.js", () => ({
 const resolveProviderModelPickerEntries = vi.hoisted(() => vi.fn(() => []));
 const resolveProviderPluginChoice = vi.hoisted(() => vi.fn());
 const runProviderModelSelectedHook = vi.hoisted(() => vi.fn(async () => {}));
-const resolvePluginProviders = vi.hoisted(() => vi.fn(() => []));
-const runProviderPluginAuthMethod = vi.hoisted(() => vi.fn());
-vi.mock("./model-picker.runtime.js", () => ({
+vi.mock("../plugins/provider-wizard.js", () => ({
   resolveProviderModelPickerEntries,
   resolveProviderPluginChoice,
   runProviderModelSelectedHook,
+}));
+
+const resolvePluginProviders = vi.hoisted(() => vi.fn(() => []));
+vi.mock("../plugins/providers.js", () => ({
   resolvePluginProviders,
+}));
+
+const runProviderPluginAuthMethod = vi.hoisted(() => vi.fn());
+vi.mock("./auth-choice.apply.plugin-provider.js", () => ({
   runProviderPluginAuthMethod,
 }));
 
@@ -70,10 +76,6 @@ function expectRouterModelFiltering(options: Array<{ value: string }>) {
 function createSelectAllMultiselect() {
   return vi.fn(async (params) => params.options.map((option: { value: string }) => option.value));
 }
-
-beforeEach(() => {
-  vi.clearAllMocks();
-});
 
 describe("promptDefaultModel", () => {
   it("supports configuring vLLM during onboarding", async () => {
@@ -209,7 +211,6 @@ describe("router model filtering", () => {
     const allowlistCall = multiselect.mock.calls[0]?.[0];
     expectRouterModelFiltering(allowlistCall?.options as Array<{ value: string }>);
     expect(allowlistCall?.searchable).toBe(true);
-    expect(runProviderPluginAuthMethod).not.toHaveBeenCalled();
   });
 });
 

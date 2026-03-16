@@ -17,14 +17,20 @@ export {
 } from "../channels/plugins/config-helpers.js";
 export { buildChannelConfigSchema } from "../channels/plugins/config-schema.js";
 export { formatPairingApproveHint } from "../channels/plugins/helpers.js";
+export type {
+  ChannelOnboardingAdapter,
+  ChannelOnboardingDmPolicy,
+} from "../channels/plugins/onboarding-types.js";
 export {
   buildSingleChannelSecretPromptState,
   addWildcardAllowFrom,
   mergeAllowFromEntries,
+  promptAccountId,
   promptSingleChannelSecretInput,
   runSingleChannelSecretStep,
+  resolveAccountIdForConfigure,
   setTopLevelChannelDmPolicyWithAllowFrom,
-} from "../channels/plugins/setup-flow-helpers.js";
+} from "../channels/plugins/onboarding/helpers.js";
 export {
   applyAccountNameToChannelSection,
   patchScopedAccountConfig,

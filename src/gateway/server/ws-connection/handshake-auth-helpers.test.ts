@@ -89,7 +89,7 @@ describe("handshake auth helpers", () => {
     ).toBe(false);
   });
 
-  it("skips backend self-pairing for local trusted backend clients", () => {
+  it("skips backend self-pairing only for local shared-secret backend clients", () => {
     const connectParams = {
       client: {
         id: GATEWAY_CLIENT_IDS.GATEWAY_CLIENT,
@@ -104,15 +104,6 @@ describe("handshake auth helpers", () => {
         hasBrowserOriginHeader: false,
         sharedAuthOk: true,
         authMethod: "token",
-      }),
-    ).toBe(true);
-    expect(
-      shouldSkipBackendSelfPairing({
-        connectParams,
-        isLocalClient: true,
-        hasBrowserOriginHeader: false,
-        sharedAuthOk: false,
-        authMethod: "device-token",
       }),
     ).toBe(true);
     expect(

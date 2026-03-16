@@ -84,7 +84,6 @@ export async function executeSendAction(params: {
   mediaUrl?: string;
   mediaUrls?: string[];
   gifPlayback?: boolean;
-  forceDocument?: boolean;
   bestEffort?: boolean;
   replyToId?: string;
   threadId?: string | number;
@@ -133,7 +132,6 @@ export async function executeSendAction(params: {
     replyToId: params.replyToId,
     threadId: params.threadId,
     gifPlayback: params.gifPlayback,
-    forceDocument: params.forceDocument,
     dryRun: params.ctx.dryRun,
     bestEffort: params.bestEffort ?? undefined,
     deps: params.ctx.deps,

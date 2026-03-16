@@ -380,7 +380,7 @@ export async function runReplyAgent(params: {
       fallbackAttempts,
       directlySentBlockKeys,
     } = runOutcome;
-    let { didLogHeartbeatStrip, autoCompactionCount } = runOutcome;
+    let { didLogHeartbeatStrip, autoCompactionCompleted } = runOutcome;
 
     if (
       shouldInjectGroupIntro &&
@@ -664,13 +664,12 @@ export async function runReplyAgent(params: {
       }
     }
 
-    if (autoCompactionCount > 0) {
+    if (autoCompactionCompleted) {
       const count = await incrementRunCompactionCount({
         sessionEntry: activeSessionEntry,
         sessionStore: activeSessionStore,
         sessionKey,
         storePath,
-        amount: autoCompactionCount,
         lastCallUsage: runResult.meta?.agentMeta?.lastCallUsage,
         contextTokensUsed,
       });

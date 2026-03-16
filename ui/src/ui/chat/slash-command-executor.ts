@@ -16,15 +16,8 @@ import {
   isSubagentSessionKey,
   parseAgentSessionKey,
 } from "../../../../src/routing/session-key.js";
-import { createChatModelOverride, resolveServerChatModelValue } from "../chat-model-ref.ts";
 import type { GatewayBrowserClient } from "../gateway.ts";
-import type {
-  AgentsListResult,
-  ChatModelOverride,
-  GatewaySessionRow,
-  SessionsListResult,
-  SessionsPatchResult,
-} from "../types.ts";
+import type { AgentsListResult, GatewaySessionRow, SessionsListResult } from "../types.ts";
 import { SLASH_COMMANDS } from "./slash-commands.ts";
 
 export type SlashCommandResult = {
@@ -42,7 +35,7 @@ export type SlashCommandResult = {
     | "navigate-usage";
   /** Optional session-level directive changes that the caller should mirror locally. */
   sessionPatch?: {
-    modelOverride?: ChatModelOverride | null;
+    model?: string | null;
   };
 };
 
@@ -151,18 +144,11 @@ async function executeModel(
   }
 
   try {
-    const patched = await client.request<SessionsPatchResult>("sessions.patch", {
-      key: sessionKey,
-      model: args.trim(),
-    });
-    const resolvedValue = resolveServerChatModelValue(
-      patched.resolved?.model ?? args.trim(),
-      patched.resolved?.modelProvider,
-    );
+    await client.request("sessions.patch", { key: sessionKey, model: args.trim() });
     return {
       content: `Model set to \`${args.trim()}\`.`,
       action: "refresh",
-      sessionPatch: { modelOverride: createChatModelOverride(resolvedValue) },
+      sessionPatch: { model: args.trim() },
     };
   } catch (err) {
     return { content: `Failed to set model: ${String(err)}` };
