@@ -18,6 +18,8 @@ import {
   promoteThinkingTagsToBlocks,
 } from "./pi-embedded-utils.js";
 
+const reasoningDebugEnabled = process.env.OPENCLAW_DEBUG_REASONING === "1";
+
 const stripTrailingDirective = (text: string): string => {
   const openIndex = text.lastIndexOf("[[");
   if (openIndex < 0) {
@@ -85,6 +87,9 @@ export function handleMessageUpdate(
   }
 
   ctx.noteLastAssistant(msg);
+  if (ctx.state.deterministicApprovalPromptSent) {
+    return;
+  }
 
   const assistantEvent = evt.assistantMessageEvent;
   const assistantRecord =
@@ -92,6 +97,21 @@ export function handleMessageUpdate(
       ? (assistantEvent as Record<string, unknown>)
       : undefined;
   const evtType = typeof assistantRecord?.type === "string" ? assistantRecord.type : "";
+
+  if (reasoningDebugEnabled) {
+    appendRawStream({
+      ts: Date.now(),
+      event: "assistant_message_update_type",
+      runId: ctx.params.runId,
+      sessionId: (ctx.params.session as { id?: string }).id,
+      evtType: evtType || "(missing)",
+      contentTypes: Array.isArray((msg as { content?: unknown }).content)
+        ? ((msg as { content: Array<{ type?: unknown }> }).content
+            .map((item) => (typeof item?.type === "string" ? item.type : typeof item))
+            .join(",") || "(empty)")
+        : typeof (msg as { content?: unknown }).content,
+    });
+  }
 
   if (evtType === "thinking_start" || evtType === "thinking_delta" || evtType === "thinking_end") {
     if (evtType === "thinking_start" || evtType === "thinking_delta") {
@@ -261,6 +281,9 @@ export function handleMessageEnd(
   const assistantMessage = msg;
   ctx.noteLastAssistant(assistantMessage);
   ctx.recordAssistantUsage((assistantMessage as { usage?: unknown }).usage);
+  if (ctx.state.deterministicApprovalPromptSent) {
+    return;
+  }
   promoteThinkingTagsToBlocks(assistantMessage);
 
   const rawText = extractAssistantText(assistantMessage);
@@ -326,6 +349,16 @@ export function handleMessageEnd(
   ctx.finalizeAssistantTexts({ text, addedDuringMessage, chunkerHasBuffered });
 
   const onBlockReply = ctx.params.onBlockReply;
+  const emitBlockReplySafely = (payload: Parameters<NonNullable<typeof onBlockReply>>[0]) => {
+    if (!onBlockReply) {
+      return;
+    }
+    void Promise.resolve()
+      .then(() => onBlockReply(payload))
+      .catch((err) => {
+        ctx.log.warn(`block reply callback failed: ${String(err)}`);
+      });
+  };
   const shouldEmitReasoning = Boolean(
     ctx.state.includeReasoning &&
     formattedReasoning &&
@@ -339,7 +372,7 @@ export function handleMessageEnd(
       return;
     }
     ctx.state.lastReasoningSent = formattedReasoning;
-    void onBlockReply?.({ text: formattedReasoning, isReasoning: true });
+    emitBlockReplySafely({ text: formattedReasoning, isReasoning: true });
   };
 
   if (shouldEmitReasoningBeforeAnswer) {
@@ -362,7 +395,7 @@ export function handleMessageEnd(
     } = splitResult;
     // Emit if there's content OR audioAsVoice flag (to propagate the flag).
     if (cleanedText || (mediaUrls && mediaUrls.length > 0) || audioAsVoice) {
-      void onBlockReply({
+      emitBlockReplySafely({
         text: cleanedText,
         mediaUrls: mediaUrls?.length ? mediaUrls : undefined,
         audioAsVoice,

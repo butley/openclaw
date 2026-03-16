@@ -22,7 +22,10 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { gatewayEventBus } from "./server-broadcast.js";
+const log = createSubsystemLogger("gateway/sse");
+const reasoningDebugEnabled = process.env.OPENCLAW_DEBUG_REASONING === "1";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -388,6 +391,11 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
         : fullText && fullText.length > lastReasoningLen
           ? fullText.slice(lastReasoningLen)
           : null;
+      if (reasoningDebugEnabled) {
+        log.info(
+          `[reasoning:sse] runId=${payload.runId} sessionKey=${agentSessionKey ?? "NONE"} fullLen=${fullText?.length ?? 0} deltaLen=${delta?.length ?? 0} emitLen=${newContent?.length ?? 0} active=${activeReasoningId ? "yes" : "no"} lastReasoningLen=${lastReasoningLen}`,
+        );
+      }
 
       if (newContent) {
         // Close any open text block before reasoning. Reset lastTextLen because
@@ -441,7 +449,9 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
 
   const onInboundMessage = (payload: Record<string, unknown>) => {
     const evtSessionKey = typeof payload?.sessionKey === "string" ? payload.sessionKey : null;
-    if (!evtSessionKey || normalizeSessionKey(evtSessionKey) !== normalizeSessionKey(sessionKey)) return;
+    if (!evtSessionKey || normalizeSessionKey(evtSessionKey) !== normalizeSessionKey(sessionKey)) {
+      return;
+    }
     sseWrite(res, {
       type: "user-message",
       messageId: (payload.messageId as string) ?? null,

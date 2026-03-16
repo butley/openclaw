@@ -1,9 +1,9 @@
 import type { AnyMessageContent, WAPresence } from "@whiskeysockets/baileys";
 import { recordChannelActivity } from "../../infra/channel-activity.js";
 import { normalizeE164, toWhatsappJid } from "../../utils.js";
+import type { ActiveWebSendOptions } from "../active-listener.js";
 import { resolveBrazilianJid } from "./brazil-jid-resolver.js";
 import { getContactPhone, readLidForPhone } from "./contact-names.js";
-import type { ActiveWebSendOptions } from "../active-listener.js";
 
 function recordWhatsAppOutbound(accountId: string) {
   recordChannelActivity({
@@ -19,15 +19,7 @@ function resolveOutboundMessageId(result: unknown): string {
     : "unknown";
 }
 
-/**
- * Process @mentions in outbound text for WhatsApp:
- *
- * 1. @+553196348700 or @553196348700 → resolve to display name, add JID to mentions
- * 2. @Lucas or @Guilherme → reverse-lookup phone from contact cache, add JID to mentions
- *
- * The text keeps human-readable @Name; Baileys mentions array gets the JIDs.
- */
-// [FORK-PATCH-14] WA Outbound Mentions — converts @mentions to WA mention format. See patches/README.md #14.
+// [FORK-PATCH-14] WA Outbound Mentions — convert outbound @mentions into WhatsApp mentions.
 export function processOutboundMentions(text: string): { text: string; mentions: string[] } {
   const mentions: string[] = [];
   let result = text;
@@ -40,26 +32,24 @@ export function processOutboundMentions(text: string): { text: string; mentions:
     }
   };
 
-  // Pass 1: @+phone or @phone patterns → replace with name, collect JID
   const phonePattern = /@(\+?\d{10,15})\b/g;
-  const phoneMatches: Array<{ full: string; digits: string; e164: string }> = [];
+  const phoneMatches: Array<{ full: string; digits: string }> = [];
   let match: RegExpExecArray | null;
   while ((match = phonePattern.exec(text)) !== null) {
     const raw = match[1];
     const digits = raw.replace(/^\+/, "");
-    const e164 = normalizeE164(raw) ?? `+${digits}`;
-    phoneMatches.push({ full: match[0], digits, e164 });
+    normalizeE164(raw);
+    phoneMatches.push({ full: match[0], digits });
     addMention(digits);
   }
-  for (const m of phoneMatches) {
-    const lidJid = readLidForPhone(m.digits);
+  for (const item of phoneMatches) {
+    const lidJid = readLidForPhone(item.digits);
     if (lidJid) {
       const lidNum = lidJid.replace(/@.*/, "");
-      result = result.replace(m.full, `@${lidNum}`);
+      result = result.replace(item.full, `@${lidNum}`);
     }
   }
 
-  // Pass 2: @Name patterns (non-numeric) → reverse-lookup phone → resolve LID → replace with @LID
   const namePattern = /@([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ0-9_ ]{0,30})\b/g;
   const nameMatches: Array<{ full: string; name: string }> = [];
   while ((match = namePattern.exec(result)) !== null) {
@@ -68,14 +58,14 @@ export function processOutboundMentions(text: string): { text: string; mentions:
       nameMatches.push({ full: match[0], name });
     }
   }
-  for (const m of nameMatches) {
-    const phone = getContactPhone(m.name);
+  for (const item of nameMatches) {
+    const phone = getContactPhone(item.name);
     if (phone) {
       const digits = phone.replace(/^\+/, "");
       const lidJid = readLidForPhone(digits);
       if (lidJid) {
         const lidNum = lidJid.replace(/@.*/, "");
-        result = result.replace(m.full, `@${lidNum}`);
+        result = result.replace(item.full, `@${lidNum}`);
         addMention(digits);
       } else {
         addMention(digits);
@@ -99,7 +89,6 @@ export function createWebSendApi(params: {
     if (!params.sock.onWhatsApp) {
       return jid;
     }
-    // Resolve Brazilian numbers that may have legacy 8-digit registration
     try {
       return await resolveBrazilianJid({ onWhatsApp: params.sock.onWhatsApp }, jid);
     } catch (err) {

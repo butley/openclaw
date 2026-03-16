@@ -207,6 +207,7 @@ export function registerLogsCli(program: Command) {
     .option("--follow", "Follow log output", false)
     .option("--interval <ms>", "Polling interval in ms", "1000")
     .option("--json", "Emit JSON log lines", false)
+    // [FORK-PATCH-10] Logs Pretty Formatter — add rich pretty mode and tail-count shortcut.
     .option("--pretty", "Rich formatted output with categories, icons, and colors", false)
     .option("-n [count]", "Show last N lines and exit (default: 200 with --pretty, 100 without)")
     .option("--plain", "Plain text output (no ANSI styling)", false)
@@ -232,7 +233,6 @@ export function registerLogsCli(program: Command) {
     const localTime =
       Boolean(opts.localTime) || (!!process.env.TZ && isValidTimeZone(process.env.TZ));
 
-    // Handle -n flag: override limit and disable follow
     if (opts.n !== undefined) {
       const defaultN = usePrettyRich ? 200 : 100;
       const nValue = opts.n === true ? defaultN : parsePositiveInt(String(opts.n), defaultN);
@@ -240,7 +240,6 @@ export function registerLogsCli(program: Command) {
       opts.follow = false;
     }
 
-    // --pretty implies follow unless -n was used
     if (usePrettyRich && opts.n === undefined) {
       opts.follow = true;
     }

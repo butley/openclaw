@@ -1,4 +1,4 @@
-import { loadConfig } from "../config/config.js";
+import { loadConfig, type OpenClawConfig } from "../config/config.js";
 import { resolveMarkdownTableMode } from "../config/markdown-tables.js";
 import { generateSecureUuid } from "../infra/secure-random.js";
 import { getChildLogger } from "../logging/logger.js";
@@ -8,18 +8,18 @@ import { convertMarkdownTables } from "../markdown/tables.js";
 import { markdownToWhatsApp } from "../markdown/whatsapp.js";
 import { normalizePollInput, type PollInput } from "../polls.js";
 import { toWhatsappJid } from "../utils.js";
-import {
-  type ActiveWebListener,
-  type ActiveWebSendOptions,
-  requireActiveWebListener,
-} from "./active-listener.js";
+import { resolveWhatsAppAccount, resolveWhatsAppMediaMaxBytes } from "./accounts.js";
+import { type ActiveWebSendOptions, requireActiveWebListener } from "./active-listener.js";
 import { resolveBrazilianJid } from "./inbound/brazil-jid-resolver.js";
 import { loadWebMedia } from "./media.js";
 
 const outboundLog = createSubsystemLogger("gateway/channels/whatsapp").child("outbound");
 
-// [FORK-PATCH-2] Brazil JID Resolution — resolves +55 numbers with/without 9th digit. See patches/README.md #2.
-async function resolveJidWithBrazil(active: ActiveWebListener, to: string): Promise<string> {
+// [FORK-PATCH-2] Brazil JID Resolution — resolve +55 numbers with/without 9th digit before send.
+async function resolveJidWithBrazil(
+  active: { onWhatsApp?: (jid: string) => Promise<Array<{ exists?: boolean; jid?: string }>> },
+  to: string,
+): Promise<string> {
   const jid = toWhatsappJid(to);
   if (!active.onWhatsApp) {
     return jid;
@@ -43,19 +43,24 @@ export async function sendMessageWhatsApp(
   body: string,
   options: {
     verbose: boolean;
+    cfg?: OpenClawConfig;
     mediaUrl?: string;
     mediaLocalRoots?: readonly string[];
     gifPlayback?: boolean;
     accountId?: string;
   },
 ): Promise<{ messageId: string; toJid: string }> {
-  let text = body;
+  let text = body.trimStart();
   const correlationId = generateSecureUuid();
   const startedAt = Date.now();
   const { listener: active, accountId: resolvedAccountId } = requireActiveWebListener(
     options.accountId,
   );
-  const cfg = loadConfig();
+  const cfg = options.cfg ?? loadConfig();
+  const account = resolveWhatsAppAccount({
+    cfg,
+    accountId: resolvedAccountId ?? options.accountId,
+  });
   const tableMode = resolveMarkdownTableMode({
     cfg,
     channel: "whatsapp",
@@ -71,12 +76,16 @@ export async function sendMessageWhatsApp(
   });
   try {
     const jid = await resolveJidWithBrazil(active, to);
+    if (!text && !options.mediaUrl) {
+      return { messageId: "", toJid: jid };
+    }
     const redactedJid = redactIdentifier(jid);
     let mediaBuffer: Buffer | undefined;
     let mediaType: string | undefined;
     let documentFileName: string | undefined;
     if (options.mediaUrl) {
       const media = await loadWebMedia(options.mediaUrl, {
+        maxBytes: resolveWhatsAppMediaMaxBytes(account),
         localRoots: options.mediaLocalRoots,
       });
       const caption = text || undefined;
@@ -175,7 +184,7 @@ export async function sendReactionWhatsApp(
 export async function sendPollWhatsApp(
   to: string,
   poll: PollInput,
-  options: { verbose: boolean; accountId?: string },
+  options: { verbose: boolean; accountId?: string; cfg?: OpenClawConfig },
 ): Promise<{ messageId: string; toJid: string }> {
   const correlationId = generateSecureUuid();
   const startedAt = Date.now();

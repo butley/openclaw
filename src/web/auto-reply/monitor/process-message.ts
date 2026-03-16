@@ -22,7 +22,10 @@ import { readSessionStreamLevel, resolveStreamDelayMs } from "../wa-streaming-ut
 import { logVerbose, shouldLogVerbose } from "../../../globals.js";
 import type { getChildLogger } from "../../../logging.js";
 import { getAgentScopedMediaLocalRoots } from "../../../media/local-roots.js";
-import type { resolveAgentRoute } from "../../../routing/resolve-route.js";
+import {
+  resolveInboundLastRouteSessionKey,
+  type resolveAgentRoute,
+} from "../../../routing/resolve-route.js";
 import {
   readStoreAllowFromForDmPolicy,
   resolvePinnedMainDmOwnerFromAllowlist,
@@ -33,6 +36,7 @@ import { resolveWhatsAppAccount } from "../../accounts.js";
 import { newConnectionId } from "../../reconnect.js";
 import { formatError } from "../../session.js";
 import { deliverWebReply } from "../deliver-reply.js";
+import { gatewayEventBus } from "../../../gateway/server-broadcast.js";
 import { whatsappInboundLog, whatsappOutboundLog } from "../loggers.js";
 import type { WebInboundMsg } from "../types.js";
 import { elide } from "../util.js";
@@ -249,6 +253,25 @@ export async function processMessage(params: {
     whatsappInboundLog.debug(`Inbound body: ${elide(combinedBody, 400)}`);
   }
 
+  // [FORK-PATCH-5] WS Inbound Push — emit directly on gatewayEventBus (bypasses
+  // inbound-events.ts to avoid chunk duplication issues with module-level Set).
+  // The SSE endpoint listens for "message.inbound" on this bus.
+  // listener count used for debugging only
+  gatewayEventBus.emit("message.inbound", {
+    messageId: correlationId,
+    sessionKey: params.route.sessionKey,
+    channel: "whatsapp",
+    accountId: params.route.accountId ?? "",
+    from: params.msg.from ?? "",
+    senderName: params.msg.senderName ?? params.msg.senderE164 ?? "",
+    content: params.msg.body ?? combinedBody,
+    timestamp: Date.now(),
+    chatType: params.msg.chatType === "group" ? "group" : "dm",
+    conversationId: conversationId ?? "",
+    hasMedia: !!params.msg.mediaType,
+    mediaType: params.msg.mediaType,
+  });
+
   const dmRouteTarget =
     params.msg.chatType !== "group"
       ? (() => {
@@ -264,7 +287,7 @@ export async function processMessage(params: {
       : undefined;
 
   const textLimit = params.maxMediaTextChunkLimit ?? resolveTextChunkLimit(params.cfg, "whatsapp");
-  const chunkMode = resolveChunkMode(params.cfg, "whatsapp", params.route.accountId);
+  const _chunkMode = resolveChunkMode(params.cfg, "whatsapp", params.route.accountId);
   const tableMode = resolveMarkdownTableMode({
     cfg: params.cfg,
     channel: "whatsapp",
@@ -290,7 +313,7 @@ export async function processMessage(params: {
   const responsePrefix =
     prefixOptions.responsePrefix ??
     (configuredResponsePrefix === undefined && isSelfChat
-      ? (resolveIdentityNamePrefix(params.cfg, params.route.agentId) ?? "[openclaw]")
+      ? resolveIdentityNamePrefix(params.cfg, params.route.agentId)
       : undefined);
 
   const inboundHistory =
@@ -350,9 +373,13 @@ export async function processMessage(params: {
   });
   const shouldUpdateMainLastRoute =
     !pinnedMainDmRecipient || pinnedMainDmRecipient === dmRouteTarget;
+  const inboundLastRouteSessionKey = resolveInboundLastRouteSessionKey({
+    route: params.route,
+    sessionKey: params.route.sessionKey,
+  });
   if (
     dmRouteTarget &&
-    params.route.sessionKey === params.route.mainSessionKey &&
+    inboundLastRouteSessionKey === params.route.mainSessionKey &&
     shouldUpdateMainLastRoute
   ) {
     updateLastRouteInBackground({
@@ -368,7 +395,7 @@ export async function processMessage(params: {
     });
   } else if (
     dmRouteTarget &&
-    params.route.sessionKey === params.route.mainSessionKey &&
+    inboundLastRouteSessionKey === params.route.mainSessionKey &&
     pinnedMainDmRecipient
   ) {
     logVerbose(
