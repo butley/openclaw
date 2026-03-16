@@ -308,6 +308,9 @@ export async function initSessionState(params: {
     sessionStore[retiredLegacyMainDelivery.key] = retiredLegacyMainDelivery.entry;
   }
   const entry = sessionStore[sessionKey];
+  // [FORK-PATCH-34] Capture previousSessionId before reset for chain persistence.
+  // Note: previousSessionEntry is declared below (upstream handles reset + idle-expiry capture).
+  const previousSessionIdForChain = entry?.sessionId;
   const now = Date.now();
   const isThread = resolveThreadFlag({
     sessionKey,
@@ -409,6 +412,10 @@ export async function initSessionState(params: {
   sessionEntry = {
     ...baseEntry,
     sessionId,
+    // [FORK-PATCH-34] Persist chain to previous session on reset/new/idle-expiry.
+    previousSessionId: isNewSession
+      ? (previousSessionEntry?.sessionId ?? previousSessionIdForChain)
+      : baseEntry?.previousSessionId,
     updatedAt: Date.now(),
     systemSent,
     abortedLastRun,
