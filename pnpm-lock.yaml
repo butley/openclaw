@@ -266,6 +266,10 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
 
+  extensions/butley-api: {}
+
+  extensions/clickup-api: {}
+
   extensions/copilot-proxy: {}
 
   extensions/diagnostics-otel:
