@@ -7,6 +7,7 @@ import type { ResolvedTimeFormat } from "./date-time.js";
 import type { EmbeddedContextFile } from "./pi-embedded-helpers.js";
 import type { EmbeddedSandboxInfo } from "./pi-embedded-runner/types.js";
 import { sanitizeForPromptLiteral } from "./sanitize-for-prompt.js";
+import { BUTLEY_IDENTITY_PROMPT } from "./butley-system-prompt.js";
 
 /**
  * Controls which hardcoded sections are included in the system prompt.
@@ -416,11 +417,11 @@ export function buildAgentSystemPrompt(params: {
 
   // For "none" mode, return just the basic identity line
   if (promptMode === "none") {
-    return "You are a personal assistant running inside OpenClaw.";
+    return BUTLEY_IDENTITY_PROMPT;
   }
 
   const lines = [
-    "You are a personal assistant running inside OpenClaw.",
+    BUTLEY_IDENTITY_PROMPT,
     "",
     "## Tooling",
     "Tool availability (filtered by policy):",
