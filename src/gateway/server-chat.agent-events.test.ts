@@ -47,6 +47,7 @@ describe("agent event handler", () => {
     const agentRunSeq = new Map<string, number>();
     const chatRunState = createChatRunState();
     const toolEventRecipients = createToolEventRecipientRegistry();
+    const clearAgentRunContext = vi.fn();
 
     const handler = createAgentEventHandler({
       broadcast,
@@ -55,7 +56,7 @@ describe("agent event handler", () => {
       agentRunSeq,
       chatRunState,
       resolveSessionKeyForRun: params?.resolveSessionKeyForRun ?? (() => undefined),
-      clearAgentRunContext: vi.fn(),
+      clearAgentRunContext,
       toolEventRecipients,
     });
 
@@ -67,6 +68,7 @@ describe("agent event handler", () => {
       agentRunSeq,
       chatRunState,
       toolEventRecipients,
+      clearAgentRunContext,
       handler,
     };
   }
@@ -439,6 +441,58 @@ describe("agent event handler", () => {
     ]);
     expect(sessionChatCalls(nodeSendToSession)).toHaveLength(3);
     nowSpy.mockRestore();
+  });
+
+  it("does not finalize chat run on retryable lifecycle errors", () => {
+    const {
+      broadcast,
+      nodeSendToSession,
+      agentRunSeq,
+      chatRunState,
+      clearAgentRunContext,
+      handler,
+      nowSpy,
+    } = createHarness({ now: 2_450 });
+    chatRunState.registry.add("run-retry", {
+      sessionKey: "session-retry",
+      clientRunId: "client-retry",
+    });
+
+    handler({
+      runId: "run-retry",
+      seq: 1,
+      stream: "assistant",
+      ts: Date.now(),
+      data: { text: "hello" },
+    });
+
+    handler({
+      runId: "run-retry",
+      seq: 2,
+      stream: "lifecycle",
+      ts: Date.now(),
+      data: { phase: "error", error: "⚠️ API rate limit reached. Please try again later." },
+    });
+
+    const retryChatCalls = chatBroadcastCalls(broadcast);
+    expect(retryChatCalls).toHaveLength(1);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-optional-chaining -- test assertion after length check
+    expect((retryChatCalls[0]?.[1] as { state?: string }).state).toBe("delta");
+    expect(chatRunState.registry.peek("run-retry")).toBeDefined();
+    expect(clearAgentRunContext).not.toHaveBeenCalled();
+    expect(agentRunSeq.get("run-retry")).toBe(2);
+    expect(sessionChatCalls(nodeSendToSession)).toHaveLength(1);
+
+    emitLifecycleEnd(handler, "run-retry", 3);
+
+    const chatCalls = chatBroadcastCalls(broadcast);
+    expect(chatCalls).toHaveLength(2);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-optional-chaining -- test assertion after length check
+    expect((chatCalls[1]?.[1] as { state?: string }).state).toBe("final");
+    expect(clearAgentRunContext).toHaveBeenCalledTimes(1);
+    expect(agentRunSeq.has("run-retry")).toBe(false);
+    expect(agentRunSeq.has("client-retry")).toBe(false);
+    nowSpy?.mockRestore();
   });
 
   it("cleans up agent run sequence tracking when lifecycle completes", () => {

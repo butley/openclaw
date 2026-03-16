@@ -343,6 +343,12 @@ export function createAgentEventHandler({
   clearAgentRunContext,
   toolEventRecipients,
 }: AgentEventHandlerOptions) {
+  // [FORK-PATCH-32] SSE Retryable Error Suppression — retryable provider errors (429, overload)
+  // don't finalize chat runs. Keeps SSE stream open during gateway retries/failover so text
+  // flows normally when retry succeeds. Without this, first 429 kills the stream permanently.
+  const RETRYABLE_LIFECYCLE_ERROR_RE =
+    /\b(?:429|rate\s*limit(?:ed)?|too\s*many\s*requests|temporarily\s*overloaded|overloaded)\b/i;
+
   const _broadcastToConnIds = broadcastToConnIds;
   // [FORK-PATCH-4] Chat Mirror — mirror/session delivery is registered in server-methods/chat.ts.
   const emitChatDelta = (
@@ -632,6 +638,11 @@ export function createAgentEventHandler({
 
     const lifecyclePhase =
       evt.stream === "lifecycle" && typeof evt.data?.phase === "string" ? evt.data.phase : null;
+    // [FORK-PATCH-32] Detect retryable lifecycle errors to suppress premature finalization
+    const lifecycleErrorText =
+      lifecyclePhase === "error" && typeof evt.data?.error === "string" ? evt.data.error : "";
+    const isRetryableLifecycleError =
+      lifecyclePhase === "error" && RETRYABLE_LIFECYCLE_ERROR_RE.test(lifecycleErrorText);
 
     if (sessionKey) {
       // Send tool events to node/channel subscribers only when verbose is enabled;
@@ -641,7 +652,10 @@ export function createAgentEventHandler({
       }
       if (!isAborted && evt.stream === "assistant" && typeof evt.data?.text === "string") {
         emitChatDelta(sessionKey, clientRunId, evt.runId, evt.seq, evt.data.text, evt.data.delta);
-      } else if (!isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
+      } else if (
+        !isAborted &&
+        (lifecyclePhase === "end" || (lifecyclePhase === "error" && !isRetryableLifecycleError))
+      ) {
         const evtStopReason =
           typeof evt.data?.stopReason === "string" ? evt.data.stopReason : undefined;
         if (chatLink) {
@@ -681,7 +695,7 @@ export function createAgentEventHandler({
       }
     }
 
-    if (lifecyclePhase === "end" || lifecyclePhase === "error") {
+    if (lifecyclePhase === "end" || (lifecyclePhase === "error" && !isRetryableLifecycleError)) {
       toolEventRecipients.markFinal(evt.runId);
       clearAgentRunContext(evt.runId);
       agentRunSeq.delete(evt.runId);
