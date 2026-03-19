@@ -32,6 +32,7 @@ export async function deliverWebReply(params: {
   maxMediaBytes: number;
   textLimit: number;
   chunkMode?: ChunkMode;
+  // [FORK-PATCH-11] WA Paragraph Streaming — per-chunk delay fn for natural paragraph-by-paragraph WA delivery. See patches/README.md #11.
   streamDelayMs?: (charCount: number) => number;
   replyLogger: {
     info: (obj: unknown, msg: string) => void;

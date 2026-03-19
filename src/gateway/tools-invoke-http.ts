@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+// [FORK-PATCH-25] HTTP Tools Channel Reg — includes channel-provided tools (WA login, etc.) in HTTP tool invoke endpoint. See patches/README.md #25.
 import { listChannelAgentTools } from "../agents/channel-tools.js";
 import { createOpenClawTools } from "../agents/openclaw-tools.js";
 import {

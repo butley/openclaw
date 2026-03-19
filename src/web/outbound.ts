@@ -18,6 +18,7 @@ import { loadWebMedia } from "./media.js";
 
 const outboundLog = createSubsystemLogger("gateway/channels/whatsapp").child("outbound");
 
+// [FORK-PATCH-2] Brazil JID Resolution — resolves +55 numbers with/without 9th digit. See patches/README.md #2.
 async function resolveJidWithBrazil(active: ActiveWebListener, to: string): Promise<string> {
   const jid = toWhatsappJid(to);
   if (!active.onWhatsApp) {

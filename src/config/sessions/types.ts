@@ -74,6 +74,8 @@ export type SessionEntry = {
   /** Timestamp (ms) when lastHeartbeatText was delivered. */
   lastHeartbeatSentAt?: number;
   sessionId: string;
+  // [FORK-PATCH-34] Chain to the previous session for this chat (set on /new, /reset, idle reset).
+  previousSessionId?: string;
   updatedAt: number;
   sessionFile?: string;
   /** Parent session key that spawned this session (used for sandbox session-tool scoping). */
@@ -329,6 +331,15 @@ export type SessionSystemPromptReport = {
   workspaceDir?: string;
   bootstrapMaxChars?: number;
   bootstrapTotalMaxChars?: number;
+  bootstrapTruncation?: {
+    warningMode?: "off" | "once" | "always";
+    warningShown?: boolean;
+    promptWarningSignature?: string;
+    warningSignaturesSeen?: string[];
+    truncatedFiles?: number;
+    nearLimitFiles?: number;
+    totalNearLimit?: boolean;
+  };
   sandbox?: {
     mode?: string;
     sandboxed?: boolean;

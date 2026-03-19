@@ -45,7 +45,8 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     reasoningMode,
     includeReasoning: reasoningMode === "on",
     shouldEmitPartialReplies: !(reasoningMode === "on" && !params.onBlockReply),
-    streamReasoning: reasoningMode === "stream" && typeof params.onReasoningStream === "function",
+    // [FORK-PATCH-15] Webchat Thinking Stream — hardcodes streamReasoning:true so thinking blocks reach chat UI via WS. See patches/README.md #15.
+    streamReasoning: true, // Always broadcast thinking to WS clients (webchat needs it; channels ignore agent events)
     deltaBuffer: "",
     blockBuffer: "",
     // Track if a streamed chunk opened a <think> block (stateful across chunks).
@@ -55,6 +56,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     lastStreamedAssistantCleaned: undefined,
     emittedAssistantUpdate: false,
     lastStreamedReasoning: undefined,
+    lastRawThinking: undefined,
     lastBlockReplyText: undefined,
     reasoningStreamOpen: false,
     assistantMessageIndex: 0,
@@ -638,7 +640,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   };
 
   const emitReasoningStream = (text: string) => {
-    if (!state.streamReasoning || !params.onReasoningStream) {
+    if (!state.streamReasoning) {
       return;
     }
     const formatted = formatReasoningMessage(text);
@@ -654,19 +656,32 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     const delta = formatted.startsWith(prior) ? formatted.slice(prior.length) : formatted;
     state.lastStreamedReasoning = formatted;
 
-    // Broadcast thinking event to WebSocket clients in real-time
+    // ALWAYS broadcast thinking event to WebSocket clients (Control UI, webchat).
+    // This is independent of the onReasoningStream callback which controls
+    // channel-level typing indicators.
+    // rawText/rawDelta: unformatted thinking for SSE/webchat (no "Reasoning:" prefix, no _italic_).
+    // text/delta: formatted for messaging channels (WA, Discord, Telegram).
+    const rawDelta = text.startsWith(state.lastRawThinking ?? "")
+      ? text.slice((state.lastRawThinking ?? "").length)
+      : text;
+    state.lastRawThinking = text;
     emitAgentEvent({
       runId: params.runId,
       stream: "thinking",
       data: {
         text: formatted,
         delta,
+        rawText: text,
+        rawDelta,
       },
     });
 
-    void params.onReasoningStream({
-      text: formatted,
-    });
+    // Channel typing callback (only if provided — depends on typingMode)
+    if (params.onReasoningStream) {
+      void params.onReasoningStream({
+        text: formatted,
+      });
+    }
   };
 
   const resetForCompactionRetry = () => {

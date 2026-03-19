@@ -116,8 +116,11 @@ export function resolveMemoryFlushContextWindowTokens(params: {
   modelId?: string;
   agentCfgContextTokens?: number;
 }): number {
+  // [FORK-PATCH-33] Config contextTokens takes priority over model cache — matches
+  // all other callsites (agent-runner, followup-runner, model-selection). Without this,
+  // 1M opt-in via agentCfgContextTokens is ignored and memory flush triggers at 200k.
   return (
-    lookupContextTokens(params.modelId) ?? params.agentCfgContextTokens ?? DEFAULT_CONTEXT_TOKENS
+    params.agentCfgContextTokens ?? lookupContextTokens(params.modelId) ?? DEFAULT_CONTEXT_TOKENS
   );
 }
 

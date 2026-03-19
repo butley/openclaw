@@ -1,8 +1,11 @@
+import { whatsappOutboundLog } from "./loggers.js";
+
 /**
  * wa-verbose-utils.ts — Butley custom patch: Verbose Light
  *
  * Extracted from process-message.ts to avoid upstream merge conflicts.
  * Upstream will never touch this file. Add all verbose-narration helpers here.
+ * Includes: formatToolNarration, logToolNarrationDelivered.
  */
 
 /**
@@ -97,4 +100,14 @@ export function formatToolNarration(raw: string): string {
   }
 
   return text ? `${emoji} ${text}` : firstLine.slice(0, 80);
+}
+
+/**
+ * Log tool narration delivery at DEBUG level.
+ * Tool narrations are side-channel messages — logging them at INFO
+ * creates noise indistinguishable from final reply delivery.
+ * Tool execution is already tracked via the native tool start/end logs.
+ */
+export function logToolNarrationDelivered(fromDisplay: string, hasMedia: boolean): void {
+  whatsappOutboundLog.debug(`[narration-delivered] to=${fromDisplay}${hasMedia ? " (media)" : ""}`);
 }

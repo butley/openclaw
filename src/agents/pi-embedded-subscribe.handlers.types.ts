@@ -51,6 +51,7 @@ export type EmbeddedPiSubscribeState = {
   lastStreamedAssistantCleaned?: string;
   emittedAssistantUpdate: boolean;
   lastStreamedReasoning?: string;
+  lastRawThinking?: string;
   lastBlockReplyText?: string;
   reasoningStreamOpen: boolean;
   assistantMessageIndex: number;
