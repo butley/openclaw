@@ -70,6 +70,9 @@ const ACTIONS: Record<
     path: "agentApi:getContactByPhone",
     requiredArgs: ["phone"],
   },
+  // Token Usage / Billing
+  get_token_usage: { method: "query", path: "agentApi:getTokenUsage" },
+  list_billing_periods: { method: "query", path: "agentApi:listBillingPeriods" },
 };
 
 export function createButleyApiTool(api: OpenClawPluginApi) {
@@ -121,7 +124,11 @@ Use this tool to manage tasks, projects, comments, and contacts. Data persists a
 ## Contacts
 - listContacts: no args
 - findOrCreateContact: phone (required), name, nickname, email, notes, tags
-- getContactByPhone: phone (required)`,
+- getContactByPhone: phone (required)
+
+## Token Usage / Billing
+- get_token_usage: optional month (YYYY-MM, defaults to current month) — returns aggregated token totals
+- list_billing_periods: no args — returns all billing periods for this installation`,
     parameters: {
       type: "object" as const,
       properties: {
