@@ -877,7 +877,7 @@ Time format in system prompt. Default: `auto` (OS preference).
       thinkingDefault: "low",
       verboseDefault: "off",
       elevatedDefault: "on",
-      timeoutSeconds: 600,
+      timeoutSeconds: 604800, // 7 days
       mediaMaxMb: 5,
       contextTokens: 200000,
       maxConcurrent: 3,
@@ -1023,7 +1023,7 @@ Prunes **old tool results** from in-memory context before sending to the LLM. Do
     defaults: {
       contextPruning: {
         mode: "cache-ttl", // off | cache-ttl
-        ttl: "1h", // duration (ms/s/m/h), default unit: minutes
+        ttl: "4d", // duration (ms/s/m/h/d), default unit: minutes
         keepLastAssistants: 3,
         softTrimRatio: 0.3,
         hardClearRatio: 0.5,

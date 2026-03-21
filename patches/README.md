@@ -1,6 +1,6 @@
 # Custom Patches — butley/openclaw
 
-32 active custom patches on top of upstream openclaw/openclaw.
+33 active custom patches on top of upstream openclaw/openclaw.
 
 ## Absorbed by Upstream (no longer maintained)
 
@@ -48,11 +48,12 @@
 | 33 | Memory Flush Context Priority | — | Agents | `work` | `grep -q "FORK-PATCH-33" src/auto-reply/reply/memory-flush.ts` |
 | 34 | Session Chain (previousSessionId) | — | Infra | `work` | `grep -q "FORK-PATCH-34" src/config/sessions/types.ts` |
 | 35 | Context1m per-model in all context token callsites | — | Agents | `work` | `grep -q "FORK-PATCH-35" src/agents/context-window-guard.ts src/auto-reply/reply/agent-runner.ts src/auto-reply/reply/followup-runner.ts src/auto-reply/reply/agent-runner-memory.ts` |
+| 36 | Butley System Prompt | `butley-system-prompt/` | Agents | `work` | `grep -q "BUTLEY_IDENTITY_PROMPT" src/agents/system-prompt.ts` |
 
 
 ## Re-application Order
 
-Patches #19-#26 have a `001.patch` file generated via `git format-patch`.
+Patches #19-#26 and #36 have a `001.patch` file generated via `git format-patch`.
 They must be applied **in sequence** (patches that touch `chat.ts` depend on prior patches):
 
 ```bash
@@ -65,7 +66,8 @@ for p in \
   patches/thinking-default-fastpath/001.patch \
   patches/chat-send-internal-routing/001.patch \
   patches/chat-audio-inbound/001.patch \
-  patches/chat-media-pipeline/001.patch; do
+  patches/chat-media-pipeline/001.patch \
+  patches/butley-system-prompt/001.patch; do
   git apply --3way "$p" || echo "CONFLICT in $p — resolve manually"
 done
 ```
