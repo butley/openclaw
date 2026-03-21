@@ -30,6 +30,7 @@ import {
   buildEmbeddedRunExecutionParams,
   resolveModelFallbackOptions,
 } from "./agent-runner-utils.js";
+import { resolveContextTokensForModel } from "../../agents/context.js";
 import {
   hasAlreadyFlushedForCurrentCompaction,
   resolveMemoryFlushContextWindowTokens,
@@ -287,10 +288,19 @@ export async function runMemoryFlushIfNeeded(params: {
   let entry =
     params.sessionEntry ??
     (params.sessionKey ? params.sessionStore?.[params.sessionKey] : undefined);
-  const contextWindowTokens = resolveMemoryFlushContextWindowTokens({
-    modelId: params.followupRun.run.model ?? params.defaultModel,
-    agentCfgContextTokens: params.agentCfgContextTokens,
-  });
+  // [FORK-PATCH-35] Use resolveContextTokensForModel to respect context1m per-model.
+  const memoryFlushModel = params.followupRun.run.model ?? params.defaultModel;
+  const contextWindowTokens =
+    resolveContextTokensForModel({
+      cfg: params.cfg,
+      provider: params.followupRun.run.provider,
+      model: memoryFlushModel,
+      contextTokensOverride: params.agentCfgContextTokens,
+      fallbackContextTokens: undefined,
+    }) ?? resolveMemoryFlushContextWindowTokens({
+      modelId: memoryFlushModel,
+      agentCfgContextTokens: params.agentCfgContextTokens,
+    });
 
   const promptTokenEstimate = estimatePromptTokensForMemoryFlush(
     params.promptForEstimate ?? params.followupRun.prompt,

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { resolveRunModelFallbacksOverride } from "../../agents/agent-scope.js";
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
-import { lookupContextTokens } from "../../agents/context.js";
+import { lookupContextTokens, resolveContextTokensForModel } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
 import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
@@ -257,10 +257,18 @@ export function createFollowupRunner(params: {
       const usage = runResult.meta?.agentMeta?.usage;
       const promptTokens = runResult.meta?.agentMeta?.promptTokens;
       const modelUsed = runResult.meta?.agentMeta?.model ?? fallbackModel ?? defaultModel;
+      // [FORK-PATCH-35] Use resolveContextTokensForModel to respect context1m per-model.
+      // Without this, lookupContextTokens returns 200k for Opus (cache value) and the
+      // stale 200k gets persisted to the session entry every turn, even with 1M enabled.
+      const providerUsedForCtx = fallbackProvider ?? queued.run.provider;
       const contextTokensUsed =
         agentCfgContextTokens ??
-        lookupContextTokens(modelUsed) ??
-        sessionEntry?.contextTokens ??
+        resolveContextTokensForModel({
+          cfg: queued.run.config,
+          provider: providerUsedForCtx,
+          model: modelUsed,
+          fallbackContextTokens: lookupContextTokens(modelUsed) ?? sessionEntry?.contextTokens,
+        }) ??
         DEFAULT_CONTEXT_TOKENS;
 
       if (storePath && sessionKey) {

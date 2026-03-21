@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { lookupContextTokens } from "../../agents/context.js";
+import { lookupContextTokens, resolveContextTokensForModel } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
 import { resolveModelAuthMode } from "../../agents/model-auth.js";
 import { isCliProvider } from "../../agents/model-selection.js";
@@ -459,10 +459,15 @@ export async function runReplyAgent(params: {
     const cliSessionId = isCliProvider(providerUsed, cfg)
       ? runResult.meta?.agentMeta?.sessionId?.trim()
       : undefined;
+    // [FORK-PATCH-35] Use resolveContextTokensForModel to respect context1m per-model.
     const contextTokensUsed =
       agentCfgContextTokens ??
-      lookupContextTokens(modelUsed) ??
-      activeSessionEntry?.contextTokens ??
+      resolveContextTokensForModel({
+        cfg,
+        provider: providerUsed,
+        model: modelUsed,
+        fallbackContextTokens: lookupContextTokens(modelUsed) ?? activeSessionEntry?.contextTokens,
+      }) ??
       DEFAULT_CONTEXT_TOKENS;
 
     await persistRunSessionUsage({
