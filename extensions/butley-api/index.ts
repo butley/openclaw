@@ -3,7 +3,7 @@ import type {
   OpenClawPluginApi,
   PluginHookLlmOutputEvent,
   PluginHookAgentContext,
-} from "../../src/plugins/types.js";
+} from "openclaw/plugin-sdk";
 import { createButleyApiTool } from "./src/butley-api-tool.js";
 
 interface ButleyApiConfig {
