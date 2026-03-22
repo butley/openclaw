@@ -59,12 +59,38 @@ function nodeBuildConfig(config: Record<string, unknown>) {
   };
 }
 
+// Extensions that require native addons or optional heavy dependencies.
+// Skipped during the default build; include with OPENCLAW_INCLUDE_OPTIONAL_BUNDLED=1.
+const optionalBundledClusters = new Set([
+  "acpx",
+  "diagnostics-otel",
+  "diffs",
+  "googlechat",
+  "matrix",
+  "memory-lancedb",
+  "msteams",
+  "nostr",
+  "tlon",
+  "twitch",
+  "ui",
+  "whatsapp",
+  "zalouser",
+]);
+
+function shouldBuildBundledCluster(cluster: string): boolean {
+  if (process.env.OPENCLAW_INCLUDE_OPTIONAL_BUNDLED === "1") return true;
+  return !optionalBundledClusters.has(cluster);
+}
+
 function listBundledPluginBuildEntries(): Record<string, string> {
   const extensionsRoot = path.join(process.cwd(), "extensions");
   const entries: Record<string, string> = {};
 
   for (const dirent of fs.readdirSync(extensionsRoot, { withFileTypes: true })) {
     if (!dirent.isDirectory()) {
+      continue;
+    }
+    if (!shouldBuildBundledCluster(dirent.name)) {
       continue;
     }
 
@@ -144,7 +170,12 @@ export default defineConfig([
   nodeBuildConfig({
     // Bundle all plugin-sdk entries in a single build so the bundler can share
     // common chunks instead of duplicating them per entry (~712MB heap saved).
-    entry: buildPluginSdkEntrySources(),
+    // Filter out optional bundled cluster SDK entries that require native addons.
+    entry: Object.fromEntries(
+      Object.entries(buildPluginSdkEntrySources()).filter(
+        ([entry]) => !optionalBundledClusters.has(entry),
+      ),
+    ),
     outDir: "dist/plugin-sdk",
   }),
   nodeBuildConfig({
