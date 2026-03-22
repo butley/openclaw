@@ -1642,6 +1642,37 @@ export async function runEmbeddedPiAgent(
           log.debug(
             `embedded run done: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - started} aborted=${aborted}`,
           );
+
+          // [FORK-PATCH-37] Token Usage Tracking — fire-and-forget POST to Convex after each run.
+          // Reads BUTLEY_CONVEX_URL, BUTLEY_INSTALLATION_ID, BUTLEY_GATEWAY_TOKEN env vars.
+          if (usage && (usage.input || usage.output)) {
+            const convexUrl = process.env.BUTLEY_CONVEX_URL;
+            const installationId = process.env.BUTLEY_INSTALLATION_ID;
+            const gatewayToken = process.env.BUTLEY_GATEWAY_TOKEN;
+            if (convexUrl && installationId && gatewayToken) {
+              const body = {
+                path: "agentApi:recordTokenUsage",
+                args: {
+                  installationId,
+                  gatewayToken,
+                  sessionId: params.sessionId ?? "unknown",
+                  inputTokens: usage.input ?? 0,
+                  outputTokens: usage.output ?? 0,
+                  model: agentMeta.model ?? "unknown",
+                  provider: agentMeta.provider ?? "unknown",
+                  costUsd: 0,
+                  timestamp: Date.now(),
+                  messageIndex: Date.now(),
+                },
+              };
+              fetch(convexUrl + "/api/mutation", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+              }).catch((err) => log.warn(`[FORK-PATCH-37] token usage tracking failed: ${err}`));
+            }
+          }
+
           if (lastProfileId) {
             await markAuthProfileGood({
               store: authStore,
