@@ -1650,6 +1650,7 @@ export async function runEmbeddedPiAgent(
             const installationId = process.env.BUTLEY_INSTALLATION_ID;
             const gatewayToken = process.env.BUTLEY_GATEWAY_TOKEN;
             if (convexUrl && installationId && gatewayToken) {
+              log.info(`[token-tracking] run=${params.runId} model=${agentMeta.model} input=${usage.input ?? 0} output=${usage.output ?? 0} cacheRead=${usage.cacheRead ?? 0} cacheWrite=${usage.cacheWrite ?? 0} total=${usage.total ?? 0}`);
               const body = {
                 path: "agentApi:recordTokenUsage",
                 args: {
@@ -1658,9 +1659,10 @@ export async function runEmbeddedPiAgent(
                   sessionId: params.sessionId ?? "unknown",
                   inputTokens: usage.input ?? 0,
                   outputTokens: usage.output ?? 0,
+                  cacheReadTokens: usage.cacheRead ?? 0,
+                  cacheWriteTokens: usage.cacheWrite ?? 0,
                   model: agentMeta.model ?? "unknown",
                   provider: agentMeta.provider ?? "unknown",
-                  costUsd: 0,
                   timestamp: Date.now(),
                   messageIndex: Date.now(),
                 },
@@ -1669,7 +1671,9 @@ export async function runEmbeddedPiAgent(
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
-              }).catch((err) => log.warn(`[FORK-PATCH-37] token usage tracking failed: ${err}`));
+              })
+                .then((r) => { if (!r.ok) log.warn(`[token-tracking] convex responded ${r.status}`); })
+                .catch((err) => log.warn(`[token-tracking] failed: ${err}`));
             }
           }
 

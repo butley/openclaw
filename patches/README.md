@@ -49,7 +49,7 @@
 | 34 | Session Chain (previousSessionId) | — | Infra | `work` | `grep -q "FORK-PATCH-34" src/config/sessions/types.ts` |
 | 35 | Context1m per-model in all context token callsites | — | Agents | `work` | `grep -q "FORK-PATCH-35" src/agents/context-window-guard.ts src/auto-reply/reply/agent-runner.ts src/auto-reply/reply/followup-runner.ts src/auto-reply/reply/agent-runner-memory.ts` |
 | 36 | Butley System Prompt | `butley-system-prompt/` | Agents | `work` | `grep -q "BUTLEY_IDENTITY_PROMPT" src/agents/system-prompt.ts` |
-| 37 | Token Usage Tracking | — | Agents | `work` | `grep -q "FORK-PATCH-37" src/agents/pi-embedded-runner/run.ts` |
+| 37 | Token Usage Tracking (input, output, cacheRead, cacheWrite) | — | Agents | `work` | `grep -q "FORK-PATCH-37" src/agents/pi-embedded-runner/run.ts` |
 
 
 ## Re-application Order
