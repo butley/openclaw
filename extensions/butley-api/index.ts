@@ -4,7 +4,7 @@ import type {
   PluginHookLlmOutputEvent,
   PluginHookAgentContext,
 } from "openclaw/plugin-sdk";
-import { createButleyApiTool } from "./src/butley-api-tool.js";
+import { createButleyApiTool } from "./src/butley-api-tool";
 
 interface ButleyApiConfig {
   convexUrl: string;
