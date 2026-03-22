@@ -1,0 +1,20 @@
+diff --git a/src/memory/backend-config.ts b/src/memory/backend-config.ts
+index da1c13819a..52770ba426 100644
+--- a/src/memory/backend-config.ts
++++ b/src/memory/backend-config.ts
+@@ -67,6 +67,7 @@ export type ResolvedQmdConfig = {
+   limits: ResolvedQmdLimitsConfig;
+   includeDefaultMemory: boolean;
+   scope?: SessionSendPolicyConfig;
++  maxOutputChars?: number;
+ };
+ 
+ const DEFAULT_BACKEND: MemoryBackend = "builtin";
+@@ -344,6 +345,7 @@ export function resolveMemoryBackendConfig(params: {
+     },
+     limits: resolveLimits(qmdCfg?.limits),
+     scope: qmdCfg?.scope ?? DEFAULT_QMD_SCOPE,
++    maxOutputChars: qmdCfg?.maxOutputChars,
+   };
+ 
+   return {

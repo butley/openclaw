@@ -1,0 +1,146 @@
+diff --git a/src/agents/tools/image-generate-tool.ts b/src/agents/tools/image-generate-tool.ts
+new file mode 100644
+index 0000000000..ec2ac6d802
+--- /dev/null
++++ b/src/agents/tools/image-generate-tool.ts
+@@ -0,0 +1,140 @@
++// [FORK-PATCH-20] Image Generate Tool — Gemini image generation via tool call (saves to workspace). Entire file is fork-only. See patches/README.md #20.
++import { Type } from "@sinclair/typebox";
++import { promises as fs } from "node:fs";
++import path from "node:path";
++import { loadConfig } from "../../config/config.js";
++import type { OpenClawConfig } from "../../config/config.js";
++import { ensureMediaDir } from "../../media/store.js";
++import { imageResultFromFile, readStringParam } from "./common.js";
++import type { AnyAgentTool } from "./common.js";
++
++const ImageGenerateToolSchema = Type.Object({
++  prompt: Type.String({ description: "Prompt to generate an image." }),
++  model: Type.Optional(
++    Type.String({
++      description: "Gemini image model id (default: gemini-3.1-flash-image-preview).", 
++    }),
++  ),
++  filename: Type.Optional(
++    Type.String({
++      description: "Optional output filename (png/jpg). Default: generated-<timestamp>.png",
++    }),
++  ),
++});
++
++function sanitizeFilename(input?: string): string {
++  const fallback = `generated-${Date.now()}.png`;
++  const raw = (input || "").trim();
++  if (!raw) return fallback;
++  const safe = raw.replace(/[^a-zA-Z0-9._-]/g, "_");
++  if (!safe) return fallback;
++  if (!/\.(png|jpg|jpeg|webp)$/i.test(safe)) return `${safe}.png`;
++  return safe;
++}
++
++function resolveGeminiKey(): string | null {
++  const direct = process.env.GEMINI_API_KEY?.trim();
++  if (direct) return direct;
++  const google = process.env.GOOGLE_API_KEY?.trim();
++  if (google) return google;
++  const googleAi = process.env.GOOGLE_AI_API_KEY?.trim();
++  if (googleAi) return googleAi;
++  return null;
++}
++
++export function createImageGenerateTool(opts?: { config?: OpenClawConfig }): AnyAgentTool {
++  return {
++    label: "Image Generate",
++    name: "image_generate",
++    description:
++      "Generate an image using Gemini and save it to the workspace. Returns MEDIA path so the chat UI can render it.",
++    parameters: ImageGenerateToolSchema,
++    execute: async (_toolCallId, args) => {
++      const params = args as Record<string, unknown>;
++      const prompt = readStringParam(params, "prompt", { required: true });
++      const model = readStringParam(params, "model") || "gemini-3.1-flash-image-preview";
++      const fileName = sanitizeFilename(readStringParam(params, "filename"));
++
++      const cfg = opts?.config ?? loadConfig();
++      const _cfg = cfg; // keep hook for future provider-config lookup
++      void _cfg;
++
++      const apiKey = resolveGeminiKey();
++      if (!apiKey) {
++        return {
++          content: [{ type: "text", text: "Missing GEMINI_API_KEY/GOOGLE_API_KEY for image generation." }],
++          details: { error: "missing_api_key" },
++        };
++      }
++
++      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
++      const body = {
++        contents: [
++          {
++            role: "user",
++            parts: [{ text: prompt }],
++          },
++        ],
++        generationConfig: {
++          responseModalities: ["TEXT", "IMAGE"],
++        },
++      };
++
++      const resp = await fetch(endpoint, {
++        method: "POST",
++        headers: { "Content-Type": "application/json" },
++        body: JSON.stringify(body),
++      });
++
++      if (!resp.ok) {
++        const errText = await resp.text().catch(() => "");
++        return {
++          content: [{ type: "text", text: `Image generation failed (${resp.status}). ${errText}` }],
++          details: { error: "upstream_error", status: resp.status },
++        };
++      }
++
++      const data = (await resp.json()) as Record<string, any>;
++      const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
++      let inlineData: { data?: string; mimeType?: string } | null = null;
++      for (const c of candidates) {
++        const parts = c?.content?.parts;
++        if (!Array.isArray(parts)) continue;
++        const found = parts.find((p: any) => p?.inlineData?.data);
++        if (found?.inlineData?.data) {
++          inlineData = found.inlineData;
++          break;
++        }
++      }
++
++      if (!inlineData?.data) {
++        return {
++          content: [{ type: "text", text: "Image model returned no image data." }],
++          details: { error: "no_image_data" },
++        };
++      }
++
++      // Save to ~/.openclaw/media/ — always in the default media local roots,
++      // so WhatsApp outbound passes assertLocalMediaAllowed without needing
++      // agent-scoped root resolution. The gateway media handler also searches here.
++      const mediaDir = await ensureMediaDir();
++      const outPath = path.join(mediaDir, fileName);
++      const buffer = Buffer.from(inlineData.data, "base64");
++      await fs.writeFile(outPath, buffer);
++      const imageUrl = `/media/${fileName}`;
++
++      return await imageResultFromFile({
++        label: "image_generate",
++        path: outPath,
++        extraText: `🖼️ Generated image\nMEDIA:${outPath}`,
++        details: {
++          provider: "google",
++          model,
++          mimeType: inlineData.mimeType || "image/png",
++          bytes: buffer.byteLength,
++          imageUrl,
++        },
++      });
++    },
++  };
++}

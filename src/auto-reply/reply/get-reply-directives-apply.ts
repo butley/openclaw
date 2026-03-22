@@ -150,6 +150,7 @@ export async function applyInlineDirectiveOverrides(params: {
     }
     const {
       currentThinkLevel: resolvedDefaultThinkLevel,
+      currentFastMode,
       currentVerboseLevel,
       currentReasoningLevel,
       currentElevatedLevel,
@@ -162,6 +163,7 @@ export async function applyInlineDirectiveOverrides(params: {
     const directiveReply = await handleDirectiveOnly({
       ...createDirectiveHandlingBase(),
       currentThinkLevel,
+      currentFastMode,
       currentVerboseLevel,
       currentReasoningLevel,
       currentElevatedLevel,
@@ -189,28 +191,6 @@ export async function applyInlineDirectiveOverrides(params: {
         mediaDecisions: ctx.MediaUnderstandingDecisions,
       });
     }
-    // Persist directives before early return (directive-only messages).
-    await persistInlineDirectives({
-      directives,
-      effectiveModelDirective,
-      cfg,
-      agentDir,
-      sessionEntry,
-      sessionStore,
-      sessionKey,
-      storePath,
-      elevatedEnabled,
-      elevatedAllowed,
-      defaultProvider,
-      defaultModel,
-      aliasIndex,
-      ...directiveModelState,
-      provider,
-      model,
-      initialModelLabel,
-      formatModelSwitchEvent,
-      agentCfg,
-    });
     typing.cleanup();
     if (statusReply?.text && directiveReply?.text) {
       return {
@@ -223,7 +203,7 @@ export async function applyInlineDirectiveOverrides(params: {
 
   const hasAnyDirective =
     directives.hasThinkDirective ||
-    directives.hasStreamDirective ||
+    directives.hasFastDirective ||
     directives.hasVerboseDirective ||
     directives.hasReasoningDirective ||
     directives.hasElevatedDirective ||

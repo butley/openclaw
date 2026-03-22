@@ -1,7 +1,13 @@
+import {
+  listEnabledSignalAccounts,
+  resolveSignalAccount,
+} from "../../../../extensions/signal/src/accounts.js";
+import { resolveSignalReactionLevel } from "../../../../extensions/signal/src/reaction-level.js";
+import {
+  sendReactionSignal,
+  removeReactionSignal,
+} from "../../../../extensions/signal/src/send-reactions.js";
 import { createActionGate, jsonResult, readStringParam } from "../../../agents/tools/common.js";
-import { listEnabledSignalAccounts, resolveSignalAccount } from "../../../signal/accounts.js";
-import { resolveSignalReactionLevel } from "../../../signal/reaction-level.js";
-import { sendReactionSignal, removeReactionSignal } from "../../../signal/send-reactions.js";
 import type { ChannelMessageActionAdapter, ChannelMessageActionName } from "../types.js";
 import { resolveReactionMessageId } from "./reaction-message-id.js";
 
@@ -40,6 +46,7 @@ function resolveSignalReactionTarget(raw: string): { recipient?: string; groupId
 }
 
 async function mutateSignalReaction(params: {
+  cfg: Parameters<typeof resolveSignalAccount>[0]["cfg"];
   accountId?: string;
   target: { recipient?: string; groupId?: string };
   timestamp: number;
@@ -49,6 +56,7 @@ async function mutateSignalReaction(params: {
   targetAuthorUuid?: string;
 }) {
   const options = {
+    cfg: params.cfg,
     accountId: params.accountId,
     groupId: params.target.groupId,
     targetAuthor: params.targetAuthor,
@@ -153,6 +161,7 @@ export const signalMessageActions: ChannelMessageActionAdapter = {
           throw new Error("Emoji required to remove reaction.");
         }
         return await mutateSignalReaction({
+          cfg,
           accountId: accountId ?? undefined,
           target,
           timestamp,
@@ -167,6 +176,7 @@ export const signalMessageActions: ChannelMessageActionAdapter = {
         throw new Error("Emoji required to add reaction.");
       }
       return await mutateSignalReaction({
+        cfg,
         accountId: accountId ?? undefined,
         target,
         timestamp,

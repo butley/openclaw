@@ -1,0 +1,33 @@
+diff --git a/src/tts/tts-core.ts b/src/tts/tts-core.ts
+index c460793c37..8d05d22955 100644
+--- a/src/tts/tts-core.ts
++++ b/src/tts/tts-core.ts
+@@ -18,7 +18,7 @@ import type {
+ } from "./tts.js";
+ 
+ const DEFAULT_ELEVENLABS_BASE_URL = "https://api.elevenlabs.io";
+-const TEMP_FILE_CLEANUP_DELAY_MS = 5 * 60 * 1000; // 5 minutes
++const TEMP_FILE_CLEANUP_DELAY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+ 
+ export function isValidVoiceId(voiceId: string): boolean {
+   return /^[a-zA-Z0-9]{10,40}$/.test(voiceId);
+diff --git a/src/tts/tts.ts b/src/tts/tts.ts
+index eb0517f55d..3e5280ed16 100644
+--- a/src/tts/tts.ts
++++ b/src/tts/tts.ts
+@@ -498,7 +498,14 @@ function resolveOutputFormat(channelId?: string | null) {
+ }
+ 
+ function resolveChannelId(channel: string | undefined): ChannelId | null {
+-  return channel ? normalizeChannelId(channel) : null;
++  if (!channel) {
++    return null;
++  }
++  const lower = String(channel).toLowerCase().trim();
++  if (lower === "whatsapp" || lower === "telegram") {
++    return lower as ChannelId;
++  }
++  return normalizeChannelId(channel);
+ }
+ 
+ function resolveEdgeOutputFormat(config: ResolvedTtsConfig): string {

@@ -1,23 +1,42 @@
+import { shouldSuppressLocalDiscordExecApprovalPrompt } from "../../../extensions/discord/src/exec-approvals.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import { loadSessionStore, resolveStorePath, type SessionEntry } from "../../config/sessions.js";
+import {
+  loadSessionStore,
+  parseSessionThreadInfo,
+  resolveSessionStoreEntry,
+  resolveStorePath,
+  type SessionEntry,
+} from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
 import { fireAndForgetHook } from "../../hooks/fire-and-forget.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
 import {
   deriveInboundMessageHookContext,
+  toPluginInboundClaimContext,
+  toPluginInboundClaimEvent,
   toInternalMessageReceivedContext,
   toPluginMessageContext,
   toPluginMessageReceivedEvent,
 } from "../../hooks/message-hook-mappers.js";
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
-import { emitInboundMessageEvent } from "../../infra/inbound-events.js";
+import { getSessionBindingService } from "../../infra/outbound/session-binding-service.js";
+// [FORK-PATCH-5] WS Inbound Push — real-time inbound message relay.
 import {
   logMessageProcessed,
   logMessageQueued,
   logSessionStateChange,
 } from "../../logging/diagnostic.js";
-import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
+import {
+  buildPluginBindingDeclinedText,
+  buildPluginBindingErrorText,
+  buildPluginBindingUnavailableText,
+  hasShownPluginBindingFallbackNotice,
+  isPluginOwnedSessionBindingRecord,
+  markPluginBindingFallbackNoticeShown,
+  toPluginConversationBinding,
+} from "../../plugins/conversation-binding.js";
+import { getGlobalHookRunner, getGlobalPluginRegistry } from "../../plugins/hook-runner-global.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { maybeApplyTtsToPayload, normalizeTtsAutoMode, resolveTtsConfig } from "../../tts/tts.js";
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
@@ -66,7 +85,7 @@ const isInboundAudioContext = (ctx: FinalizedMsgContext): boolean => {
   return AUDIO_HEADER_RE.test(trimmed);
 };
 
-const resolveSessionStoreEntry = (
+const resolveSessionStoreLookup = (
   ctx: FinalizedMsgContext,
   cfg: OpenClawConfig,
 ): {
@@ -85,7 +104,7 @@ const resolveSessionStoreEntry = (
     const store = loadSessionStore(storePath);
     return {
       sessionKey,
-      entry: store[sessionKey.toLowerCase()] ?? store[sessionKey],
+      entry: resolveSessionStoreEntry({ store, sessionKey }).existing,
     };
   } catch {
     return {
@@ -98,238 +117,6 @@ export type DispatchFromConfigResult = {
   queuedFinal: boolean;
   counts: Record<ReplyDispatchKind, number>;
 };
-
-/** Reformat upstream verbose tool narration into clean one-liner for messaging channels. */
-function formatToolNarrationForChannel(raw: string): string {
-  // Extract duration from ANYWHERE in the raw text before truncating to first line.
-  let rawDuration = "";
-  const rawDurMatch = raw.match(/\((\d+\.\d+s|\?)\)/);
-  if (rawDurMatch) {
-    rawDuration = " " + rawDurMatch[0];
-  }
-
-  // Extract actual command from second paragraph (after \n\n).
-  let actualCmd = "";
-  const paragraphs = raw.split("\n\n");
-  if (paragraphs.length > 1) {
-    const cmdMatch = paragraphs
-      .slice(1)
-      .join(" ")
-      .match(/`([^`]+)`/);
-    if (cmdMatch) {
-      actualCmd = cmdMatch[1].trim();
-    }
-  }
-
-  const firstLine = raw.split("\n\n")[0].split("\n")[0].trim();
-  let text = firstLine.replace(/^`+|`+$/g, "").trim();
-
-  // Strip upstream emoji prefix and tool label (e.g. "🛠️ Exec: ...", "🧩 Memory Search: ...")
-  const prefixMatch = text.match(
-    /^[\p{Emoji}\p{Emoji_Presentation}\uFE0F\s]+(?:[A-Za-z_ ]+:?\s*)?/u,
-  );
-  let toolType = "";
-  if (prefixMatch) {
-    // Try "Label:" first (e.g. "Exec:"), then bare "Label" (e.g. "Message")
-    const typeMatch =
-      prefixMatch[0].match(/([A-Za-z_ ]+):/) || prefixMatch[0].match(/\s([A-Za-z_]{2,})\s*$/);
-    if (typeMatch) {
-      toolType = typeMatch[1].trim().toLowerCase().replace(/\s+/g, "_");
-    }
-    text = text.slice(prefixMatch[0].length).trim();
-  }
-
-  // For exec: prefer actual command from raw when available.
-  if ((toolType === "exec" || toolType === "bash") && actualCmd) {
-    text = actualCmd
-      .replace(/#[^\n]*/g, "")
-      .replace(/-C\s+~?\/[^\s]+\s*/g, "")
-      .replace(/2>&1/g, "")
-      .replace(/2>\/dev\/null/g, "")
-      .replace(/>\/dev\/null/g, "")
-      .replace(/\s*\(\d+\.\d+s\)/, "")
-      .trim();
-    // Truncate heredocs: "cat > file << 'EOF' ..." → "cat > file"
-    text = text.replace(/(<<-?\s*'?\w+'?).*/, "$1").trim();
-    // Truncate after pipe: "npm run build | tail -3" → "npm run build"
-    text = text.replace(/\s*\|\s*.+$/, "").trim();
-    // Take first meaningful command in chain (skip leading "cd ...")
-    const chainParts = text.split(/\s*&&\s*|\s*;\s*/).filter(Boolean);
-    if (chainParts.length > 1) {
-      const meaningful =
-        chainParts.find((p) => !/^cd\s/.test(p.trim())) || chainParts[chainParts.length - 1];
-      text = meaningful.trim();
-    }
-  }
-
-  // Remove trailing "(in ~/...)" location hints.
-  text = text.replace(/\s*\(in [^)]+\)\s*$/, "");
-
-  // Shorten paths: ~/Projects/openclaw/src/web/foo.ts → foo.ts, ~/bob/TOOLS.md → TOOLS.md
-  text = text.replace(/~\/[A-Za-z0-9_./-]+/g, (match) => {
-    const parts = match.split("/");
-    if (parts.length <= 2) {
-      return match;
-    }
-    const last = parts[parts.length - 1];
-    return last.includes(".") ? last : parts.slice(-2).join("/");
-  });
-
-  // Shorten known verbose commands.
-  text = text
-    .replace(/launchctl list \S+/g, "launchctl list")
-    .replace(/systemctl \S+ (\S+)\.service/g, "systemctl $1");
-
-  // Collapse verbose exec chain verbs.
-  text = text
-    .replace(/\bprint text(?:\s*→\s*)?/g, "")
-    .replace(/\brun\s+/g, "")
-    .replace(/\bview\s+/gi, "")
-    .replace(/\bdate(?:\s*→\s*)?/g, "")
-    .replace(/\becho\s+\S+(?:\s*→\s*)?/g, "")
-    .replace(/\bsleep\s+\S+(?:\s*→\s*)?/g, "")
-    .replace(/\bshow last \d+ lines?/g, "")
-    .replace(/\bshow first \d+ lines?/g, "")
-    .replace(/2>\/dev\/null/g, "")
-    .replace(/>\/dev\/null/g, "")
-    .replace(/->/g, "→")
-    .replace(/→\s*→/g, "→")
-    .replace(/→\s*(?:first \d+ lines?|last \d+ lines?)/gi, "")
-    .replace(/^\s*→\s*/, "")
-    .replace(/\s*→\s*$/, "")
-    .replace(/\(\+\d+ steps?\)/g, "")
-    .trim();
-
-  // Pick emoji based on tool type and command content.
-  let emoji = "🧩";
-  if (toolType === "exec" || toolType === "bash") {
-    if (/\blaunchctl|systemctl|restart|kill\b/.test(text)) {
-      emoji = "⚙️";
-    } else if (/\bgit\b/.test(text)) {
-      emoji = "📦";
-    } else if (/\bnpm|build|make\b/.test(text)) {
-      emoji = "🔨";
-    } else if (/\bgrep|search|find\b/.test(text)) {
-      emoji = "🔍";
-    } else if (/\bpython|node|bun\b/.test(text)) {
-      emoji = "🐍";
-    } else if (/\bcat|head|tail|sed|awk\b/.test(text)) {
-      emoji = "📄";
-    } else {
-      emoji = "🛠️";
-    }
-  } else if (toolType === "read") {
-    emoji = "📂";
-  } else if (toolType === "write" || toolType === "edit") {
-    emoji = "✏️";
-    text = text.replace(/^in\s+/, "");
-    // Strip upstream "(N chars)" — our enrichment adds line/char diff
-    text = text.replace(/\s*\(\d+ chars?\)/, "");
-  } else if (toolType === "web_search" || toolType === "web_fetch") {
-    emoji = "🌐";
-    // Clean "for "query" (top N)" → "query"
-    text = text.replace(/^for\s+/, "");
-    text = text.replace(/\s*\(top \d+\)/, "");
-    if (!text.startsWith('"')) {
-      const qMatch = text.match(/^"[^"]+"/);
-      if (!qMatch) {
-        text = '"' + text + '"';
-      }
-    }
-  } else if (toolType === "memory_search" || toolType === "memory_get") {
-    emoji = "🧠";
-    if (!text.startsWith('"')) {
-      text = '"' + text + '"';
-    }
-  } else if (toolType === "image") {
-    emoji = "🖼️";
-  } else if (toolType === "message") {
-    return "";
-  } else if (toolType === "process") {
-    emoji = "🧰";
-  } else if (toolType === "browser") {
-    emoji = "🌐";
-  } else if (toolType === "canvas") {
-    emoji = "🎨";
-  } else if (toolType === "nodes") {
-    emoji = "📱";
-  } else if (toolType === "cron") {
-    emoji = "⏰";
-  } else if (toolType === "gateway") {
-    emoji = "🔌";
-  } else if (toolType === "sessions_spawn") {
-    emoji = "🚀";
-  } else if (toolType === "subagents") {
-    emoji = "🤖";
-  } else if (toolType === "session_status") {
-    emoji = "📊";
-  } else if (toolType === "whatsapp_login") {
-    emoji = "🟢";
-  } else if (
-    toolType === "sessions_list" ||
-    toolType === "sessions_history" ||
-    toolType === "sessions_send"
-  ) {
-    emoji = "🗂️";
-  } else if (toolType === "agents_list") {
-    emoji = "🧭";
-  } else if (toolType === "tts") {
-    emoji = "🔊";
-  } else if (toolType === "apply_patch") {
-    emoji = "🩹";
-  }
-
-  // Extract duration suffix (e.g. "(0.1s)") to reposition at end.
-  let durationSuffix = "";
-  const durMatch = text.match(/\s*\((\d+\.\d+s|\?)\)/);
-  if (durMatch) {
-    durationSuffix = " " + durMatch[0].trim();
-    text = text.replace(durMatch[0], "").trim();
-  } else if (rawDuration) {
-    durationSuffix = rawDuration;
-  }
-
-  // Extract error/result info suffixes.
-  let resultSuffix = "";
-  const resMatch = text.match(/\s*(\[(?:qmd|local)\]\s*→\s*\d+ results?)\s*/i);
-  if (resMatch) {
-    resultSuffix = " " + resMatch[1].trim();
-    text = text.replace(resMatch[0], "").trim();
-  }
-  const errMatch = text.match(/\s*❌\s*/);
-  if (errMatch) {
-    resultSuffix = " ❌" + resultSuffix;
-    text = text.replace(errMatch[0], "").trim();
-  }
-
-  // Clean up Read tool: "first N lines of FILE" → "FILE (1-N)"
-  if (toolType === "read") {
-    const readMatch = text.match(/^first (\d+) lines of (.+)/i);
-    if (readMatch) {
-      text = readMatch[2] + " (1-" + readMatch[1] + ")";
-    }
-    const rangeMatch = text.match(/^lines? (\d+)[-–](\d+) of (.+)/i);
-    if (rangeMatch) {
-      text = rangeMatch[3] + " (" + rangeMatch[1] + "-" + rangeMatch[2] + ")";
-    }
-  }
-
-  // For exec chains, take first meaningful command
-  if ((toolType === "exec" || toolType === "bash") && /&&|;/.test(text)) {
-    const first = text.split(/\s*&&\s*|\s*;\s*/)[0].trim();
-    if (first.length > 5) {
-      text = first;
-    }
-  }
-  if (text.length > 80) {
-    text = text.slice(0, 77) + "...";
-  }
-
-  // Append result info and duration at the end.
-  const suffix = resultSuffix + durationSuffix;
-
-  return text ? emoji + " " + text + suffix : firstLine.slice(0, 80);
-}
 
 export async function dispatchReplyFromConfig(params: {
   ctx: FinalizedMsgContext;
@@ -397,7 +184,14 @@ export async function dispatchReplyFromConfig(params: {
     return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
   }
 
-  const sessionStoreEntry = resolveSessionStoreEntry(ctx, cfg);
+  const sessionStoreEntry = resolveSessionStoreLookup(ctx, cfg);
+  const acpDispatchSessionKey = sessionStoreEntry.sessionKey ?? sessionKey;
+  // Restore route thread context only from the active turn or the thread-scoped session key.
+  // Do not read thread ids from the normalised session store here: `origin.threadId` can be
+  // folded back into lastThreadId/deliveryContext during store normalisation and resurrect a
+  // stale route after thread delivery was intentionally cleared.
+  const routeThreadId =
+    ctx.MessageThreadId ?? parseSessionThreadInfo(acpDispatchSessionKey).threadId;
   const inboundAudio = isInboundAudioContext(ctx);
   const sessionTtsAuto = normalizeTtsAutoMode(sessionStoreEntry.entry?.ttsAuto);
   const hookRunner = getGlobalHookRunner();
@@ -410,21 +204,15 @@ export async function dispatchReplyFromConfig(params: {
   const hookContext = deriveInboundMessageHookContext(ctx, { messageId: messageIdForHook });
   const { isGroup, groupId } = hookContext;
 
-  // Emit inbound message event for WebSocket broadcast (Butley patch)
-  emitInboundMessageEvent({
-    messageId: messageIdForHook ?? "",
-    sessionKey: ctx.SessionKey ?? "",
-    channel,
-    accountId: ctx.AccountId ?? "",
-    from: ctx.From ?? "",
-    senderName: ctx.SenderName ?? "",
-    content: ctx.BodyForCommands ?? ctx.Body ?? "",
-    timestamp: timestamp ?? Date.now(),
-    chatType: ctx.ChatType === "group" ? "group" : "dm",
-    conversationId: chatId != null ? String(chatId) : "",
-    threadId: ctx.MessageThreadId != null ? String(ctx.MessageThreadId) : undefined,
-    hasMedia: !!ctx.MediaUrl,
-    mediaType: ctx.MediaUrls?.[0] ? "media" : undefined,
+  // NOTE: Inbound message events for WA are emitted in process-message.ts (WA path).
+  // dispatch-from-config.ts is used by Telegram/Discord/plugin channels.
+  // Don't emit here for WA to avoid duplicates.
+
+  const inboundClaimContext = toPluginInboundClaimContext(hookContext);
+  const inboundClaimEvent = toPluginInboundClaimEvent(hookContext, {
+    commandAuthorized:
+      typeof ctx.CommandAuthorized === "boolean" ? ctx.CommandAuthorized : undefined,
+    wasMentioned: typeof ctx.WasMentioned === "boolean" ? ctx.WasMentioned : undefined,
   });
 
   // Trigger plugin hooks (fire-and-forget)
@@ -464,8 +252,15 @@ export async function dispatchReplyFromConfig(params: {
   const surfaceChannel = normalizeMessageChannel(ctx.Surface);
   // Prefer provider channel because surface may carry origin metadata in relayed flows.
   const currentSurface = providerChannel ?? surfaceChannel;
+  const isInternalWebchatTurn =
+    currentSurface === INTERNAL_MESSAGE_CHANNEL &&
+    (surfaceChannel === INTERNAL_MESSAGE_CHANNEL || !surfaceChannel) &&
+    ctx.ExplicitDeliverRoute !== true;
   const shouldRouteToOriginating = Boolean(
-    isRoutableChannel(originatingChannel) && originatingTo && originatingChannel !== currentSurface,
+    !isInternalWebchatTurn &&
+    isRoutableChannel(originatingChannel) &&
+    originatingTo &&
+    originatingChannel !== currentSurface,
   );
   const shouldSuppressTyping =
     shouldRouteToOriginating || originatingChannel === INTERNAL_MESSAGE_CHANNEL;
@@ -496,7 +291,7 @@ export async function dispatchReplyFromConfig(params: {
       to: originatingTo,
       sessionKey: ctx.SessionKey,
       accountId: ctx.AccountId,
-      threadId: ctx.MessageThreadId,
+      threadId: routeThreadId,
       cfg,
       abortSignal,
       mirror,
@@ -507,6 +302,144 @@ export async function dispatchReplyFromConfig(params: {
       logVerbose(`dispatch-from-config: route-reply failed: ${result.error ?? "unknown error"}`);
     }
   };
+
+  const sendBindingNotice = async (
+    payload: ReplyPayload,
+    mode: "additive" | "terminal",
+  ): Promise<boolean> => {
+    if (shouldRouteToOriginating && originatingChannel && originatingTo) {
+      const result = await routeReply({
+        payload,
+        channel: originatingChannel,
+        to: originatingTo,
+        sessionKey: ctx.SessionKey,
+        accountId: ctx.AccountId,
+        threadId: routeThreadId,
+        cfg,
+        isGroup,
+        groupId,
+      });
+      if (!result.ok) {
+        logVerbose(
+          `dispatch-from-config: route-reply (plugin binding notice) failed: ${result.error ?? "unknown error"}`,
+        );
+      }
+      return result.ok;
+    }
+    return mode === "additive"
+      ? dispatcher.sendToolResult(payload)
+      : dispatcher.sendFinalReply(payload);
+  };
+
+  const pluginOwnedBindingRecord =
+    inboundClaimContext.conversationId && inboundClaimContext.channelId
+      ? getSessionBindingService().resolveByConversation({
+          channel: inboundClaimContext.channelId,
+          accountId: inboundClaimContext.accountId ?? "default",
+          conversationId: inboundClaimContext.conversationId,
+          parentConversationId: inboundClaimContext.parentConversationId,
+        })
+      : null;
+  const pluginOwnedBinding = isPluginOwnedSessionBindingRecord(pluginOwnedBindingRecord)
+    ? toPluginConversationBinding(pluginOwnedBindingRecord)
+    : null;
+
+  let pluginFallbackReason:
+    | "plugin-bound-fallback-missing-plugin"
+    | "plugin-bound-fallback-no-handler"
+    | undefined;
+
+  if (pluginOwnedBinding) {
+    getSessionBindingService().touch(pluginOwnedBinding.bindingId);
+    logVerbose(
+      `plugin-bound inbound routed to ${pluginOwnedBinding.pluginId} conversation=${pluginOwnedBinding.conversationId}`,
+    );
+    const targetedClaimOutcome = hookRunner?.runInboundClaimForPluginOutcome
+      ? await hookRunner.runInboundClaimForPluginOutcome(
+          pluginOwnedBinding.pluginId,
+          inboundClaimEvent,
+          inboundClaimContext,
+        )
+      : (() => {
+          const pluginLoaded =
+            getGlobalPluginRegistry()?.plugins.some(
+              (plugin) => plugin.id === pluginOwnedBinding.pluginId && plugin.status === "loaded",
+            ) ?? false;
+          return pluginLoaded
+            ? ({ status: "no_handler" } as const)
+            : ({ status: "missing_plugin" } as const);
+        })();
+
+    switch (targetedClaimOutcome.status) {
+      case "handled": {
+        markIdle("plugin_binding_dispatch");
+        recordProcessed("completed", { reason: "plugin-bound-handled" });
+        return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
+      }
+      case "missing_plugin":
+      case "no_handler": {
+        pluginFallbackReason =
+          targetedClaimOutcome.status === "missing_plugin"
+            ? "plugin-bound-fallback-missing-plugin"
+            : "plugin-bound-fallback-no-handler";
+        if (!hasShownPluginBindingFallbackNotice(pluginOwnedBinding.bindingId)) {
+          const didSendNotice = await sendBindingNotice(
+            { text: buildPluginBindingUnavailableText(pluginOwnedBinding) },
+            "additive",
+          );
+          if (didSendNotice) {
+            markPluginBindingFallbackNoticeShown(pluginOwnedBinding.bindingId);
+          }
+        }
+        break;
+      }
+      case "declined": {
+        await sendBindingNotice(
+          { text: buildPluginBindingDeclinedText(pluginOwnedBinding) },
+          "terminal",
+        );
+        markIdle("plugin_binding_declined");
+        recordProcessed("completed", { reason: "plugin-bound-declined" });
+        return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
+      }
+      case "error": {
+        logVerbose(
+          `plugin-bound inbound claim failed for ${pluginOwnedBinding.pluginId}: ${targetedClaimOutcome.error}`,
+        );
+        await sendBindingNotice(
+          { text: buildPluginBindingErrorText(pluginOwnedBinding) },
+          "terminal",
+        );
+        markIdle("plugin_binding_error");
+        recordProcessed("completed", { reason: "plugin-bound-error" });
+        return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
+      }
+    }
+  }
+
+  // Trigger plugin hooks (fire-and-forget)
+  if (hookRunner?.hasHooks("message_received")) {
+    fireAndForgetHook(
+      hookRunner.runMessageReceived(
+        toPluginMessageReceivedEvent(hookContext),
+        toPluginMessageContext(hookContext),
+      ),
+      "dispatch-from-config: message_received plugin hook failed",
+    );
+  }
+
+  // Bridge to internal hooks (HOOK.md discovery system) - refs #8807
+  if (sessionKey) {
+    fireAndForgetHook(
+      triggerInternalHook(
+        createInternalHookEvent("message", "received", sessionKey, {
+          ...toInternalMessageReceivedContext(hookContext),
+          timestamp,
+        }),
+      ),
+      "dispatch-from-config: message_received internal hook failed",
+    );
+  }
 
   markProcessing();
 
@@ -525,7 +458,7 @@ export async function dispatchReplyFromConfig(params: {
           to: originatingTo,
           sessionKey: ctx.SessionKey,
           accountId: ctx.AccountId,
-          threadId: ctx.MessageThreadId,
+          threadId: routeThreadId,
           cfg,
           isGroup,
           groupId,
@@ -578,7 +511,7 @@ export async function dispatchReplyFromConfig(params: {
       ctx,
       cfg,
       dispatcher,
-      sessionKey,
+      sessionKey: acpDispatchSessionKey,
       inboundAudio,
       sessionTtsAuto,
       ttsChannel,
@@ -602,21 +535,32 @@ export async function dispatchReplyFromConfig(params: {
     let blockCount = 0;
 
     const resolveToolDeliveryPayload = (payload: ReplyPayload): ReplyPayload | null => {
+      if (
+        normalizeMessageChannel(ctx.Surface ?? ctx.Provider) === "discord" &&
+        shouldSuppressLocalDiscordExecApprovalPrompt({
+          cfg,
+          accountId: ctx.AccountId,
+          payload,
+        })
+      ) {
+        return null;
+      }
       if (shouldSendToolSummaries) {
+        return payload;
+      }
+      const execApproval =
+        payload.channelData &&
+        typeof payload.channelData === "object" &&
+        !Array.isArray(payload.channelData)
+          ? payload.channelData.execApproval
+          : undefined;
+      if (execApproval && typeof execApproval === "object" && !Array.isArray(execApproval)) {
         return payload;
       }
       // Group/native flows intentionally suppress tool summary text, but media-only
       // tool results (for example TTS audio) must still be delivered.
       const hasMedia = Boolean(payload.mediaUrl) || (payload.mediaUrls?.length ?? 0) > 0;
       if (!hasMedia) {
-        // Check for MEDIA: markers in text (e.g. image_generate tool results).
-        // Extract paths into mediaUrls so the deliver callback can collect them
-        // for imageReady/audioReady emission.
-        const mediaMatches = (payload.text ?? "").match(/MEDIA:\/[^\s`]+/g);
-        if (mediaMatches && mediaMatches.length > 0) {
-          const urls = mediaMatches.map((m) => m.slice("MEDIA:".length).trim());
-          return { ...payload, text: undefined, mediaUrls: urls };
-        }
         return null;
       }
       return { ...payload, text: undefined };
@@ -648,14 +592,10 @@ export async function dispatchReplyFromConfig(params: {
             if (!deliveryPayload) {
               return;
             }
-            // Format tool narration for messaging channels: clean one-liner with emoji.
-            const formattedPayload = deliveryPayload.text
-              ? { ...deliveryPayload, text: formatToolNarrationForChannel(deliveryPayload.text) }
-              : deliveryPayload;
             if (shouldRouteToOriginating) {
-              await sendPayloadAsync(formattedPayload, undefined, false);
+              await sendPayloadAsync(deliveryPayload, undefined, false);
             } else {
-              dispatcher.sendToolResult(formattedPayload);
+              dispatcher.sendToolResult(deliveryPayload);
             }
           };
           return run();
@@ -696,6 +636,32 @@ export async function dispatchReplyFromConfig(params: {
       cfg,
     );
 
+    if (ctx.AcpDispatchTailAfterReset === true) {
+      // Command handling prepared a trailing prompt after ACP in-place reset.
+      // Route that tail through ACP now (same turn) instead of embedded dispatch.
+      ctx.AcpDispatchTailAfterReset = false;
+      const acpTailDispatch = await tryDispatchAcpReply({
+        ctx,
+        cfg,
+        dispatcher,
+        sessionKey: acpDispatchSessionKey,
+        inboundAudio,
+        sessionTtsAuto,
+        ttsChannel,
+        shouldRouteToOriginating,
+        originatingChannel,
+        originatingTo,
+        shouldSendToolSummaries,
+        bypassForCommand: false,
+        onReplyStart: params.replyOptions?.onReplyStart,
+        recordProcessed,
+        markIdle,
+      });
+      if (acpTailDispatch) {
+        return acpTailDispatch;
+      }
+    }
+
     const replies = replyResult ? (Array.isArray(replyResult) ? replyResult : [replyResult]) : [];
 
     let queuedFinal = false;
@@ -722,7 +688,7 @@ export async function dispatchReplyFromConfig(params: {
           to: originatingTo,
           sessionKey: ctx.SessionKey,
           accountId: ctx.AccountId,
-          threadId: ctx.MessageThreadId,
+          threadId: routeThreadId,
           cfg,
           isGroup,
           groupId,
@@ -774,7 +740,7 @@ export async function dispatchReplyFromConfig(params: {
               to: originatingTo,
               sessionKey: ctx.SessionKey,
               accountId: ctx.AccountId,
-              threadId: ctx.MessageThreadId,
+              threadId: routeThreadId,
               cfg,
               isGroup,
               groupId,
@@ -802,7 +768,10 @@ export async function dispatchReplyFromConfig(params: {
 
     const counts = dispatcher.getQueuedCounts();
     counts.final += routedFinalCount;
-    recordProcessed("completed");
+    recordProcessed(
+      "completed",
+      pluginFallbackReason ? { reason: pluginFallbackReason } : undefined,
+    );
     markIdle("message_completed");
     return { queuedFinal, counts };
   } catch (err) {

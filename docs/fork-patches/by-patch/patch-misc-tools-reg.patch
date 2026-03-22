@@ -1,0 +1,58 @@
+diff --git a/src/agents/openclaw-tools.ts b/src/agents/openclaw-tools.ts
+index cbd9b7b414..d80dbbe023 100644
+--- a/src/agents/openclaw-tools.ts
++++ b/src/agents/openclaw-tools.ts
+@@ -11,6 +11,7 @@ import type { AnyAgentTool } from "./tools/common.js";
+ import { createCronTool } from "./tools/cron-tool.js";
+ import { createGatewayTool } from "./tools/gateway-tool.js";
+ import { createImageTool } from "./tools/image-tool.js";
++import { createImageGenerateTool } from "./tools/image-generate-tool.js";
+ import { createMessageTool } from "./tools/message-tool.js";
+ import { createNodesTool } from "./tools/nodes-tool.js";
+ import { createPdfTool } from "./tools/pdf-tool.js";
+@@ -99,6 +100,9 @@ export function createOpenClawTools(options?: {
+         fsPolicy: options?.fsPolicy,
+       })
+     : null;
++  const imageGenerateTool = createImageGenerateTool({
++    config: options?.config,
++  });
+   const webSearchTool = createWebSearchTool({
+     config: options?.config,
+     sandboxed: options?.sandboxed,
+@@ -189,6 +193,7 @@ export function createOpenClawTools(options?: {
+     ...(webFetchTool ? [webFetchTool] : []),
+     ...(imageTool ? [imageTool] : []),
+     ...(pdfTool ? [pdfTool] : []),
++    imageGenerateTool,
+   ];
+ 
+   const pluginTools = resolvePluginTools({
+diff --git a/src/agents/tools/tts-tool.ts b/src/agents/tools/tts-tool.ts
+index 03ed3cd9a0..fcf8c47256 100644
+--- a/src/agents/tools/tts-tool.ts
++++ b/src/agents/tools/tts-tool.ts
+@@ -35,15 +35,21 @@ export function createTtsTool(opts?: {
+       });
+ 
+       if (result.success && result.audioPath) {
++        const pathMod = await import("node:path");
++        const filename = pathMod.basename(result.audioPath);
++        const audioUrl = `/media/${filename}`;
+         const lines: string[] = [];
+-        // Tag Telegram Opus output as a voice bubble instead of a file attachment.
++        // Tag Opus output as a voice bubble instead of a file attachment.
+         if (result.voiceCompatible) {
+           lines.push("[[audio_as_voice]]");
+         }
++        // PATCH: Include TTS text as caption for logging
++        lines.push(`🔊 ${text}`);
++        lines.push("");
+         lines.push(`MEDIA:${result.audioPath}`);
+         return {
+           content: [{ type: "text", text: lines.join("\n") }],
+-          details: { audioPath: result.audioPath, provider: result.provider },
++          details: { audioPath: result.audioPath, audioUrl, provider: result.provider },
+         };
+       }
+ 

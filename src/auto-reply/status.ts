@@ -77,6 +77,7 @@ type StatusArgs = {
   sessionStorePath?: string;
   groupActivation?: "mention" | "always";
   resolvedThink?: ThinkLevel;
+  resolvedFast?: boolean;
   resolvedVerbose?: VerboseLevel;
   resolvedReasoning?: ReasoningLevel;
   resolvedElevated?: ElevatedLevel;
@@ -179,6 +180,8 @@ export const formatContextUsageShort = (
   total: number | null | undefined,
   contextTokens: number | null | undefined,
 ) => `Context ${formatTokens(total, contextTokens ?? null)}`;
+
+const padLabel = (value: string) => value.padEnd(11);
 
 const formatQueueDetails = (queue?: QueueStatus) => {
   if (!queue) {
@@ -510,6 +513,7 @@ export function buildStatusMessage(args: StatusArgs): string {
     args.resolvedThink ?? args.sessionEntry?.thinkingLevel ?? args.agent?.thinkingDefault ?? "off";
   const verboseLevel =
     args.resolvedVerbose ?? args.sessionEntry?.verboseLevel ?? args.agent?.verboseDefault ?? "off";
+  const fastMode = args.resolvedFast ?? args.sessionEntry?.fastMode ?? false;
   const reasoningLevel = args.resolvedReasoning ?? args.sessionEntry?.reasoningLevel ?? "off";
   const elevatedLevel =
     args.resolvedElevated ??
@@ -562,6 +566,7 @@ export function buildStatusMessage(args: StatusArgs): string {
   const optionParts = [
     `Runtime: ${runtime.label}`,
     `Think: ${thinkLevel}`,
+    fastMode ? "Fast: on" : null,
     verboseLabel,
     reasoningLevel !== "off" ? `Reasoning: ${reasoningLevel}` : null,
     elevatedLabel,
@@ -669,13 +674,11 @@ export function buildStatusMessage(args: StatusArgs): string {
   const mediaLine = formatMediaUnderstandingLine(args.mediaDecisions);
   const voiceLine = formatVoiceModeLine(args.config, args.sessionEntry);
 
-  // --- Aligned status card format ---
-  // [FORK-PATCH-8] Status Card Redesign — aligned columns, commit hash, custom /status layout. See patches/README.md #8.
-  const padLabel = (s: string) => s.padEnd(11);
-  const commit = resolveCommitHash();
+  // [FORK-PATCH-8] Status Card Redesign — preserve fork-specific aligned card
+  // layout while keeping newer runtime fields from upstream in optionsLine.
+  const commit = resolveCommitHash({ moduleUrl: import.meta.url });
   const title = `*OpenClaw* \`${VERSION}${commit ? ` (${commit})` : ""}\``;
 
-  // Extract short label from auth value, e.g. "token sk-ant…uhzQAA (anthropic:bob-mini)" → "anthropic:bob-mini"
   const providerLabel = (() => {
     const raw = selectedAuthLabelValue ?? selectedProvider;
     const match = raw?.match(/\(([^)]+)\)/);
@@ -713,7 +716,6 @@ export function buildStatusMessage(args: StatusArgs): string {
     rows.push(`◇ ${padLabel("Media")}${mediaLine.replace(/^[^\w]*/u, "")}`);
   }
 
-  // Abbreviate session key: strip "agent:main:" prefix, truncate long group IDs
   const shortSession = (args.sessionKey ?? "unknown")
     .replace(/^agent:main:/, "")
     .replace(/(group:\d{6})\d+@g\.us/, "$1…");
@@ -741,9 +743,7 @@ export function buildStatusMessage(args: StatusArgs): string {
   }
   parts.push("```");
   parts.push(...rows);
-  // Close code fence on same line as last row to avoid trailing blank line
   parts[parts.length - 1] += "```";
-
   return parts.join("\n");
 }
 
@@ -790,7 +790,7 @@ export function buildHelpMessage(cfg?: OpenClawConfig): string {
   lines.push("  /new  |  /reset  |  /compact [instructions]  |  /stop");
   lines.push("");
 
-  const optionParts = ["/think <level>", "/model <id>", "/verbose off|light|on|full"];
+  const optionParts = ["/think <level>", "/model <id>", "/fast on|off", "/verbose off|light|on|full"];
   if (isCommandFlagEnabled(cfg, "config")) {
     optionParts.push("/config");
   }

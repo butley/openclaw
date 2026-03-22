@@ -1,5 +1,5 @@
-import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/core";
+import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk/zalouser";
+import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/zalouser";
 import { zalouserDock, zalouserPlugin } from "./src/channel.js";
 import { setZalouserRuntime } from "./src/runtime.js";
 import { ZalouserToolSchema, executeZalouserTool } from "./src/tool.js";
@@ -12,6 +12,9 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     setZalouserRuntime(api.runtime);
     api.registerChannel({ plugin: zalouserPlugin, dock: zalouserDock });
+    if (api.registrationMode !== "full") {
+      return;
+    }
 
     api.registerTool({
       name: "zalouser",

@@ -1,4 +1,3 @@
-// [FORK-PATCH-21] Chat Audio Inbound — handles audio/image attachments from webchat (base64 → file → media URL). Entire file is fork-only. See patches/README.md #21.
 import { estimateBase64DecodedBytes } from "../media/base64.js";
 import { sniffMimeFromBase64 } from "../media/sniff-mime-from-base64.js";
 
@@ -13,7 +12,6 @@ export type ChatImageContent = {
   type: "image";
   data: string;
   mimeType: string;
-  /** Saved media URL (e.g. /media/uuid.png) — persists after base64 data is stripped from history */
   mediaUrl?: string;
 };
 
@@ -169,7 +167,9 @@ export async function extractAudioAttachments(
   }
   const audio: ChatAudioAttachment[] = [];
   for (const [idx, att] of attachments.entries()) {
-    if (!att) continue;
+    if (!att) {
+      continue;
+    }
     const normalized = normalizeAttachment(att, idx, {
       stripDataUrlPrefix: true,
       requireImageMime: false,
@@ -178,10 +178,6 @@ export async function extractAudioAttachments(
     const { base64: b64, label, mime } = normalized;
     const providedMime = normalizeMime(mime);
     const sniffedMime = normalizeMime(await sniffMimeFromBase64(b64));
-    // Browsers record audio as video/webm (webm is a container that can hold audio-only
-    // streams). If the caller explicitly provided an audio/* MIME type but the sniffer
-    // returns the equivalent video/* type, trust the provided MIME so the attachment
-    // is routed to the audio transcription pipeline rather than silently dropped.
     const isAudioVideoAlias =
       providedMime &&
       isAudioMime(providedMime) &&
@@ -192,7 +188,9 @@ export async function extractAudioAttachments(
       continue;
     }
     if (sniffedMime && providedMime && sniffedMime !== providedMime && !isAudioVideoAlias) {
-      log?.warn(`attachment ${label}: mime mismatch (${providedMime} -> ${sniffedMime}), using sniffed`);
+      log?.warn(
+        `attachment ${label}: mime mismatch (${providedMime} -> ${sniffedMime}), using sniffed`,
+      );
     }
     audio.push({
       label,

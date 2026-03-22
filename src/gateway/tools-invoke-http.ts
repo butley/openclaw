@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-// [FORK-PATCH-25] HTTP Tools Channel Reg — includes channel-provided tools (WA login, etc.) in HTTP tool invoke endpoint. See patches/README.md #25.
 import { listChannelAgentTools } from "../agents/channel-tools.js";
 import { createOpenClawTools } from "../agents/openclaw-tools.js";
+import { runBeforeToolCallHook } from "../agents/pi-tools.before-tool-call.js";
+import { resolveToolLoopDetectionConfig } from "../agents/pi-tools.js";
 import {
   resolveEffectiveToolPolicy,
   resolveGroupToolPolicy,
@@ -18,7 +19,6 @@ import {
 } from "../agents/tool-policy.js";
 import { ToolInputError } from "../agents/tools/common.js";
 import { loadConfig } from "../config/config.js";
-import { createWhatsAppLoginTool } from "../channels/plugins/agent-tools/whatsapp-login.js";
 import { resolveMainSessionKey } from "../config/sessions.js";
 import { logWarn } from "../logger.js";
 import { isTestDefaultMemorySlotDisabled } from "../plugins/config-state.js";
@@ -248,20 +248,17 @@ export async function handleToolsInvokeHttpRequest(
     ? resolveSubagentToolPolicy(cfg)
     : undefined;
 
-  // Build tool list (core + channel/plugin tools).
+  // [FORK-PATCH-25] HTTP Tools Channel Registration — include channel plugin tools in HTTP invoke path.
   const allTools = [
     ...listChannelAgentTools({ cfg }),
-    // Hard fallback: expose whatsapp_login for HTTP invoke when WhatsApp is configured,
-    // even if channel plugin agentTools registration is unavailable in this runtime path.
-    ...((cfg.channels?.whatsapp && cfg.channels.whatsapp.enabled !== false)
-      ? [createWhatsAppLoginTool()]
-      : []),
     ...createOpenClawTools({
       agentSessionKey: sessionKey,
       agentChannel: messageChannel ?? undefined,
       agentAccountId: accountId,
       agentTo,
       agentThreadId,
+      // HTTP callers consume tool output directly; preserve raw media invoke payloads.
+      allowMediaInvokeCommands: true,
       config: cfg,
       pluginToolAllowlist: collectExplicitAllowlist([
         profilePolicy,
@@ -320,14 +317,32 @@ export async function handleToolsInvokeHttpRequest(
   }
 
   try {
+    const toolCallId = `http-${Date.now()}`;
     const toolArgs = mergeActionIntoArgsIfSupported({
       // oxlint-disable-next-line typescript/no-explicit-any
       toolSchema: (tool as any).parameters,
       action,
       args,
     });
+    const hookResult = await runBeforeToolCallHook({
+      toolName,
+      params: toolArgs,
+      toolCallId,
+      ctx: {
+        agentId,
+        sessionKey,
+        loopDetection: resolveToolLoopDetectionConfig({ cfg, agentId }),
+      },
+    });
+    if (hookResult.blocked) {
+      sendJson(res, 403, {
+        ok: false,
+        error: { type: "tool_call_blocked", message: hookResult.reason },
+      });
+      return true;
+    }
     // oxlint-disable-next-line typescript/no-explicit-any
-    const result = await (tool as any).execute?.(`http-${Date.now()}`, toolArgs);
+    const result = await (tool as any).execute?.(toolCallId, hookResult.params);
     sendJson(res, 200, { ok: true, result });
   } catch (err) {
     const inputStatus = resolveToolInputErrorStatus(err);

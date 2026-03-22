@@ -1,0 +1,13 @@
+diff --git a/src/tui/tui-command-handlers.ts b/src/tui/tui-command-handlers.ts
+index 989c942beb..e0ecf5831a 100644
+--- a/src/tui/tui-command-handlers.ts
++++ b/src/tui/tui-command-handlers.ts
+@@ -329,7 +329,7 @@ export function createCommandHandlers(context: CommandHandlerContext) {
+         break;
+       case "verbose":
+         if (!args) {
+-          chatLog.addSystem("usage: /verbose <on|off>");
++          chatLog.addSystem("usage: /verbose <off|light|on|full>");
+           break;
+         }
+         try {

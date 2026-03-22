@@ -27,7 +27,7 @@ function extractAgentArg(argv: string[]): { agentId: string | null; rest: string
       agentId = arg.slice("--agent=".length);
       i += 1;
     } else {
-      rest.push(arg as string);
+      rest.push(arg);
       i += 1;
     }
   }

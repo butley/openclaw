@@ -1,0 +1,36 @@
+diff --git a/src/config/sessions/types.ts b/src/config/sessions/types.ts
+index 81d67d1301..b09cebc6ba 100644
+--- a/src/config/sessions/types.ts
++++ b/src/config/sessions/types.ts
+@@ -95,6 +95,7 @@ export type SessionEntry = {
+   chatType?: SessionChatType;
+   thinkingLevel?: string;
+   verboseLevel?: string;
++  streamLevel?: string;
+   reasoningLevel?: string;
+   elevatedLevel?: string;
+   ttsAuto?: TtsAutoMode;
+diff --git a/src/config/types.memory.ts b/src/config/types.memory.ts
+index 54581f65fa..8f550859b5 100644
+--- a/src/config/types.memory.ts
++++ b/src/config/types.memory.ts
+@@ -20,6 +20,7 @@ export type MemoryQmdConfig = {
+   update?: MemoryQmdUpdateConfig;
+   limits?: MemoryQmdLimitsConfig;
+   scope?: SessionSendPolicyConfig;
++  maxOutputChars?: number;
+ };
+ 
+ export type MemoryQmdMcporterConfig = {
+diff --git a/src/config/zod-schema.ts b/src/config/zod-schema.ts
+index 600603cabd..8437d4373c 100644
+--- a/src/config/zod-schema.ts
++++ b/src/config/zod-schema.ts
+@@ -108,6 +108,7 @@ const MemoryQmdSchema = z
+     update: MemoryQmdUpdateSchema.optional(),
+     limits: MemoryQmdLimitsSchema.optional(),
+     scope: SessionSendPolicySchema.optional(),
++    maxOutputChars: z.number().int().positive().optional(),
+   })
+   .strict();
+ 

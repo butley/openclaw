@@ -1,0 +1,40 @@
+diff --git a/src/channels/dock.ts b/src/channels/dock.ts
+index 98db2a2cf4..da4fd4a9d8 100644
+--- a/src/channels/dock.ts
++++ b/src/channels/dock.ts
+@@ -287,12 +287,14 @@ const DOCKS: Record<ChatChannelId, ChannelDock> = {
+       polls: true,
+       reactions: true,
+       media: true,
++      blockStreaming: true,
+     },
+     commands: {
+       enforceOwnerForCommands: true,
+       skipWhenConfigEmpty: true,
+     },
+     outbound: DEFAULT_OUTBOUND_TEXT_CHUNK_LIMIT_4000,
++    streaming: DEFAULT_BLOCK_STREAMING_COALESCE,
+     config: {
+       resolveAllowFrom: ({ cfg, accountId }) => resolveWhatsAppConfigAllowFrom({ cfg, accountId }),
+       formatAllowFrom: ({ allowFrom }) => formatWhatsAppConfigAllowFromEntries(allowFrom),
+diff --git a/src/slack/monitor/context.ts b/src/slack/monitor/context.ts
+index 2127505f6e..b5b1460ce3 100644
+--- a/src/slack/monitor/context.ts
++++ b/src/slack/monitor/context.ts
+@@ -55,6 +55,8 @@ export type SlackMonitorContext = {
+   mediaMaxBytes: number;
+   removeAckAfterReply: boolean;
+ 
++  /** Tracks thread_ts values where the bot has sent at least one reply. */
++  participatedThreads: Set<string>;
+   logger: ReturnType<typeof getChildLogger>;
+   markMessageSeen: (channelId: string | undefined, ts?: string) => boolean;
+   shouldDropMismatchedSlackEvent: (body: unknown) => boolean;
+@@ -392,6 +394,7 @@ export function createSlackMonitorContext(params: {
+     ackReactionScope: params.ackReactionScope,
+     mediaMaxBytes: params.mediaMaxBytes,
+     removeAckAfterReply: params.removeAckAfterReply,
++    participatedThreads: new Set<string>(),
+     logger,
+     markMessageSeen,
+     shouldDropMismatchedSlackEvent,

@@ -4,9 +4,14 @@ import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
 import { loadSessionEntry } from "./session-utils.js";
+// [FORK-PATCH-4] Chat Mirror — static import for WA delivery.
+import { sendMessageWhatsApp } from "../../extensions/whatsapp/src/send.js";
 import { formatForLog } from "./ws-log.js";
+const log = createSubsystemLogger("gateway/server-chat");
+const reasoningDebugEnabled = process.env.OPENCLAW_DEBUG_REASONING === "1";
 
 function resolveHeartbeatAckMaxChars(): number {
   try {
@@ -87,6 +92,48 @@ function isSilentReplyLeadFragment(text: string): boolean {
     return false;
   }
   return SILENT_REPLY_TOKEN.startsWith(normalized);
+}
+
+function appendUniqueSuffix(base: string, suffix: string): string {
+  if (!suffix) {
+    return base;
+  }
+  if (!base) {
+    return suffix;
+  }
+  if (base.endsWith(suffix)) {
+    return base;
+  }
+  const maxOverlap = Math.min(base.length, suffix.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    if (base.slice(-overlap) === suffix.slice(0, overlap)) {
+      return base + suffix.slice(overlap);
+    }
+  }
+  return base + suffix;
+}
+
+function resolveMergedAssistantText(params: {
+  previousText: string;
+  nextText: string;
+  nextDelta: string;
+}) {
+  const { previousText, nextText, nextDelta } = params;
+  if (nextText && previousText) {
+    if (nextText.startsWith(previousText)) {
+      return nextText;
+    }
+    if (previousText.startsWith(nextText) && !nextDelta) {
+      return previousText;
+    }
+  }
+  if (nextDelta) {
+    return appendUniqueSuffix(previousText, nextDelta);
+  }
+  if (nextText) {
+    return nextText;
+  }
+  return previousText;
 }
 
 export type ChatRunEntry = {
@@ -288,8 +335,7 @@ export type AgentEventHandlerOptions = {
 
 export function createAgentEventHandler({
   broadcast,
-  // [FORK-PATCH-16] Tool Events Broadcast — emits tool call/result events to all WS clients (chat UI shows inline tools). See patches/README.md #16.
-  broadcastToConnIds: _broadcastToConnIds,
+  broadcastToConnIds,
   nodeSendToSession,
   agentRunSeq,
   chatRunState,
@@ -300,39 +346,49 @@ export function createAgentEventHandler({
   // [FORK-PATCH-32] SSE Retryable Error Suppression — retryable provider errors (429, overload)
   // don't finalize chat runs. Keeps SSE stream open during gateway retries/failover so text
   // flows normally when retry succeeds. Without this, first 429 kills the stream permanently.
-  // See patches/README.md #32.
   const RETRYABLE_LIFECYCLE_ERROR_RE =
     /\b(?:429|rate\s*limit(?:ed)?|too\s*many\s*requests|temporarily\s*overloaded|overloaded)\b/i;
 
+  const _broadcastToConnIds = broadcastToConnIds;
+  // [FORK-PATCH-4] Chat Mirror — mirror/session delivery is registered in server-methods/chat.ts.
   const emitChatDelta = (
     sessionKey: string,
     clientRunId: string,
     sourceRunId: string,
     seq: number,
     text: string,
+    delta?: unknown,
   ) => {
-    const cleaned = stripInlineDirectiveTagsForDisplay(text).text;
-    if (!cleaned) {
+    const cleanedText = stripInlineDirectiveTagsForDisplay(text).text;
+    const cleanedDelta =
+      typeof delta === "string" ? stripInlineDirectiveTagsForDisplay(delta).text : "";
+    const previousText = chatRunState.buffers.get(clientRunId) ?? "";
+    const mergedText = resolveMergedAssistantText({
+      previousText,
+      nextText: cleanedText,
+      nextDelta: cleanedDelta,
+    });
+    if (!mergedText) {
       return;
     }
-    chatRunState.buffers.set(clientRunId, cleaned);
-    if (isSilentReplyText(cleaned, SILENT_REPLY_TOKEN)) {
+    chatRunState.buffers.set(clientRunId, mergedText);
+    if (isSilentReplyText(mergedText, SILENT_REPLY_TOKEN)) {
       return;
     }
-    if (isSilentReplyLeadFragment(cleaned)) {
+    if (isSilentReplyLeadFragment(mergedText)) {
       return;
     }
     if (shouldHideHeartbeatChatOutput(clientRunId, sourceRunId)) {
       return;
     }
-    // [FORK-PATCH-17] Streaming Throttle — 50ms debounce on chat deltas, prevents WS flood during fast generation. See patches/README.md #17.
     const now = Date.now();
     const last = chatRunState.deltaSentAt.get(clientRunId) ?? 0;
+    // [FORK-PATCH-17] Streaming Throttle — 50ms throttle for smoother UI updates.
     if (now - last < 50) {
       return;
     }
     chatRunState.deltaSentAt.set(clientRunId, now);
-    chatRunState.deltaLastBroadcastLen.set(clientRunId, cleaned.length);
+    chatRunState.deltaLastBroadcastLen.set(clientRunId, mergedText.length);
     const payload = {
       runId: clientRunId,
       sessionKey,
@@ -340,7 +396,7 @@ export function createAgentEventHandler({
       state: "delta" as const,
       message: {
         role: "assistant",
-        content: [{ type: "text", text: cleaned }],
+        content: [{ type: "text", text: mergedText }],
         timestamp: now,
       },
     };
@@ -348,15 +404,7 @@ export function createAgentEventHandler({
     nodeSendToSession(sessionKey, "chat", payload);
   };
 
-  const emitChatFinal = (
-    sessionKey: string,
-    clientRunId: string,
-    sourceRunId: string,
-    seq: number,
-    jobState: "done" | "error",
-    error?: unknown,
-    stopReason?: string,
-  ) => {
+  const resolveBufferedChatTextState = (clientRunId: string, sourceRunId: string) => {
     const bufferedText = stripInlineDirectiveTagsForDisplay(
       chatRunState.buffers.get(clientRunId) ?? "",
     ).text.trim();
@@ -368,38 +416,68 @@ export function createAgentEventHandler({
     const text = normalizedHeartbeatText.text.trim();
     const shouldSuppressSilent =
       normalizedHeartbeatText.suppress || isSilentReplyText(text, SILENT_REPLY_TOKEN);
+    return { text, shouldSuppressSilent };
+  };
+
+  const flushBufferedChatDeltaIfNeeded = (
+    sessionKey: string,
+    clientRunId: string,
+    sourceRunId: string,
+    seq: number,
+  ) => {
+    const { text, shouldSuppressSilent } = resolveBufferedChatTextState(clientRunId, sourceRunId);
     const shouldSuppressSilentLeadFragment = isSilentReplyLeadFragment(text);
     const shouldSuppressHeartbeatStreaming = shouldHideHeartbeatChatOutput(
       clientRunId,
       sourceRunId,
     );
+    if (
+      !text ||
+      shouldSuppressSilent ||
+      shouldSuppressSilentLeadFragment ||
+      shouldSuppressHeartbeatStreaming
+    ) {
+      return;
+    }
+
+    const lastBroadcastLen = chatRunState.deltaLastBroadcastLen.get(clientRunId) ?? 0;
+    if (text.length <= lastBroadcastLen) {
+      return;
+    }
+
+    const now = Date.now();
+    const flushPayload = {
+      runId: clientRunId,
+      sessionKey,
+      seq,
+      state: "delta" as const,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text }],
+        timestamp: now,
+      },
+    };
+    broadcast("chat", flushPayload, { dropIfSlow: true });
+    nodeSendToSession(sessionKey, "chat", flushPayload);
+    chatRunState.deltaLastBroadcastLen.set(clientRunId, text.length);
+    chatRunState.deltaSentAt.set(clientRunId, now);
+  };
+
+  const emitChatFinal = (
+    sessionKey: string,
+    clientRunId: string,
+    sourceRunId: string,
+    seq: number,
+    jobState: "done" | "error",
+    error?: unknown,
+    stopReason?: string,
+  ) => {
+    const { text, shouldSuppressSilent } = resolveBufferedChatTextState(clientRunId, sourceRunId);
     // Flush any throttled delta so streaming clients receive the complete text
-    // before the final event.  The 150 ms throttle in emitChatDelta may have
+    // before the final event. The 150 ms throttle in emitChatDelta may have
     // suppressed the most recent chunk, leaving the client with stale text.
     // Only flush if the buffer has grown since the last broadcast to avoid duplicates.
-    if (
-      text &&
-      !shouldSuppressSilent &&
-      !shouldSuppressSilentLeadFragment &&
-      !shouldSuppressHeartbeatStreaming
-    ) {
-      const lastBroadcastLen = chatRunState.deltaLastBroadcastLen.get(clientRunId) ?? 0;
-      if (text.length > lastBroadcastLen) {
-        const flushPayload = {
-          runId: clientRunId,
-          sessionKey,
-          seq,
-          state: "delta" as const,
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text }],
-            timestamp: Date.now(),
-          },
-        };
-        broadcast("chat", flushPayload, { dropIfSlow: true });
-        nodeSendToSession(sessionKey, "chat", flushPayload);
-      }
-    }
+    flushBufferedChatDeltaIfNeeded(sessionKey, clientRunId, sourceRunId, seq);
     chatRunState.deltaLastBroadcastLen.delete(clientRunId);
     chatRunState.buffers.delete(clientRunId);
     chatRunState.deltaSentAt.delete(clientRunId);
@@ -421,9 +499,9 @@ export function createAgentEventHandler({
       };
       broadcast("chat", payload);
       nodeSendToSession(sessionKey, "chat", payload);
-      // Mirror to original channel if requested
+      // [FORK-PATCH-4] Chat Mirror — re-deliver final reply to the session's
+      // original channel (e.g. WhatsApp) when the run was initiated from webchat.
       const runContext = getAgentRunContext(clientRunId);
-      // [FORK-PATCH-4] Chat Mirror — re-delivers final reply to the WS client that sent the message (control UI needs it). See patches/README.md #4.
       if (runContext?.mirror && text) {
         try {
           const keyParts = sessionKey.split(":").filter(Boolean);
@@ -432,11 +510,9 @@ export function createAgentEventHandler({
             const channel = keyParts[2];
             const peerId = keyParts.slice(4).join(":");
             if (channel === "whatsapp" && peerId) {
-              void import("../web/outbound.js").then(({ sendMessageWhatsApp }) => {
-                sendMessageWhatsApp(peerId, text, { verbose: false })
-                  .then(() => console.log(`[mirror] sent to ${channel}:${peerId}`))
-                  .catch((err) => console.warn(`[mirror] failed: ${String(err)}`));
-              });
+              sendMessageWhatsApp(peerId, text, { verbose: false })
+                .then(() => console.log(`[mirror] sent to ${channel}:${peerId}`))
+                .catch((err: unknown) => console.warn(`[mirror] failed: ${String(err)}`));
             }
           }
         } catch (mirrorErr) {
@@ -521,41 +597,43 @@ export function createAgentEventHandler({
     }
     agentRunSeq.set(evt.runId, evt.seq);
     if (isToolEvent) {
-      // Flush any pending throttled text delta before tool events.
-      // The 50ms throttle in emitChatDelta may hold the last text chunk,
-      // causing SSE/webchat clients to miss text right before a tool call.
-      if (sessionKey && clientRunId) {
-        const buffered = chatRunState.buffers.get(clientRunId);
-        const lastLen = chatRunState.deltaLastBroadcastLen.get(clientRunId) ?? 0;
-        if (buffered && buffered.length > lastLen) {
-          const cleaned = stripInlineDirectiveTagsForDisplay(buffered).text;
-          if (cleaned) {
-            chatRunState.deltaLastBroadcastLen.set(clientRunId, cleaned.length);
-            chatRunState.deltaSentAt.set(clientRunId, Date.now());
-            const flushPayload = {
-              runId: clientRunId,
-              sessionKey,
-              seq: evt.seq,
-              state: "delta" as const,
-              message: {
-                role: "assistant",
-                content: [{ type: "text", text: cleaned }],
-                timestamp: Date.now(),
-              },
-            };
-            broadcast("chat", flushPayload, { dropIfSlow: true });
-            nodeSendToSession(sessionKey, "chat", flushPayload);
-          }
-        }
+      const toolPhase = typeof evt.data?.phase === "string" ? evt.data.phase : "";
+      // Flush pending assistant text before tool-start events so clients can
+      // render complete pre-tool text above tool cards (not truncated by delta throttle).
+      if (toolPhase === "start" && sessionKey && !isAborted) {
+        flushBufferedChatDeltaIfNeeded(sessionKey, clientRunId, evt.runId, evt.seq);
+        // [FORK-PATCH-16] Reset accumulated text buffer after tool-start so the
+        // next assistant turn starts fresh. The Pi SDK resets its own
+        // lastStreamedAssistantCleaned between tool calls, so the gateway
+        // buffer must match — otherwise mergedText accumulates text from ALL
+        // prior turns and the SSE subscriber (which resets lastTextLen=0 on
+        // tool-start) re-emits the entire conversation prefix.
+        chatRunState.buffers.delete(clientRunId);
+        chatRunState.deltaLastBroadcastLen.delete(clientRunId);
       }
-      // Broadcast tool events to ALL connected WS clients so Control UI
-      // can show tool progress for any run (including WA-initiated runs
-      // where the UI never called chat.send to register).
-      // The verbose setting only controls whether tool details are sent
-      // as channel messages to messaging surfaces (Telegram, Discord, etc.).
+      // Always broadcast tool events to registered WS recipients with
+      // tool-events capability, regardless of verboseLevel. The verbose
+      // setting only controls whether tool details are sent as channel
+      // messages to messaging surfaces (Telegram, Discord, etc.).
+      const recipients = toolEventRecipients.get(evt.runId);
+      if (recipients && recipients.size > 0) {
+        _broadcastToConnIds("agent", toolPayload, recipients);
+      }
+      // [FORK-PATCH-16] Tool Events Broadcast — also broadcast to all connected WS/SSE clients.
       broadcast("agent", toolPayload, { dropIfSlow: true });
     } else {
       broadcast("agent", agentPayload);
+    }
+    if (reasoningDebugEnabled && evt.stream === "thinking") {
+      const rawDeltaLen =
+        typeof evt.data?.rawDelta === "string"
+          ? evt.data.rawDelta.length
+          : typeof evt.data?.delta === "string"
+            ? evt.data.delta.length
+            : 0;
+      log.info(
+        `[reasoning:gateway] runId=${evt.runId} clientRunId=${clientRunId} sessionKey=${sessionKey ?? "NONE"} visible=${String(getAgentRunContext(evt.runId)?.isControlUiVisible ?? true)} rawDeltaLen=${rawDeltaLen}`,
+      );
     }
 
     const lifecyclePhase =
@@ -568,12 +646,12 @@ export function createAgentEventHandler({
 
     if (sessionKey) {
       // Send tool events to node/channel subscribers only when verbose is enabled;
-      // WS clients already received tool events above via broadcast("agent", ...) (Patch #16).
+      // WS clients already received the event above via broadcastToConnIds.
       if (!isToolEvent || toolVerbose !== "off") {
         nodeSendToSession(sessionKey, "agent", isToolEvent ? toolPayload : agentPayload);
       }
       if (!isAborted && evt.stream === "assistant" && typeof evt.data?.text === "string") {
-        emitChatDelta(sessionKey, clientRunId, evt.runId, evt.seq, evt.data.text);
+        emitChatDelta(sessionKey, clientRunId, evt.runId, evt.seq, evt.data.text, evt.data.delta);
       } else if (
         !isAborted &&
         (lifecyclePhase === "end" || (lifecyclePhase === "error" && !isRetryableLifecycleError))

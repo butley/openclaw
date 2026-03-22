@@ -1,5 +1,5 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/mattermost";
+import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/mattermost";
 import { mattermostPlugin } from "./src/channel.js";
 import { getSlashCommandState, registerSlashCommandRoute } from "./src/mattermost/slash-state.js";
 import { setMattermostRuntime } from "./src/runtime.js";
@@ -12,6 +12,9 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     setMattermostRuntime(api.runtime);
     api.registerChannel({ plugin: mattermostPlugin });
+    if (api.registrationMode !== "full") {
+      return;
+    }
 
     // Register the HTTP route for slash command callbacks.
     // The actual command registration with MM happens in the monitor

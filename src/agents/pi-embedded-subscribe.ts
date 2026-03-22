@@ -24,6 +24,7 @@ import { hasNonzeroUsage, normalizeUsage, type UsageLike } from "./usage.js";
 const THINKING_TAG_SCAN_RE = /<\s*(\/?)\s*(?:think(?:ing)?|thought|antthinking)\s*>/gi;
 const FINAL_TAG_SCAN_RE = /<\s*(\/?)\s*final\s*>/gi;
 const log = createSubsystemLogger("agent/embedded");
+const reasoningDebugEnabled = process.env.OPENCLAW_DEBUG_REASONING === "1";
 
 export type {
   BlockReplyChunking,
@@ -45,8 +46,8 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     reasoningMode,
     includeReasoning: reasoningMode === "on",
     shouldEmitPartialReplies: !(reasoningMode === "on" && !params.onBlockReply),
-    // [FORK-PATCH-15] Webchat Thinking Stream — hardcodes streamReasoning:true so thinking blocks reach chat UI via WS. See patches/README.md #15.
-    streamReasoning: true, // Always broadcast thinking to WS clients (webchat needs it; channels ignore agent events)
+    // [FORK-PATCH-15] Webchat Thinking Stream — always stream reasoning for WS/SSE consumers.
+    streamReasoning: true,
     deltaBuffer: "",
     blockBuffer: "",
     // Track if a streamed chunk opened a <think> block (stateful across chunks).
@@ -56,7 +57,6 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     lastStreamedAssistantCleaned: undefined,
     emittedAssistantUpdate: false,
     lastStreamedReasoning: undefined,
-    lastRawThinking: undefined,
     lastBlockReplyText: undefined,
     reasoningStreamOpen: false,
     assistantMessageIndex: 0,
@@ -80,6 +80,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     pendingMessagingTargets: new Map(),
     successfulCronAdds: 0,
     pendingMessagingMediaUrls: new Map(),
+    deterministicApprovalPromptSent: false,
   };
   const usageTotals = {
     input: 0,
@@ -102,6 +103,18 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   const pendingMessagingTargets = state.pendingMessagingTargets;
   const replyDirectiveAccumulator = createStreamingDirectiveAccumulator();
   const partialReplyDirectiveAccumulator = createStreamingDirectiveAccumulator();
+  const emitBlockReplySafely = (
+    payload: Parameters<NonNullable<SubscribeEmbeddedPiSessionParams["onBlockReply"]>>[0],
+  ) => {
+    if (!params.onBlockReply) {
+      return;
+    }
+    void Promise.resolve()
+      .then(() => params.onBlockReply?.(payload))
+      .catch((err) => {
+        log.warn(`block reply callback failed: ${String(err)}`);
+      });
+  };
 
   const resetAssistantMessageState = (nextAssistantTextBaseline: number) => {
     state.deltaBuffer = "";
@@ -304,10 +317,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   const shouldEmitToolResult = () =>
     typeof params.shouldEmitToolResult === "function"
       ? params.shouldEmitToolResult()
-      : params.verboseLevel === "light" ||
-        params.verboseLevel === "on" ||
-        params.verboseLevel === "full";
-  const isLightVerbose = () => params.verboseLevel === "light";
+      : params.verboseLevel === "on" || params.verboseLevel === "full";
   const shouldEmitToolOutput = () =>
     typeof params.shouldEmitToolOutput === "function"
       ? params.shouldEmitToolOutput()
@@ -345,100 +355,6 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       markdown: useMarkdown,
     });
     emitToolResultMessage(toolName, agg);
-  };
-  const emitToolEndSummary = (
-    toolName?: string,
-    meta?: string,
-    result?: unknown,
-    duration?: string,
-    error?: string,
-    args?: unknown,
-  ) => {
-    const agg = formatToolAggregate(toolName, meta ? [meta] : undefined, {
-      markdown: useMarkdown,
-    });
-    // Extract result context for enrichment.
-    let resultInfo = "";
-    const name = (toolName ?? "").toLowerCase();
-    // Enrich tool narrations with result context.
-    if (name === "edit") {
-      try {
-        const a = (args && typeof args === "object") ? args as Record<string, unknown> : null;
-        if (a) {
-          const oldStr = String(a.old_string || a.oldText || "");
-          const newStr = String(a.new_string || a.newText || "");
-          if (oldStr || newStr) {
-            const oldLines = oldStr ? oldStr.split("\n").length : 0;
-            const newLines = newStr ? newStr.split("\n").length : 0;
-            const added = Math.max(0, newLines - oldLines);
-            const removed = Math.max(0, oldLines - newLines);
-            const charDiff = newStr.length - oldStr.length;
-            const charStr = charDiff >= 0 ? `+${charDiff}` : `${charDiff}`;
-            // Only show diff if something actually changed
-            const parts: string[] = [];
-            if (added || removed) {parts.push(`+${added}/-${removed} lines`);}
-            if (charDiff !== 0) {parts.push(`${charStr} chars`);}
-            if (parts.length) {resultInfo = " " + parts.join(", ");}
-          }
-        }
-      } catch { /* ignore */ }
-    } else if (name === "web_search") {
-      try {
-        // Result is { content: [{ type: "text", text: "<json>" }] } — extract text then parse
-        let parsed: Record<string, unknown> | null = null;
-        if (result && typeof result === "object") {
-          const r = result as Record<string, unknown>;
-          const content = Array.isArray(r.content) ? r.content : null;
-          if (content) {
-            const textBlock = content.find((c: unknown) => c && typeof c === "object" && (c as Record<string, unknown>).type === "text");
-            if (textBlock) {
-              const t = (textBlock as Record<string, unknown>).text;
-              if (typeof t === "string") {
-                try { parsed = JSON.parse(t); } catch { /* not JSON */ }
-              }
-            }
-          }
-          if (!parsed) {parsed = r;}
-        } else if (typeof result === "string") {
-          parsed = JSON.parse(result);
-        }
-        if (parsed) {
-          const results = Array.isArray(parsed.results) ? parsed.results : Array.isArray(parsed.web) ? parsed.web : null;
-          if (results) {
-            resultInfo = ` → ${results.length} result${results.length !== 1 ? "s" : ""}`;
-          }
-        }
-      } catch { /* ignore */ }
-    } else if (name === "memory_search") {
-      try {
-        // Result may be wrapped in { content: [{ type: "text", text: "<json>" }] }
-        let parsed: Record<string, unknown> | null = null;
-        if (result && typeof result === "object") {
-          const r = result as Record<string, unknown>;
-          const content = Array.isArray(r.content) ? r.content : null;
-          if (content) {
-            const textBlock = content.find((c: unknown) => c && typeof c === "object" && (c as Record<string, unknown>).type === "text");
-            if (textBlock) {
-              const t = (textBlock as Record<string, unknown>).text;
-              if (typeof t === "string") {
-                try { parsed = JSON.parse(t); } catch { /* not JSON */ }
-              }
-            }
-          }
-          if (!parsed) {parsed = r;}
-        } else if (typeof result === "string") {
-          try { parsed = JSON.parse(result); } catch { /* ignore */ }
-        }
-        if (parsed) {
-          const provider = String(parsed.provider ?? "local");
-          const results = parsed.results;
-          const count = Array.isArray(results) ? results.length : 0;
-          resultInfo = ` [${provider}] → ${count} result${count !== 1 ? "s" : ""}`;
-        }
-      } catch { /* ignore */ }
-    }
-    const suffix = [error, resultInfo, duration].filter(Boolean).join("");
-    emitToolResultMessage(toolName, suffix ? `${agg}${suffix}` : agg);
   };
   const emitToolOutput = (toolName?: string, meta?: string, output?: string) => {
     if (!output) {
@@ -609,7 +525,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     if (!cleanedText && (!mediaUrls || mediaUrls.length === 0) && !audioAsVoice) {
       return;
     }
-    void params.onBlockReply({
+    emitBlockReplySafely({
       text: cleanedText,
       mediaUrls: mediaUrls?.length ? mediaUrls : undefined,
       audioAsVoice,
@@ -655,16 +571,16 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     const prior = state.lastStreamedReasoning ?? "";
     const delta = formatted.startsWith(prior) ? formatted.slice(prior.length) : formatted;
     state.lastStreamedReasoning = formatted;
+    const rawPrior = state.lastReasoningSent ?? "";
+    const rawDelta = text.startsWith(rawPrior) ? text.slice(rawPrior.length) : text;
+    state.lastReasoningSent = text;
+    if (reasoningDebugEnabled) {
+      log.info(
+        `[reasoning:emit] runId=${params.runId} mode=${reasoningMode} rawLen=${text.length} rawDeltaLen=${rawDelta.length} formattedLen=${formatted.length} formattedDeltaLen=${delta.length} callback=${typeof params.onReasoningStream === "function"}`,
+      );
+    }
 
-    // ALWAYS broadcast thinking event to WebSocket clients (Control UI, webchat).
-    // This is independent of the onReasoningStream callback which controls
-    // channel-level typing indicators.
-    // rawText/rawDelta: unformatted thinking for SSE/webchat (no "Reasoning:" prefix, no _italic_).
-    // text/delta: formatted for messaging channels (WA, Discord, Telegram).
-    const rawDelta = text.startsWith(state.lastRawThinking ?? "")
-      ? text.slice((state.lastRawThinking ?? "").length)
-      : text;
-    state.lastRawThinking = text;
+    // Broadcast thinking event to WebSocket clients in real-time
     emitAgentEvent({
       runId: params.runId,
       stream: "thinking",
@@ -676,7 +592,6 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       },
     });
 
-    // Channel typing callback (only if provided — depends on typingMode)
     if (params.onReasoningStream) {
       void params.onReasoningStream({
         text: formatted,
@@ -698,6 +613,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     pendingMessagingTargets.clear();
     state.successfulCronAdds = 0;
     state.pendingMessagingMediaUrls.clear();
+    state.deterministicApprovalPromptSent = false;
     resetAssistantMessageState(0);
   };
 
@@ -718,8 +634,6 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     shouldEmitToolResult,
     shouldEmitToolOutput,
     emitToolSummary,
-    emitToolEndSummary,
-    isLightVerbose,
     emitToolOutput,
     stripBlockTags,
     emitBlockChunk,
@@ -790,6 +704,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     // Used to suppress agent's confirmation text (e.g., "Respondi no Telegram!")
     // which is generated AFTER the tool sends the actual answer.
     didSendViaMessagingTool: () => messagingToolSentTexts.length > 0,
+    didSendDeterministicApprovalPrompt: () => state.deterministicApprovalPromptSent,
     getLastToolError: () => (state.lastToolError ? { ...state.lastToolError } : undefined),
     getUsageTotals,
     getCompactionCount: () => compactionCount,

@@ -66,8 +66,8 @@ export type ResolvedQmdConfig = {
   update: ResolvedQmdUpdateConfig;
   limits: ResolvedQmdLimitsConfig;
   includeDefaultMemory: boolean;
-  scope?: SessionSendPolicyConfig;
   maxOutputChars?: number;
+  scope?: SessionSendPolicyConfig;
 };
 
 const DEFAULT_BACKEND: MemoryBackend = "builtin";
@@ -344,8 +344,11 @@ export function resolveMemoryBackendConfig(params: {
       ),
     },
     limits: resolveLimits(qmdCfg?.limits),
+    maxOutputChars:
+      typeof qmdCfg?.maxOutputChars === "number" && qmdCfg.maxOutputChars > 0
+        ? Math.floor(qmdCfg.maxOutputChars)
+        : undefined,
     scope: qmdCfg?.scope ?? DEFAULT_QMD_SCOPE,
-    maxOutputChars: qmdCfg?.maxOutputChars,
   };
 
   return {

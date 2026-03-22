@@ -2,6 +2,7 @@ import {
   resolveAgentDir,
   resolveAgentWorkspaceDir,
   resolveSessionAgentId,
+  resolveAgentSkillsFilter,
 } from "../../agents/agent-scope.js";
 import { resolveModelRefFromString } from "../../agents/model-selection.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
@@ -12,6 +13,7 @@ import { applyLinkUnderstanding } from "../../link-understanding/apply.js";
 import { applyMediaUnderstanding } from "../../media-understanding/apply.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { defaultRuntime } from "../../runtime.js";
+import { normalizeStringEntries } from "../../shared/string-normalization.js";
 import { resolveCommandAuthorization } from "../command-auth.js";
 import type { MsgContext } from "../templating.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
@@ -28,6 +30,31 @@ import { initSessionState } from "./session.js";
 import { stageSandboxMedia } from "./stage-sandbox-media.js";
 import { createTypingController } from "./typing.js";
 
+function mergeSkillFilters(channelFilter?: string[], agentFilter?: string[]): string[] | undefined {
+  const normalize = (list?: string[]) => {
+    if (!Array.isArray(list)) {
+      return undefined;
+    }
+    return normalizeStringEntries(list);
+  };
+  const channel = normalize(channelFilter);
+  const agent = normalize(agentFilter);
+  if (!channel && !agent) {
+    return undefined;
+  }
+  if (!channel) {
+    return agent;
+  }
+  if (!agent) {
+    return channel;
+  }
+  if (channel.length === 0 || agent.length === 0) {
+    return [];
+  }
+  const agentSet = new Set(agent);
+  return channel.filter((name) => agentSet.has(name));
+}
+
 export async function getReplyFromConfig(
   ctx: MsgContext,
   opts?: GetReplyOptions,
@@ -42,6 +69,12 @@ export async function getReplyFromConfig(
     sessionKey: agentSessionKey,
     config: cfg,
   });
+  const mergedSkillFilter = mergeSkillFilters(
+    opts?.skillFilter,
+    resolveAgentSkillsFilter(cfg, agentId),
+  );
+  const resolvedOpts =
+    mergedSkillFilter !== undefined ? { ...opts, skillFilter: mergedSkillFilter } : opts;
   const agentCfg = cfg.agents?.defaults;
   const sessionCfg = cfg.session;
   const { defaultProvider, defaultModel, aliasIndex } = resolveDefaultModel({
@@ -100,7 +133,6 @@ export async function getReplyFromConfig(
       agentDir,
       activeModel: { provider, model },
     });
-    // PATCH: Audio transcript hook - emit message_received with transcript
     if (finalized.Transcript) {
       const hookRunner = getGlobalHookRunner();
       if (hookRunner?.hasHooks?.("message_received")) {
@@ -108,7 +140,7 @@ export async function getReplyFromConfig(
           .runMessageReceived(
             {
               from: finalized.From ?? "",
-              // [FORK-PATCH-3] Audio Transcript Hook — injects transcript as message content. See patches/README.md #3.
+              // [FORK-PATCH-3] Audio Transcript Hook — expose audio transcript to message_received hooks.
               content: `🎤 ${finalized.Transcript}`,
               timestamp: finalized.Timestamp,
               metadata: {
@@ -177,6 +209,7 @@ export async function getReplyFromConfig(
 
   await applyResetModelOverride({
     cfg,
+    agentId,
     resetTriggered,
     bodyStripped,
     sessionCtx,
@@ -244,8 +277,8 @@ export async function getReplyFromConfig(
     model,
     hasResolvedHeartbeatModelOverride,
     typing,
-    opts,
-    skillFilter: opts?.skillFilter,
+    opts: resolvedOpts,
+    skillFilter: mergedSkillFilter,
   });
   if (directiveResult.kind === "reply") {
     return directiveResult.reply;
@@ -317,7 +350,7 @@ export async function getReplyFromConfig(
     sessionScope,
     workspaceDir,
     isGroup,
-    opts,
+    opts: resolvedOpts,
     typing,
     allowTextCommands,
     inlineStatusRequested,
@@ -333,13 +366,15 @@ export async function getReplyFromConfig(
     resolvedVerboseLevel,
     resolvedReasoningLevel,
     resolvedElevatedLevel,
+    blockReplyChunking,
+    resolvedBlockStreamingBreak,
     resolveDefaultThinkingLevel: modelState.resolveDefaultThinkingLevel,
     provider,
     model,
     contextTokens,
     directiveAck,
     abortedLastRun,
-    skillFilter: opts?.skillFilter,
+    skillFilter: mergedSkillFilter,
   });
   if (inlineActionResult.kind === "reply") {
     await maybeEmitMissingResetHooks();
@@ -387,7 +422,7 @@ export async function getReplyFromConfig(
     perMessageQueueMode,
     perMessageQueueOptions,
     typing,
-    opts,
+    opts: resolvedOpts,
     defaultProvider,
     defaultModel,
     timeoutMs,

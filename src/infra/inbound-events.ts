@@ -39,7 +39,13 @@ export type InboundMessageEventPayload = {
 
 type InboundEventListener = (evt: InboundMessageEventPayload) => void;
 
-const listeners = new Set<InboundEventListener>();
+// [FORK-PATCH-5] Use globalThis singleton to survive bundler chunk duplication.
+// Without this, dispatch-from-config.ts (emitter) and server.impl.ts (subscriber)
+// end up with different Set instances and inbound messages never reach WS/SSE clients.
+const listeners: Set<InboundEventListener> =
+  ((globalThis as Record<string, unknown>).__openclaw_inbound_listeners__ as Set<InboundEventListener>) ??
+  new Set<InboundEventListener>();
+(globalThis as Record<string, unknown>).__openclaw_inbound_listeners__ = listeners;
 
 /**
  * Emit an inbound message event to all registered listeners.
