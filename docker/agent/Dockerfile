@@ -173,12 +173,11 @@ COPY --from=builder /opt/openclaw/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=builder /opt/openclaw/node_modules ./node_modules
 
 # 5. Install puppeteer packages into app node_modules (after COPY so dir exists)
-# Use a temp dir to install then copy — avoids npm errors from pnpm workspace package.json.
+# Install in temp dir first (workspace package.json breaks npm install),
+# then merge all packages (including transitive deps) into app node_modules.
 RUN cd /tmp && npm init -y > /dev/null 2>&1 \
     && npm install puppeteer-core puppeteer-extra puppeteer-extra-plugin-stealth \
-    && cp -r /tmp/node_modules/puppeteer-core /opt/openclaw/node_modules/ \
-    && cp -r /tmp/node_modules/puppeteer-extra* /opt/openclaw/node_modules/ \
-    && cp -r /tmp/node_modules/deepmerge /opt/openclaw/node_modules/ 2>/dev/null || true \
+    && cp -rn /tmp/node_modules/* /opt/openclaw/node_modules/ \
     && rm -rf /tmp/node_modules /tmp/package.json /tmp/package-lock.json
 
 # 5. Runtime assets (assets excluded - images ignored by .dockerignore)
@@ -203,6 +202,7 @@ RUN openclaw --version || echo "Version check skipped"
 ENV NODE_ENV=production \
     TZ=America/New_York \
     HOME=/root \
+    NODE_PATH="/opt/openclaw/node_modules" \
     PATH="/opt/openclaw/node_modules/.bin:/root/.local/bin:/usr/local/bin:$PATH" \
     OPENCLAW_PORT=18789 \
     OPENCLAW_BIND=lan \
