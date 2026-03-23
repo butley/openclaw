@@ -154,8 +154,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mv /opt/chrome-linux64 /opt/chrome \
     && ln -sf /opt/chrome/chrome /usr/local/bin/chrome \
     && rm /tmp/chrome.zip \
-    && npm install -g puppeteer-core puppeteer-extra puppeteer-extra-plugin-stealth \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+# Install puppeteer packages into /opt/openclaw/node_modules (already in NODE_PATH)
+# so scripts running from any working directory can resolve them.
+RUN cd /opt/openclaw && npm install --save puppeteer-core puppeteer-extra puppeteer-extra-plugin-stealth
 
 WORKDIR /opt/openclaw
 
