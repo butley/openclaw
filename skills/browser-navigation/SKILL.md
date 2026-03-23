@@ -1,12 +1,14 @@
 ---
 name: browser-navigation
-description: "Navigate websites, log into accounts, scrape content, and automate web interactions using Playwright + Chromium. Use when: user asks to visit a website, log into an account, check information on a web page, fill forms, extract data from sites, or interact with any web UI. NOT for: simple URL fetching where web_fetch suffices, API calls that don't need a browser, or static file downloads via curl."
-metadata: { "openclaw": { "emoji": "🌐", "requires": { "bins": ["node"], "node_modules": ["playwright"] } } }
+description: "Navigate websites, log into accounts, scrape content, and automate web interactions using Puppeteer + Stealth. Use when: user asks to visit a website, log into an account, check information on a web page, fill forms, extract data from sites, or interact with any web UI. NOT for: simple URL fetching where web_fetch suffices, API calls that don't need a browser, or static file downloads via curl."
+metadata: { "openclaw": { "emoji": "🌐", "requires": { "bins": ["node"], "node_modules": ["puppeteer-extra", "puppeteer-extra-plugin-stealth", "puppeteer-core"] } } }
 ---
 
 # Browser Navigation
 
 Automate real browser interactions: login, navigate, extract data, fill forms.
+
+Uses **Puppeteer + puppeteer-extra-plugin-stealth** for robust anti-bot evasion. This combo passes most WAFs (Imperva, Cloudflare, etc.) that block vanilla headless Chrome or Playwright.
 
 ## When to Use
 
@@ -17,6 +19,7 @@ Automate real browser interactions: login, navigate, extract data, fill forms.
 - "Go to [URL] and get [information]"
 - "Fill out this form on [site]"
 - Sites that require JavaScript rendering, authentication, or interaction
+- Sites with bot detection (Imperva, Cloudflare, DataDome)
 
 ❌ **DON'T use this skill when:**
 
@@ -24,55 +27,75 @@ Automate real browser interactions: login, navigate, extract data, fill forms.
 - Direct API calls (use `curl` or `exec`)
 - Downloading files from direct URLs
 
-## How It Works
+## Why Puppeteer + Stealth (Not Playwright)
 
-Playwright controls a real Chromium browser in headless mode. It can do everything a human can: click, type, scroll, wait, extract text, handle popups.
+Playwright's headless mode is easily detected by WAFs because it uses a patched Chromium with unique fingerprints. The `puppeteer-extra-plugin-stealth` applies ~12 evasion techniques:
+
+- `navigator.webdriver` removal
+- Chrome runtime injection (`window.chrome`)
+- WebGL vendor/renderer spoofing
+- Permissions API masking
+- Language and plugin consistency
+- iframe contentWindow protection
+- Media codecs fingerprint
+- Source URL leak prevention
+
+This is the difference between getting blocked and passing through.
+
+## Chrome Binary
+
+The container includes Chrome for Testing at:
+
+```
+/opt/chrome/chrome
+```
+
+If the path changes or you need to find it:
+
+```bash
+find / -name "chrome" -type f 2>/dev/null | head -5
+```
 
 ## Launch Pattern
 
-Always launch Chromium with anti-detection flags. Many sites block default headless browsers.
+Always use `puppeteer-extra` with the stealth plugin — never raw `puppeteer-core`.
 
 ```javascript
-const { chromium } = require("playwright");
+import puppeteerExtra from "puppeteer-extra";
+import StealthPlugin from "puppeteer-extra-plugin-stealth";
 
-const browser = await chromium.launch({
-  headless: true,
+puppeteerExtra.use(StealthPlugin());
+
+const browser = await puppeteerExtra.launch({
+  executablePath: "/opt/chrome/chrome",
+  headless: "new",
   args: [
     "--no-sandbox",
     "--disable-setuid-sandbox",
-    "--disable-blink-features=AutomationControlled"
+    "--disable-blink-features=AutomationControlled",
+    "--disable-dev-shm-usage"
   ]
 });
 
-const context = await browser.newContext({
-  viewport: { width: 1280, height: 720 },
-  userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-});
-
-// Remove automation indicator
-await context.addInitScript(() => {
-  Object.defineProperty(navigator, 'webdriver', { get: () => false });
-});
-
-const page = await context.newPage();
+const page = await browser.newPage();
+await page.setViewport({ width: 1920, height: 1080 });
 ```
 
-**Why these flags matter:**
-- `AutomationControlled` — disables Chrome's automation indicator that bot detectors check
-- Custom `userAgent` — default headless UA contains "HeadlessChrome", which sites block
-- `navigator.webdriver = false` — another automation flag that sites check
+**Why these flags:**
+- `--no-sandbox` — required when running as root in containers
+- `--disable-blink-features=AutomationControlled` — extra automation flag removal
+- `--disable-dev-shm-usage` — prevents crashes in Docker (limited /dev/shm)
+- Stealth plugin handles the rest automatically
 
 ## Navigation
 
 ```javascript
-// For most pages — waits until DOM is ready (fast, reliable)
+// For most pages — waits until network settles (best for SPAs)
+await page.goto("https://example.com", { waitUntil: "networkidle2", timeout: 30000 });
+
+// For fast loads where you don't need all resources
 await page.goto("https://example.com", { waitUntil: "domcontentloaded", timeout: 30000 });
-
-// For pages that need JS to fully render content
-await page.goto("https://example.com", { waitUntil: "load", timeout: 30000 });
 ```
-
-⚠️ **Avoid `networkidle`** for content pages — ad trackers and analytics never stop loading, causing timeouts. Use it only for login/auth pages where you need all requests to settle.
 
 ## Cookie Consent Banners
 
@@ -81,59 +104,64 @@ Most sites show a consent popup that blocks interaction. Dismiss it first.
 ```javascript
 // Common pattern: consent in an iframe
 try {
-  const consentFrame = page.frameLocator('[id*="consent"], [id*="cookie"]');
-  await consentFrame.getByRole("button", { name: /accept|agree|ok|got it/i })
-    .first().click({ timeout: 5000 });
-  await page.waitForTimeout(2000);
+  const frames = page.frames();
+  for (const frame of frames) {
+    const btn = await frame.$('button[title="Accept All"]');
+    if (btn) { await btn.click(); break; }
+  }
 } catch (e) {
-  // Fallback: remove the overlay via JS
-  await page.evaluate(() => {
-    document.querySelectorAll('[id*="consent"], [id*="cookie"], [class*="consent"], [class*="cookie-banner"]')
-      .forEach(el => el.remove());
-  });
+  // Try alternative selectors
+  try {
+    await page.click('[id*="accept"], [class*="accept"], button:has-text("Accept")', { timeout: 3000 });
+  } catch (e2) {
+    // No consent banner — continue
+  }
 }
+
+await new Promise(r => setTimeout(r, 2000));
 ```
 
 ## Typing Credentials
 
-Use `keyboard.type()` with delay — not `fill()`. Some sites monitor input events and `fill()` bypasses them, causing auth to fail silently.
+Use `page.type()` with delay — it generates real keyboard events. Never use Puppeteer's `page.evaluate()` to set input values directly, as form handlers won't trigger.
 
 ```javascript
-await page.locator("input[name=username]").click();
-await page.keyboard.type("user@example.com", { delay: 50 });
-
-await page.locator("input[name=password]").click();
-await page.keyboard.type("secret", { delay: 50 });
+await page.type(".username-input", "user@example.com", { delay: 50 });
+await page.type("input[name=password]", "secret123", { delay: 50 });
 ```
+
+**Why delay matters:** Sites monitor input event timing. Instant input (0ms between keystrokes) flags automation. 30-80ms delay mimics human typing.
 
 ## Form Submission
 
-Prefer clicking the submit button naturally over `force: true`. Forced clicks bypass JavaScript event handlers that may be required for the form to work.
+Click the submit button — don't call `form.submit()` directly. SPAs (React, Angular, jQuery) attach event handlers to buttons, not forms.
 
 ```javascript
-// Good — triggers all JS handlers
-await page.locator("form button[type=submit]").click();
-
-// Avoid unless the button is obscured by an overlay you already handled
-await page.locator("form button[type=submit]").click({ force: true });
+await page.click("button[type=submit]");
 ```
 
 ## Waiting for Auth
 
-After submitting login forms, wait for a URL change or specific element:
+After submitting login forms, wait for navigation or a specific element:
 
 ```javascript
-// Wait for redirect after login
-await page.waitForURL(/.*dashboard|account|home.*/, { timeout: 20000 });
+// Wait for URL change (redirects after login)
+await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 15000 }).catch(() => {});
 
-// Or wait for a specific element that only appears when logged in
-await page.waitForSelector(".user-profile, .logout-button", { timeout: 20000 });
+// Or wait for a specific element
+await page.waitForSelector(".user-profile, .logout-button, .dashboard", { timeout: 15000 });
+
+// Or wait for URL pattern
+await page.waitForFunction(
+  () => window.location.href.includes("dashboard") || window.location.href.includes("account"),
+  { timeout: 15000 }
+);
 ```
 
 ## Extracting Content
 
 ```javascript
-// Get visible text from the page
+// Get all visible text
 const text = await page.evaluate(() => document.body.innerText);
 
 // Get specific elements
@@ -143,89 +171,100 @@ const items = await page.evaluate(() => {
     value: el.querySelector(".value")?.textContent?.trim()
   }));
 });
+
+// Take a screenshot for debugging
+await page.screenshot({ path: "/tmp/debug.png", fullPage: true });
 ```
 
 ## Complete Login + Navigate Example
 
 ```javascript
-const { chromium } = require("playwright");
+import puppeteerExtra from "puppeteer-extra";
+import StealthPlugin from "puppeteer-extra-plugin-stealth";
 
-(async () => {
-  const browser = await chromium.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled"]
-  });
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 720 },
-    userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-  });
-  await context.addInitScript(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => false });
-  });
+puppeteerExtra.use(StealthPlugin());
 
-  const page = await context.newPage();
+const browser = await puppeteerExtra.launch({
+  executablePath: "/opt/chrome/chrome",
+  headless: "new",
+  args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"]
+});
 
-  // 1. Go to login page
-  await page.goto("https://example.com/login", { waitUntil: "networkidle", timeout: 30000 });
+const page = await browser.newPage();
+await page.setViewport({ width: 1920, height: 1080 });
+
+try {
+  // 1. Navigate to login page
+  await page.goto("https://example.com/login", { waitUntil: "networkidle2", timeout: 30000 });
 
   // 2. Handle cookie consent
   try {
-    const cf = page.frameLocator('[id*="consent"]');
-    await cf.getByRole("button", { name: /accept/i }).first().click({ timeout: 5000 });
-    await page.waitForTimeout(2000);
-  } catch (e) {
-    await page.evaluate(() => {
-      document.querySelectorAll('[id*="consent"]').forEach(el => el.remove());
-    });
-  }
+    const frames = page.frames();
+    for (const frame of frames) {
+      const btn = await frame.$('button[title="Accept All"]');
+      if (btn) { await btn.click(); break; }
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  } catch (e) { /* no consent banner */ }
 
-  // 3. Type credentials (with delay)
-  await page.locator("input[type=email], input[name=username]").click();
-  await page.keyboard.type("user@example.com", { delay: 50 });
-  await page.locator("input[type=password]").click();
-  await page.keyboard.type("password123", { delay: 50 });
+  // 3. Type credentials with natural delay
+  await page.type("input[name=username]", "user@example.com", { delay: 50 });
+  await page.type("input[name=password]", "password123", { delay: 50 });
 
-  // 4. Submit
-  await page.locator("form button[type=submit]").click();
+  // 4. Submit and wait for auth
+  await page.click("button[type=submit]");
+  await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 15000 }).catch(() => {});
+  await new Promise(r => setTimeout(r, 3000));
 
-  // 5. Wait for auth
-  await page.waitForURL(/.*dashboard.*/, { timeout: 20000 });
   console.log("Logged in:", page.url());
 
-  // 6. Navigate to target page
-  await page.goto("https://example.com/target", { waitUntil: "domcontentloaded", timeout: 30000 });
-  await page.waitForTimeout(5000); // Let JS render
+  // 5. Navigate to target page
+  await page.goto("https://example.com/dashboard", { waitUntil: "networkidle2", timeout: 30000 });
+  await new Promise(r => setTimeout(r, 3000));
 
-  // 7. Extract data
+  // 6. Extract data
   const content = await page.evaluate(() => document.body.innerText);
   console.log(content);
 
+} finally {
   await browser.close();
-})();
+}
 ```
 
 ## Running Scripts
 
-Write the script to a temp file and execute with Node:
+Write the script as an `.mjs` file (ES modules) and execute:
 
 ```bash
-node /tmp/my_script.js
+cat > /tmp/scrape.mjs << 'EOF'
+import puppeteerExtra from "puppeteer-extra";
+import StealthPlugin from "puppeteer-extra-plugin-stealth";
+// ... script content
+EOF
+
+node /tmp/scrape.mjs
 ```
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| CORS errors on login | Bot detection — verify anti-detection flags are set |
-| Login form submits but nothing happens | Use `keyboard.type()` with delay instead of `fill()` |
-| Timeout on page load | Switch from `networkidle` to `domcontentloaded` |
-| Element click intercepted | Cookie consent overlay — dismiss it first |
-| "Navigation interrupted" errors | Page has hash routing — go to base URL first, then interact |
+| "Pardon Our Interruption" / WAF block | Verify stealth plugin is loaded (check `puppeteerExtra.use(StealthPlugin())` before launch) |
+| Login form submits but nothing happens | Use `page.type()` with `delay: 50`, not `page.evaluate()` to set values |
+| CORS / network errors on XHR | Bot detection at TLS level — stealth plugin should handle this |
+| Timeout on page load | Switch from `networkidle0` to `networkidle2` or `domcontentloaded` |
+| Element click intercepted | Cookie consent overlay — dismiss it first (check iframes) |
+| "Navigation interrupted" | Page uses hash routing — use `waitForFunction` instead of `waitForNavigation` |
+| Chrome crash in Docker | Add `--disable-dev-shm-usage` flag |
 
 ## Cleanup
 
-Always close the browser when done:
+Always close the browser in a finally block:
 
 ```javascript
-await browser.close();
+try {
+  // ... automation
+} finally {
+  await browser.close();
+}
 ```
