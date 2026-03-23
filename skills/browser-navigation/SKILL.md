@@ -1,14 +1,14 @@
 ---
 name: browser-navigation
-description: "Navigate websites, log into accounts, scrape content, and automate web interactions using Puppeteer + Stealth. Use when: user asks to visit a website, log into an account, check information on a web page, fill forms, extract data from sites, or interact with any web UI. NOT for: simple URL fetching where web_fetch suffices, API calls that don't need a browser, or static file downloads via curl."
-metadata: { "openclaw": { "emoji": "🌐", "requires": { "bins": ["node"], "node_modules": ["puppeteer-extra", "puppeteer-extra-plugin-stealth", "puppeteer-core"] } } }
+description: "Navigate websites, log into accounts, scrape content, and automate web interactions using Browserbase cloud browser. Use when: user asks to visit a website, log into an account, check information on a web page, fill forms, extract data from sites, or interact with any web UI. NOT for: simple URL fetching where web_fetch suffices, API calls that don't need a browser, or static file downloads via curl."
+metadata: { "openclaw": { "emoji": "🌐", "requires": { "bins": ["node"], "node_modules": ["puppeteer-core", "@browserbasehq/sdk"] } } }
 ---
 
 # Browser Navigation
 
 Automate real browser interactions: login, navigate, extract data, fill forms.
 
-Uses **Puppeteer + puppeteer-extra-plugin-stealth** for robust anti-bot evasion. This combo passes most WAFs (Imperva, Cloudflare, etc.) that block vanilla headless Chrome or Playwright.
+Uses **Browserbase** cloud browser infrastructure. Browserbase provides a real Chrome browser on residential IPs — no stealth plugins or anti-detection needed since the browser is indistinguishable from a regular user.
 
 ## When to Use
 
@@ -20,6 +20,7 @@ Uses **Puppeteer + puppeteer-extra-plugin-stealth** for robust anti-bot evasion.
 - "Fill out this form on [site]"
 - Sites that require JavaScript rendering, authentication, or interaction
 - Sites with bot detection (Imperva, Cloudflare, DataDome)
+- Sites that block datacenter IPs (banking, government)
 
 ❌ **DON'T use this skill when:**
 
@@ -27,92 +28,75 @@ Uses **Puppeteer + puppeteer-extra-plugin-stealth** for robust anti-bot evasion.
 - Direct API calls (use `curl` or `exec`)
 - Downloading files from direct URLs
 
-## Why Puppeteer + Stealth (Not Playwright)
+## Why Browserbase (Not Local Chrome)
 
-Playwright's headless mode is easily detected by WAFs because it uses a patched Chromium with unique fingerprints. The `puppeteer-extra-plugin-stealth` applies ~12 evasion techniques:
+Browserbase runs a real Chrome browser on their cloud infrastructure with residential IPs. This means:
 
-- `navigator.webdriver` removal
-- Chrome runtime injection (`window.chrome`)
-- WebGL vendor/renderer spoofing
-- Permissions API masking
-- Language and plugin consistency
-- iframe contentWindow protection
-- Media codecs fingerprint
-- Source URL leak prevention
+- **No anti-detection needed** — it's a real browser, not detectable as automation
+- **Residential IPs** — bypasses datacenter IP blocks (banking, government portals)
+- **No local Chrome** — ~250MB smaller container image
+- **Live debug** — watch the browser in real time via debug URL
+- **Session replay** — review sessions at `browserbase.com/sessions/<id>`
 
-This is the difference between getting blocked and passing through.
+## Environment
 
-## Chrome Binary
-
-The container includes Chrome for Testing at:
-
-```
-/opt/chrome/chrome
-```
-
-If the path changes or you need to find it:
-
-```bash
-find / -name "chrome" -type f 2>/dev/null | head -5
-```
+The `BROWSERBASE_API_KEY` env var is injected into the container by the orchestrator. No configuration needed in the agent.
 
 ## Reference Sample
 
-See `references/sample-stealth-navigation.mjs` for a complete working example with login, cookie consent, data extraction, and error handling.
+See `references/sample-browserbase-navigation.mjs` for a complete working example with login, data extraction, and error handling.
 
 ## Launch Pattern
 
-Always use `puppeteer-extra` with the stealth plugin — never raw `puppeteer-core`.
+Use `puppeteer-core` with `@browserbasehq/sdk` — connect to a Browserbase session via CDP.
 
 **Important: ESM compatibility.** Scripts must use `.mjs` extension and `createRequire()` with absolute paths to resolve the packages correctly:
 
 ```javascript
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const puppeteerExtra = require("/opt/openclaw/node_modules/puppeteer-extra");
-const StealthPlugin = require("/opt/openclaw/node_modules/puppeteer-extra-plugin-stealth");
+const puppeteerCore = require("/opt/openclaw/node_modules/puppeteer-core");
+const Browserbase = require("/opt/openclaw/node_modules/@browserbasehq/sdk").default;
 
-puppeteerExtra.use(StealthPlugin());
-
-const browser = await puppeteerExtra.launch({
-  executablePath: "/opt/chrome/chrome",
-  headless: "new",
-  args: [
-    "--no-sandbox",
-    "--disable-setuid-sandbox",
-    "--disable-blink-features=AutomationControlled",
-    "--disable-dev-shm-usage"
-  ]
+const bb = new Browserbase({
+  apiKey: process.env.BROWSERBASE_API_KEY
 });
 
-const page = await browser.newPage();
-await page.setViewport({ width: 1920, height: 1080 });
+// Create session + get live debug URL
+const session = await bb.sessions.create();
+console.log("Session:", session.id);
+
+const debug = await bb.sessions.debug(session.id);
+console.log("Live debug:", debug.debuggerUrl);
+
+// Connect via CDP
+const browser = await puppeteerCore.connect({
+  browserWSEndpoint: session.connectUrl
+});
+
+const page = (await browser.pages())[0] || await browser.newPage();
+await page.setViewport({ width: 1440, height: 900 });
 ```
 
-**Why `createRequire` + absolute paths?** The puppeteer packages live in `/opt/openclaw/node_modules/` but scripts run from `/tmp/` or `/root/`. ESM import resolution won't find them without the absolute path. This pattern is the reliable way to bridge ESM scripts with CJS packages in the container.
-
-**Why these flags:**
-- `--no-sandbox` — required when running as root in containers
-- `--disable-blink-features=AutomationControlled` — extra automation flag removal
-- `--disable-dev-shm-usage` — prevents crashes in Docker (limited /dev/shm)
-- Stealth plugin handles the rest automatically
+**Why `createRequire` + absolute paths?** The packages live in `/opt/openclaw/node_modules/` but scripts run from `/tmp/` or `/root/`. ESM import resolution won't find them without the absolute path.
 
 ## Navigation
 
 ```javascript
 // For most pages — waits until network settles (best for SPAs)
-await page.goto("https://example.com", { waitUntil: "networkidle2", timeout: 30000 });
+await page.goto("https://example.com", { waitUntil: "networkidle2", timeout: 45000 });
 
 // For fast loads where you don't need all resources
-await page.goto("https://example.com", { waitUntil: "domcontentloaded", timeout: 30000 });
+await page.goto("https://example.com", { waitUntil: "domcontentloaded", timeout: 45000 });
 ```
+
+**Note:** Browserbase sessions may have slightly higher latency than local Chrome. Use generous timeouts (45s+) and longer waits between actions.
 
 ## Cookie Consent Banners
 
 Most sites show a consent popup that blocks interaction. Dismiss it first.
 
 ```javascript
-// Common pattern: consent in an iframe
 try {
   const frames = page.frames();
   for (const frame of frames) {
@@ -120,31 +104,27 @@ try {
     if (btn) { await btn.click(); break; }
   }
 } catch (e) {
-  // Try alternative selectors
   try {
-    await page.click('[id*="accept"], [class*="accept"], button:has-text("Accept")', { timeout: 3000 });
+    await page.click('[id*="accept"], [class*="accept"]', { timeout: 3000 });
   } catch (e2) {
     // No consent banner — continue
   }
 }
-
 await new Promise(r => setTimeout(r, 2000));
 ```
 
 ## Typing Credentials
 
-Use `page.type()` with delay — it generates real keyboard events. Never use Puppeteer's `page.evaluate()` to set input values directly, as form handlers won't trigger.
+Use `page.type()` with delay — it generates real keyboard events.
 
 ```javascript
-await page.type(".username-input", "user@example.com", { delay: 50 });
-await page.type("input[name=password]", "secret123", { delay: 50 });
+await page.type("input[name=username]", "user@example.com", { delay: 70 });
+await page.type("input[name=password]", "secret123", { delay: 70 });
 ```
-
-**Why delay matters:** Sites monitor input event timing. Instant input (0ms between keystrokes) flags automation. 30-80ms delay mimics human typing.
 
 ## Form Submission
 
-Click the submit button — don't call `form.submit()` directly. SPAs (React, Angular, jQuery) attach event handlers to buttons, not forms.
+Click the submit button — don't call `form.submit()` directly. SPAs attach event handlers to buttons, not forms.
 
 ```javascript
 await page.click("button[type=submit]");
@@ -159,7 +139,7 @@ After submitting login forms, wait for navigation or a specific element:
 await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 15000 }).catch(() => {});
 
 // Or wait for a specific element
-await page.waitForSelector(".user-profile, .logout-button, .dashboard", { timeout: 15000 });
+await page.waitForSelector(".dashboard, .user-profile, .logout-button", { timeout: 15000 });
 
 // Or wait for URL pattern
 await page.waitForFunction(
@@ -191,23 +171,24 @@ await page.screenshot({ path: "/tmp/debug.png", fullPage: true });
 ```javascript
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const puppeteerExtra = require("/opt/openclaw/node_modules/puppeteer-extra");
-const StealthPlugin = require("/opt/openclaw/node_modules/puppeteer-extra-plugin-stealth");
+const puppeteerCore = require("/opt/openclaw/node_modules/puppeteer-core");
+const Browserbase = require("/opt/openclaw/node_modules/@browserbasehq/sdk").default;
 
-puppeteerExtra.use(StealthPlugin());
+const bb = new Browserbase({ apiKey: process.env.BROWSERBASE_API_KEY });
+const session = await bb.sessions.create();
+console.log("Session:", session.id);
 
-const browser = await puppeteerExtra.launch({
-  executablePath: "/opt/chrome/chrome",
-  headless: "new",
-  args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"]
+const browser = await puppeteerCore.connect({
+  browserWSEndpoint: session.connectUrl
 });
 
-const page = await browser.newPage();
-await page.setViewport({ width: 1920, height: 1080 });
+const page = (await browser.pages())[0] || await browser.newPage();
+await page.setViewport({ width: 1440, height: 900 });
 
 try {
   // 1. Navigate to login page
-  await page.goto("https://example.com/login", { waitUntil: "networkidle2", timeout: 30000 });
+  await page.goto("https://example.com/login", { waitUntil: "domcontentloaded", timeout: 45000 });
+  await new Promise(r => setTimeout(r, 5000));
 
   // 2. Handle cookie consent
   try {
@@ -220,18 +201,17 @@ try {
   } catch (e) { /* no consent banner */ }
 
   // 3. Type credentials with natural delay
-  await page.type("input[name=username]", "user@example.com", { delay: 50 });
-  await page.type("input[name=password]", "password123", { delay: 50 });
+  await page.type("input[name=username]", "user@example.com", { delay: 70 });
+  await page.type("input[name=password]", "password123", { delay: 70 });
 
   // 4. Submit and wait for auth
   await page.click("button[type=submit]");
-  await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 15000 }).catch(() => {});
-  await new Promise(r => setTimeout(r, 3000));
+  await new Promise(r => setTimeout(r, 8000));
 
   console.log("Logged in:", page.url());
 
   // 5. Navigate to target page
-  await page.goto("https://example.com/dashboard", { waitUntil: "networkidle2", timeout: 30000 });
+  await page.goto("https://example.com/dashboard", { waitUntil: "networkidle2", timeout: 45000 });
   await new Promise(r => setTimeout(r, 3000));
 
   // 6. Extract data
@@ -239,7 +219,9 @@ try {
   console.log(content);
 
 } finally {
+  await page.close();
   await browser.close();
+  console.log(`Session replay: https://browserbase.com/sessions/${session.id}`);
 }
 ```
 
@@ -249,73 +231,26 @@ Write the script as an `.mjs` file (ES modules) and execute:
 
 ```bash
 cat > /tmp/scrape.mjs << 'EOF'
-import puppeteerExtra from "puppeteer-extra";
-import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
 // ... script content
 EOF
 
 node /tmp/scrape.mjs
 ```
 
-## Browserbase (Cloud Browser)
-
-When the target site blocks datacenter IPs (banking, government, some e-commerce), use **Browserbase** instead of local Chrome. It provides a real browser on residential IPs — no stealth plugin needed.
-
-See `references/sample-browserbase-navigation.mjs` for a complete working example.
-
-**When to use which:**
-
-| Approach | Use when | Examples |
-|----------|----------|----------|
-| Local Chrome + Stealth | Most sites, SPAs, dashboards | F1 Fantasy, social media, SaaS |
-| Browserbase | Site blocks datacenter IPs | Chase, banking, government portals |
-
-**Quick pattern (using `@browserbasehq/sdk`):**
-
-```javascript
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
-const puppeteerCore = require("/opt/openclaw/node_modules/puppeteer-core");
-const Browserbase = require("/opt/openclaw/node_modules/@browserbasehq/sdk").default;
-
-const bb = new Browserbase({ apiKey: process.env.BROWSERBASE_API_KEY });
-
-// Create session + get live debug URL
-const session = await bb.sessions.create();
-const debug = await bb.sessions.debug(session.id);
-console.log("Live debug:", debug.debuggerUrl);
-
-// Connect via CDP — no stealth needed
-const browser = await puppeteerCore.connect({
-  browserWSEndpoint: session.connectUrl
-});
-
-const page = (await browser.pages())[0];
-// ... same page.goto / page.type / page.evaluate as local Chrome
-
-// After done:
-console.log(`Replay: https://browserbase.com/sessions/${session.id}`);
-```
-
-**Key differences from local Chrome:**
-- Use `puppeteer-core` + `@browserbasehq/sdk` (not `puppeteer-extra` — no stealth needed)
-- Connect via `browserWSEndpoint` instead of launching locally
-- No `--no-sandbox` or other Chrome flags needed
-- Live debug URL lets you watch the browser in real time
-- Session replay available at `browserbase.com/sessions/<id>`
-- Session is billed by Browserbase (check usage at browserbase.com)
-
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| "Pardon Our Interruption" / WAF block | Verify stealth plugin is loaded (check `puppeteerExtra.use(StealthPlugin())` before launch) |
-| Login form submits but nothing happens | Use `page.type()` with `delay: 50`, not `page.evaluate()` to set values |
-| CORS / network errors on XHR | Bot detection at TLS level — stealth plugin should handle this |
-| Timeout on page load | Switch from `networkidle0` to `networkidle2` or `domcontentloaded` |
+| `BROWSERBASE_API_KEY` not set | Check orchestrator config — the env var is injected automatically |
+| Session creation fails | Verify API key is valid at browserbase.com |
+| Timeout on page load | Use `domcontentloaded` instead of `networkidle0`; increase timeout to 45s+ |
+| Login form submits but nothing happens | Use `page.type()` with `delay: 70`, not `page.evaluate()` to set values |
 | Element click intercepted | Cookie consent overlay — dismiss it first (check iframes) |
 | "Navigation interrupted" | Page uses hash routing — use `waitForFunction` instead of `waitForNavigation` |
-| Chrome crash in Docker | Add `--disable-dev-shm-usage` flag |
+| Slow page interactions | Browserbase has network latency; add `await new Promise(r => setTimeout(r, 3000))` between steps |
+| Need to debug visually | Use `bb.sessions.debug(session.id)` to get a live debug URL |
 
 ## Cleanup
 
@@ -325,6 +260,7 @@ Always close the browser in a finally block:
 try {
   // ... automation
 } finally {
+  await page.close();
   await browser.close();
 }
 ```

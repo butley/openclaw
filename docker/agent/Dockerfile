@@ -138,24 +138,6 @@ RUN pip3 install --break-system-packages poetry==1.8.4 || true
 # Enable corepack for pnpm (needed if any pnpm commands are used at runtime)
 RUN npm install -g --force corepack@latest && corepack enable
 
-# Install Chrome for Testing + Puppeteer Stealth for browser automation
-# Chrome for Testing is Google's official automation-ready Chrome channel.
-# puppeteer-extra-plugin-stealth provides ~12 anti-detection evasions that
-# bypass WAFs (Imperva, Cloudflare, DataDome) which block vanilla headless Chrome.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libglib2.0-0 libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
-    libcups2 libdrm2 libxkbcommon0 libatspi2.0-0 libx11-6 \
-    libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 \
-    libgbm1 libpango-1.0-0 libcairo2 libasound2 libxshmfence1 \
-    fonts-liberation wget \
-    && CHROME_VERSION=$(wget -qO- "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_STABLE") \
-    && wget -q "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip" -O /tmp/chrome.zip \
-    && unzip -q /tmp/chrome.zip -d /opt/ \
-    && mv /opt/chrome-linux64 /opt/chrome \
-    && ln -sf /opt/chrome/chrome /usr/local/bin/chrome \
-    && rm /tmp/chrome.zip \
-    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
-
 WORKDIR /opt/openclaw
 
 # Copy only what's needed for runtime:
@@ -172,11 +154,10 @@ COPY --from=builder /opt/openclaw/pnpm-workspace.yaml ./pnpm-workspace.yaml
 # 4. Production node_modules (native bindings, non-bundled deps)
 COPY --from=builder /opt/openclaw/node_modules ./node_modules
 
-# 5. Install puppeteer packages into app node_modules (after COPY so dir exists)
-# Install in temp dir first (workspace package.json breaks npm install),
-# then merge all packages (including transitive deps) into app node_modules.
+# 5. Install Browserbase SDK + Puppeteer Core for cloud browser automation.
+# No local Chrome needed — browser runs on Browserbase's infrastructure.
 RUN cd /tmp && npm init -y > /dev/null 2>&1 \
-    && npm install puppeteer-core puppeteer-extra puppeteer-extra-plugin-stealth @browserbasehq/sdk \
+    && npm install puppeteer-core @browserbasehq/sdk \
     && cp -rf /tmp/node_modules/* /opt/openclaw/node_modules/ 2>/dev/null; true \
     && rm -rf /tmp/node_modules /tmp/package.json /tmp/package-lock.json
 
