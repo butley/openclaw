@@ -177,7 +177,7 @@ COPY --from=builder /opt/openclaw/node_modules ./node_modules
 # then merge all packages (including transitive deps) into app node_modules.
 RUN cd /tmp && npm init -y > /dev/null 2>&1 \
     && npm install puppeteer-core puppeteer-extra puppeteer-extra-plugin-stealth \
-    && cp -rn /tmp/node_modules/* /opt/openclaw/node_modules/ \
+    && cp -rf /tmp/node_modules/* /opt/openclaw/node_modules/ 2>/dev/null; true \
     && rm -rf /tmp/node_modules /tmp/package.json /tmp/package-lock.json
 
 # 5. Runtime assets (assets excluded - images ignored by .dockerignore)
