@@ -257,6 +257,51 @@ EOF
 node /tmp/scrape.mjs
 ```
 
+## Browserbase (Cloud Browser)
+
+When the target site blocks datacenter IPs (banking, government, some e-commerce), use **Browserbase** instead of local Chrome. It provides a real browser on residential IPs — no stealth plugin needed.
+
+See `references/sample-browserbase-navigation.mjs` for a complete working example.
+
+**When to use which:**
+
+| Approach | Use when | Examples |
+|----------|----------|----------|
+| Local Chrome + Stealth | Most sites, SPAs, dashboards | F1 Fantasy, social media, SaaS |
+| Browserbase | Site blocks datacenter IPs | Chase, banking, government portals |
+
+**Quick pattern:**
+
+```javascript
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const puppeteerCore = require("/opt/openclaw/node_modules/puppeteer-core");
+
+// Create session via API
+const session = await fetch("https://api.browserbase.com/v1/sessions", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-bb-api-key": process.env.BROWSERBASE_API_KEY
+  },
+  body: JSON.stringify({ projectId: process.env.BROWSERBASE_PROJECT_ID })
+}).then(r => r.json());
+
+// Connect via CDP — no stealth needed
+const browser = await puppeteerCore.connect({
+  browserWSEndpoint: session.connectUrl
+});
+
+const page = (await browser.pages())[0];
+// ... same page.goto / page.type / page.evaluate as local Chrome
+```
+
+**Key differences from local Chrome:**
+- Use `puppeteer-core` directly (not `puppeteer-extra` — no stealth needed)
+- Connect via `browserWSEndpoint` instead of launching locally
+- No `--no-sandbox` or other Chrome flags needed
+- Session is billed by Browserbase (check usage at browserbase.com)
+
 ## Troubleshooting
 
 | Problem | Solution |
