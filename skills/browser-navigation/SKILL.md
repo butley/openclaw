@@ -1,6 +1,6 @@
 ---
 name: browser-navigation
-description: "Navigate websites, log into accounts, scrape content, and automate web interactions using Browserbase cloud browser. Use when: user asks to visit a website, log into an account, check information on a web page, fill forms, extract data from sites, or interact with any web UI. NOT for: simple URL fetching where web_fetch suffices, API calls that don't need a browser, or static file downloads via curl."
+description: "Navigate websites, log into accounts, scrape content, and automate web interactions using Browserbase cloud browsers. Use when: user asks to visit a website, log into an account, check information on a web page, fill forms, extract data from sites, or interact with any web UI. NOT for: simple URL fetching where web_fetch suffices, API calls that don't need a browser, or static file downloads via curl."
 metadata: { "openclaw": { "emoji": "🌐", "requires": { "bins": ["node"], "node_modules": ["puppeteer-core", "@browserbasehq/sdk"] } } }
 ---
 
@@ -8,7 +8,7 @@ metadata: { "openclaw": { "emoji": "🌐", "requires": { "bins": ["node"], "node
 
 Automate real browser interactions: login, navigate, extract data, fill forms.
 
-Uses **Browserbase** cloud browser infrastructure. Browserbase provides a real Chrome browser on residential IPs — no stealth plugins or anti-detection needed since the browser is indistinguishable from a regular user.
+Uses **Browserbase** cloud browsers with **puppeteer-core**. No local Chrome needed — the browser runs on Browserbase's infrastructure with residential IPs that bypass WAFs (Imperva, Cloudflare, DataDome) without any stealth plugins.
 
 ## When to Use
 
@@ -20,7 +20,7 @@ Uses **Browserbase** cloud browser infrastructure. Browserbase provides a real C
 - "Fill out this form on [site]"
 - Sites that require JavaScript rendering, authentication, or interaction
 - Sites with bot detection (Imperva, Cloudflare, DataDome)
-- Sites that block datacenter IPs (banking, government)
+- Sites that block datacenter IPs (banking, government portals)
 
 ❌ **DON'T use this skill when:**
 
@@ -30,27 +30,28 @@ Uses **Browserbase** cloud browser infrastructure. Browserbase provides a real C
 
 ## Why Browserbase (Not Local Chrome)
 
-Browserbase runs a real Chrome browser on their cloud infrastructure with residential IPs. This means:
+Browserbase provides cloud browsers on residential IPs. Key advantages:
 
-- **No anti-detection needed** — it's a real browser, not detectable as automation
-- **Residential IPs** — bypasses datacenter IP blocks (banking, government portals)
-- **No local Chrome** — ~250MB smaller container image
+- **No local Chrome binary** — smaller container, fewer system deps
+- **Residential IPs** — bypasses datacenter IP blocks (banking, government)
+- **No stealth plugins needed** — real browser fingerprint, not patched
 - **Live debug** — watch the browser in real time via debug URL
-- **Session replay** — review sessions at `browserbase.com/sessions/<id>`
+- **Session replay** — review any session at `browserbase.com/sessions/<id>`
 
-## Environment
+## Environment Variables
 
-The `BROWSERBASE_API_KEY` env var is injected into the container by the orchestrator. No configuration needed in the agent.
+The orchestrator injects these into agent containers:
+
+- `BROWSERBASE_API_KEY` — API key for Browserbase
+- `BROWSERBASE_PROJECT_ID` — Project ID for Browserbase
 
 ## Reference Sample
 
-See `references/sample-browserbase-navigation.mjs` for a complete working example with login, data extraction, and error handling.
+See `references/sample-browserbase-navigation.mjs` for a complete working example with session create, connect, navigate, and cleanup.
 
-## Launch Pattern
+## Connection Pattern
 
-Use `puppeteer-core` with `@browserbasehq/sdk` — connect to a Browserbase session via CDP.
-
-**Important: ESM compatibility.** Scripts must use `.mjs` extension and `createRequire()` with absolute paths to resolve the packages correctly:
+**Important: ESM compatibility.** Scripts must use `.mjs` extension and `createRequire()` with absolute paths:
 
 ```javascript
 import { createRequire } from "module";
@@ -58,24 +59,25 @@ const require = createRequire(import.meta.url);
 const puppeteerCore = require("/opt/openclaw/node_modules/puppeteer-core");
 const Browserbase = require("/opt/openclaw/node_modules/@browserbasehq/sdk").default;
 
-const bb = new Browserbase({
-  apiKey: process.env.BROWSERBASE_API_KEY
+// Initialize Browserbase client
+const bb = new Browserbase({ apiKey: process.env.BROWSERBASE_API_KEY });
+
+// Create a new browser session
+const session = await bb.sessions.create({
+  projectId: process.env.BROWSERBASE_PROJECT_ID
 });
 
-// Create session + get live debug URL
-const session = await bb.sessions.create();
-console.log("Session:", session.id);
-
+// Get live debug URL (watch the browser in real time)
 const debug = await bb.sessions.debug(session.id);
-console.log("Live debug:", debug.debuggerUrl);
+console.log("Live debug:", debug.debuggerFullscreenUrl);
 
-// Connect via CDP
+// Connect via CDP WebSocket
 const browser = await puppeteerCore.connect({
   browserWSEndpoint: session.connectUrl
 });
 
-const page = (await browser.pages())[0] || await browser.newPage();
-await page.setViewport({ width: 1440, height: 900 });
+const page = (await browser.pages())[0];
+// ... use page normally (goto, type, click, evaluate, etc.)
 ```
 
 **Why `createRequire` + absolute paths?** The packages live in `/opt/openclaw/node_modules/` but scripts run from `/tmp/` or `/root/`. ESM import resolution won't find them without the absolute path.
@@ -84,13 +86,11 @@ await page.setViewport({ width: 1440, height: 900 });
 
 ```javascript
 // For most pages — waits until network settles (best for SPAs)
-await page.goto("https://example.com", { waitUntil: "networkidle2", timeout: 45000 });
+await page.goto("https://example.com", { waitUntil: "networkidle2", timeout: 30000 });
 
 // For fast loads where you don't need all resources
-await page.goto("https://example.com", { waitUntil: "domcontentloaded", timeout: 45000 });
+await page.goto("https://example.com", { waitUntil: "domcontentloaded", timeout: 30000 });
 ```
-
-**Note:** Browserbase sessions may have slightly higher latency than local Chrome. Use generous timeouts (45s+) and longer waits between actions.
 
 ## Cookie Consent Banners
 
@@ -115,12 +115,14 @@ await new Promise(r => setTimeout(r, 2000));
 
 ## Typing Credentials
 
-Use `page.type()` with delay — it generates real keyboard events.
+Use `page.type()` with delay — it generates real keyboard events:
 
 ```javascript
-await page.type("input[name=username]", "user@example.com", { delay: 70 });
-await page.type("input[name=password]", "secret123", { delay: 70 });
+await page.type("input[name=username]", "user@example.com", { delay: 50 });
+await page.type("input[name=password]", "secret123", { delay: 50 });
 ```
+
+**Why delay matters:** Sites monitor input event timing. Instant input flags automation. 30-80ms delay mimics human typing.
 
 ## Form Submission
 
@@ -139,11 +141,11 @@ After submitting login forms, wait for navigation or a specific element:
 await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 15000 }).catch(() => {});
 
 // Or wait for a specific element
-await page.waitForSelector(".dashboard, .user-profile, .logout-button", { timeout: 15000 });
+await page.waitForSelector(".user-profile, .logout-button, .dashboard", { timeout: 15000 });
 
 // Or wait for URL pattern
 await page.waitForFunction(
-  () => window.location.href.includes("dashboard") || window.location.href.includes("account"),
+  () => window.location.href.includes("dashboard"),
   { timeout: 15000 }
 );
 ```
@@ -175,20 +177,22 @@ const puppeteerCore = require("/opt/openclaw/node_modules/puppeteer-core");
 const Browserbase = require("/opt/openclaw/node_modules/@browserbasehq/sdk").default;
 
 const bb = new Browserbase({ apiKey: process.env.BROWSERBASE_API_KEY });
-const session = await bb.sessions.create();
-console.log("Session:", session.id);
+const session = await bb.sessions.create({
+  projectId: process.env.BROWSERBASE_PROJECT_ID
+});
+
+const debug = await bb.sessions.debug(session.id);
+console.log("Live debug:", debug.debuggerFullscreenUrl);
 
 const browser = await puppeteerCore.connect({
   browserWSEndpoint: session.connectUrl
 });
 
-const page = (await browser.pages())[0] || await browser.newPage();
-await page.setViewport({ width: 1440, height: 900 });
+const page = (await browser.pages())[0];
 
 try {
   // 1. Navigate to login page
-  await page.goto("https://example.com/login", { waitUntil: "domcontentloaded", timeout: 45000 });
-  await new Promise(r => setTimeout(r, 5000));
+  await page.goto("https://example.com/login", { waitUntil: "networkidle2", timeout: 30000 });
 
   // 2. Handle cookie consent
   try {
@@ -201,17 +205,18 @@ try {
   } catch (e) { /* no consent banner */ }
 
   // 3. Type credentials with natural delay
-  await page.type("input[name=username]", "user@example.com", { delay: 70 });
-  await page.type("input[name=password]", "password123", { delay: 70 });
+  await page.type("input[name=username]", "user@example.com", { delay: 50 });
+  await page.type("input[name=password]", "password123", { delay: 50 });
 
   // 4. Submit and wait for auth
   await page.click("button[type=submit]");
-  await new Promise(r => setTimeout(r, 8000));
+  await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 15000 }).catch(() => {});
+  await new Promise(r => setTimeout(r, 3000));
 
   console.log("Logged in:", page.url());
 
   // 5. Navigate to target page
-  await page.goto("https://example.com/dashboard", { waitUntil: "networkidle2", timeout: 45000 });
+  await page.goto("https://example.com/dashboard", { waitUntil: "networkidle2", timeout: 30000 });
   await new Promise(r => setTimeout(r, 3000));
 
   // 6. Extract data
@@ -219,15 +224,29 @@ try {
   console.log(content);
 
 } finally {
-  await page.close();
   await browser.close();
   console.log(`Session replay: https://browserbase.com/sessions/${session.id}`);
 }
 ```
 
+## Debugging
+
+Browserbase provides two ways to inspect sessions:
+
+1. **Live debug** — watch the browser in real time:
+   ```javascript
+   const debug = await bb.sessions.debug(session.id);
+   console.log(debug.debuggerFullscreenUrl); // Opens in browser
+   ```
+
+2. **Session replay** — review after completion:
+   ```
+   https://browserbase.com/sessions/<session-id>
+   ```
+
 ## Running Scripts
 
-Write the script as an `.mjs` file (ES modules) and execute:
+Write the script as an `.mjs` file and execute:
 
 ```bash
 cat > /tmp/scrape.mjs << 'EOF'
@@ -243,24 +262,24 @@ node /tmp/scrape.mjs
 
 | Problem | Solution |
 |---------|----------|
-| `BROWSERBASE_API_KEY` not set | Check orchestrator config — the env var is injected automatically |
-| Session creation fails | Verify API key is valid at browserbase.com |
-| Timeout on page load | Use `domcontentloaded` instead of `networkidle0`; increase timeout to 45s+ |
-| Login form submits but nothing happens | Use `page.type()` with `delay: 70`, not `page.evaluate()` to set values |
+| `BROWSERBASE_API_KEY` not set | Check orchestrator config — env var must be injected into container |
+| Session creation fails | Verify API key and project ID are valid at browserbase.com |
+| WebSocket connection refused | Session may have expired — create a new one |
+| Login form submits but nothing happens | Use `page.type()` with `delay: 50`, not `page.evaluate()` to set values |
+| Timeout on page load | Switch from `networkidle0` to `networkidle2` or `domcontentloaded` |
 | Element click intercepted | Cookie consent overlay — dismiss it first (check iframes) |
 | "Navigation interrupted" | Page uses hash routing — use `waitForFunction` instead of `waitForNavigation` |
-| Slow page interactions | Browserbase has network latency; add `await new Promise(r => setTimeout(r, 3000))` between steps |
-| Need to debug visually | Use `bb.sessions.debug(session.id)` to get a live debug URL |
+| Session billed unexpectedly | Always close browser in `finally` block to end the session |
 
 ## Cleanup
 
-Always close the browser in a finally block:
+Always close the browser in a finally block to end the Browserbase session:
 
 ```javascript
 try {
   // ... automation
 } finally {
-  await page.close();
   await browser.close();
+  console.log(`Replay: https://browserbase.com/sessions/${session.id}`);
 }
 ```

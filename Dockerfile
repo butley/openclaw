@@ -173,33 +173,6 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $OPENCLAW_DOCKER_APT_PACKAGES; \
     fi
 
-# Optionally install Puppeteer + Stealth for anti-detection browser automation.
-# Build with: docker build --build-arg OPENCLAW_INSTALL_STEALTH_BROWSER=1 ...
-# Adds ~250MB (Chrome for Testing + npm packages).
-# Installs Chrome for Testing (Google's official automation channel) at /opt/chrome/
-# plus puppeteer-core, puppeteer-extra, and puppeteer-extra-plugin-stealth.
-# Passes WAFs (Imperva, Cloudflare, DataDome) that block vanilla headless Chrome.
-ARG OPENCLAW_INSTALL_STEALTH_BROWSER=""
-RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
-    if [ -n "$OPENCLAW_INSTALL_STEALTH_BROWSER" ]; then \
-      apt-get update && \
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        libglib2.0-0 libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
-        libcups2 libdrm2 libxkbcommon0 libatspi2.0-0 libx11-6 \
-        libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 \
-        libgbm1 libpango-1.0-0 libcairo2 libasound2 libxshmfence1 \
-        fonts-liberation wget unzip && \
-      CHROME_VERSION=$(wget -qO- "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_STABLE") && \
-      wget -q "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip" -O /tmp/chrome.zip && \
-      unzip -q /tmp/chrome.zip -d /opt/ && \
-      mv /opt/chrome-linux64 /opt/chrome && \
-      ln -sf /opt/chrome/chrome /usr/local/bin/chrome && \
-      rm /tmp/chrome.zip && \
-      cd /app && npm install --save puppeteer-core puppeteer-extra puppeteer-extra-plugin-stealth && \
-      chown -R node:node /app/node_modules; \
-    fi
-
 # Optionally install Docker CLI for sandbox container management.
 # Build with: docker build --build-arg OPENCLAW_INSTALL_DOCKER_CLI=1 ...
 # Adds ~50MB. Only the CLI is installed — no Docker daemon.
