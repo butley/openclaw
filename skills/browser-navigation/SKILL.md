@@ -270,22 +270,20 @@ See `references/sample-browserbase-navigation.mjs` for a complete working exampl
 | Local Chrome + Stealth | Most sites, SPAs, dashboards | F1 Fantasy, social media, SaaS |
 | Browserbase | Site blocks datacenter IPs | Chase, banking, government portals |
 
-**Quick pattern:**
+**Quick pattern (using `@browserbasehq/sdk`):**
 
 ```javascript
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const puppeteerCore = require("/opt/openclaw/node_modules/puppeteer-core");
+const Browserbase = require("/opt/openclaw/node_modules/@browserbasehq/sdk").default;
 
-// Create session via API
-const session = await fetch("https://api.browserbase.com/v1/sessions", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "x-bb-api-key": process.env.BROWSERBASE_API_KEY
-  },
-  body: JSON.stringify({ projectId: process.env.BROWSERBASE_PROJECT_ID })
-}).then(r => r.json());
+const bb = new Browserbase({ apiKey: process.env.BROWSERBASE_API_KEY });
+
+// Create session + get live debug URL
+const session = await bb.sessions.create();
+const debug = await bb.sessions.debug(session.id);
+console.log("Live debug:", debug.debuggerUrl);
 
 // Connect via CDP — no stealth needed
 const browser = await puppeteerCore.connect({
@@ -294,12 +292,17 @@ const browser = await puppeteerCore.connect({
 
 const page = (await browser.pages())[0];
 // ... same page.goto / page.type / page.evaluate as local Chrome
+
+// After done:
+console.log(`Replay: https://browserbase.com/sessions/${session.id}`);
 ```
 
 **Key differences from local Chrome:**
-- Use `puppeteer-core` directly (not `puppeteer-extra` — no stealth needed)
+- Use `puppeteer-core` + `@browserbasehq/sdk` (not `puppeteer-extra` — no stealth needed)
 - Connect via `browserWSEndpoint` instead of launching locally
 - No `--no-sandbox` or other Chrome flags needed
+- Live debug URL lets you watch the browser in real time
+- Session replay available at `browserbase.com/sessions/<id>`
 - Session is billed by Browserbase (check usage at browserbase.com)
 
 ## Troubleshooting

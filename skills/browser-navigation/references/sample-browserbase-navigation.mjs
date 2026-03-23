@@ -7,45 +7,37 @@
  * Browserbase provides a real browser on residential IPs — no stealth
  * plugin needed since it's not detectable as automation.
  *
- * Requires: BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID env vars
- * or hardcode them below.
+ * Requires: BROWSERBASE_API_KEY env var (or hardcode below)
  *
- * Usage: node /tmp/my-script.mjs
+ * Usage: BROWSERBASE_API_KEY=bb_live_xxx node /tmp/my-script.mjs
+ *
+ * Session replay available at:
+ *   https://browserbase.com/sessions/<session-id>
  */
 
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const puppeteerCore = require("/opt/openclaw/node_modules/puppeteer-core");
+const Browserbase = require("/opt/openclaw/node_modules/@browserbasehq/sdk").default;
 
-const BROWSERBASE_API_KEY = process.env.BROWSERBASE_API_KEY || "YOUR_KEY_HERE";
-const BROWSERBASE_PROJECT_ID = process.env.BROWSERBASE_PROJECT_ID || "YOUR_PROJECT_HERE";
+const bb = new Browserbase({
+  apiKey: process.env.BROWSERBASE_API_KEY || "YOUR_KEY_HERE"
+});
 
-// ── Create Browserbase session ──────────────────────────────
-async function createSession() {
-  const res = await fetch("https://api.browserbase.com/v1/sessions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-bb-api-key": BROWSERBASE_API_KEY
-    },
-    body: JSON.stringify({
-      projectId: BROWSERBASE_PROJECT_ID
-    })
-  });
-  if (!res.ok) throw new Error(`Browserbase API error: ${res.status} ${await res.text()}`);
-  return await res.json();
-}
+// ── Create session ──────────────────────────────────────────
+const session = await bb.sessions.create();
+console.log("Session:", session.id);
 
-const session = await createSession();
-console.log("Browserbase session:", session.id);
+// ── Live debug URL (open in browser to watch in real time) ──
+const debug = await bb.sessions.debug(session.id);
+console.log("Live debug:", debug.debuggerUrl);
 
-// ── Connect via CDP (no stealth needed — real browser) ──────
+// ── Connect via CDP ─────────────────────────────────────────
 const browser = await puppeteerCore.connect({
   browserWSEndpoint: session.connectUrl
 });
 
-const pages = await browser.pages();
-const page = pages[0] || await browser.newPage();
+const page = (await browser.pages())[0] || await browser.newPage();
 await page.setViewport({ width: 1440, height: 900 });
 
 try {
@@ -84,6 +76,7 @@ try {
 } catch (err) {
   console.error("Error:", err.message);
 } finally {
+  await page.close();
   await browser.close();
-  console.log("Done");
+  console.log(`Session replay: https://browserbase.com/sessions/${session.id}`);
 }
