@@ -56,13 +56,21 @@ If the path changes or you need to find it:
 find / -name "chrome" -type f 2>/dev/null | head -5
 ```
 
+## Reference Sample
+
+See `references/sample-stealth-navigation.mjs` for a complete working example with login, cookie consent, data extraction, and error handling.
+
 ## Launch Pattern
 
 Always use `puppeteer-extra` with the stealth plugin — never raw `puppeteer-core`.
 
+**Important: ESM compatibility.** Scripts must use `.mjs` extension and `createRequire()` with absolute paths to resolve the packages correctly:
+
 ```javascript
-import puppeteerExtra from "puppeteer-extra";
-import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const puppeteerExtra = require("/opt/openclaw/node_modules/puppeteer-extra");
+const StealthPlugin = require("/opt/openclaw/node_modules/puppeteer-extra-plugin-stealth");
 
 puppeteerExtra.use(StealthPlugin());
 
@@ -80,6 +88,8 @@ const browser = await puppeteerExtra.launch({
 const page = await browser.newPage();
 await page.setViewport({ width: 1920, height: 1080 });
 ```
+
+**Why `createRequire` + absolute paths?** The puppeteer packages live in `/opt/openclaw/node_modules/` but scripts run from `/tmp/` or `/root/`. ESM import resolution won't find them without the absolute path. This pattern is the reliable way to bridge ESM scripts with CJS packages in the container.
 
 **Why these flags:**
 - `--no-sandbox` — required when running as root in containers
@@ -179,8 +189,10 @@ await page.screenshot({ path: "/tmp/debug.png", fullPage: true });
 ## Complete Login + Navigate Example
 
 ```javascript
-import puppeteerExtra from "puppeteer-extra";
-import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const puppeteerExtra = require("/opt/openclaw/node_modules/puppeteer-extra");
+const StealthPlugin = require("/opt/openclaw/node_modules/puppeteer-extra-plugin-stealth");
 
 puppeteerExtra.use(StealthPlugin());
 
