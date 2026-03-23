@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events"; // [FORK-PATCH-31]
 import {
   ADMIN_SCOPE,
   APPROVALS_SCOPE,
@@ -8,6 +9,22 @@ import {
 import { MAX_BUFFERED_BYTES } from "./server-constants.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 import { logWs, shouldLogWs, summarizeAgentEventForWsLog } from "./ws-log.js";
+
+// [FORK-PATCH-31] SSE EventBus Singleton — globalThis-backed event bus survives bundler chunk duplication.
+const GATEWAY_EVENT_BUS_KEY = "__openclaw_gatewayEventBus__";
+
+function getGatewayEventBus() {
+  const globalState = globalThis as typeof globalThis & {
+    [GATEWAY_EVENT_BUS_KEY]?: EventEmitter;
+  };
+  if (!globalState[GATEWAY_EVENT_BUS_KEY]) {
+    globalState[GATEWAY_EVENT_BUS_KEY] = new EventEmitter();
+    globalState[GATEWAY_EVENT_BUS_KEY].setMaxListeners(100);
+  }
+  return globalState[GATEWAY_EVENT_BUS_KEY];
+}
+
+export const gatewayEventBus = getGatewayEventBus();
 
 const EVENT_SCOPE_GUARDS: Record<string, string[]> = {
   "exec.approval.requested": [APPROVALS_SCOPE],
@@ -126,8 +143,10 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
     }
   };
 
-  const broadcast: GatewayBroadcastFn = (event, payload, opts) =>
+  const broadcast: GatewayBroadcastFn = (event, payload, opts) => {
+    gatewayEventBus.emit(event, payload); // [FORK-PATCH-31] SSE listeners
     broadcastInternal(event, payload, opts);
+  };
 
   const broadcastToConnIds: GatewayBroadcastToConnIdsFn = (event, payload, connIds, opts) => {
     if (connIds.size === 0) {

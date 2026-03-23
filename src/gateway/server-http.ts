@@ -59,6 +59,7 @@ import { resolveRequestClientIp } from "./net.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
 import { handleOpenResponsesHttpRequest } from "./openresponses-http.js";
 import { DEDUPE_MAX, DEDUPE_TTL_MS } from "./server-constants.js";
+import { handleSseStream } from "./server-sse.js"; // [FORK-PATCH-18]
 import {
   authorizeCanvasRequest,
   enforcePluginRouteGatewayAuth,
@@ -809,6 +810,10 @@ export function createGatewayHttpServer(opts: {
         : null;
       const requestStages: GatewayHttpRequestStage[] = [
         {
+          name: "sse-stream", // [FORK-PATCH-18]
+          run: () => handleSseStream(req, res),
+        },
+        {
           name: "hooks",
           run: () => handleHooksRequest(req, res),
         },
@@ -963,13 +968,21 @@ export function createGatewayHttpServer(opts: {
         return;
       }
 
-      res.statusCode = 404;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("Not Found");
+      if (!res.headersSent) {
+        res.statusCode = 404;
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end("Not Found");
+      } else if (!res.writableEnded) {
+        res.end();
+      }
     } catch {
-      res.statusCode = 500;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("Internal Server Error");
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end("Internal Server Error");
+      } else if (!res.writableEnded) {
+        res.end();
+      }
     }
   }
 

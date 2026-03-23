@@ -130,6 +130,7 @@ export const palette = lightMode ? lightPalette : darkPalette;
 
 const fg = (hex: string) => (text: string) => chalk.hex(hex)(text);
 const bg = (hex: string) => (text: string) => chalk.bgHex(hex)(text);
+const bgAnsi = (code: number) => (text: string) => chalk.bgAnsi256(code)(text);
 
 const syntaxTheme = createSyntaxTheme(fg(palette.code), lightMode);
 
@@ -169,7 +170,8 @@ export const theme = {
   toolTitle: fg(palette.toolTitle),
   toolOutput: fg(palette.toolOutput),
   toolPendingBg: bg(palette.toolPendingBg),
-  toolSuccessBg: bg(palette.toolSuccessBg),
+  // [FORK-PATCH-7] TUI Dark Theme — keep success blocks on ansi 236 for darker contrast.
+  toolSuccessBg: bgAnsi(236),
   toolErrorBg: bg(palette.toolErrorBg),
   border: fg(palette.border),
   bold: (text: string) => chalk.bold(text),
