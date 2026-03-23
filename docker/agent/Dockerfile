@@ -156,10 +156,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm /tmp/chrome.zip \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
-# Install puppeteer packages into /opt/openclaw/node_modules (already in NODE_PATH)
-# so scripts running from any working directory can resolve them.
-RUN cd /opt/openclaw && npm install --save puppeteer-core puppeteer-extra puppeteer-extra-plugin-stealth
-
 WORKDIR /opt/openclaw
 
 # Copy only what's needed for runtime:
@@ -175,6 +171,10 @@ COPY --from=builder /opt/openclaw/pnpm-workspace.yaml ./pnpm-workspace.yaml
 
 # 4. Production node_modules (native bindings, non-bundled deps)
 COPY --from=builder /opt/openclaw/node_modules ./node_modules
+
+# 5. Install puppeteer packages into app node_modules (after COPY so dir exists)
+# Must be here — not earlier — because /opt/openclaw doesn't exist until WORKDIR + COPY.
+RUN npm install --save puppeteer-core puppeteer-extra puppeteer-extra-plugin-stealth
 
 # 5. Runtime assets (assets excluded - images ignored by .dockerignore)
 COPY --from=builder /opt/openclaw/extensions ./extensions
