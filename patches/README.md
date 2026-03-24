@@ -38,7 +38,7 @@ Last updated: 2026-03-24 (post-hardening audit).
 | # | Name | Type | Files | Verify |
 |---|------|------|-------|--------|
 | P2 | Brazil JID Resolution | Own file + send hook | `brazil-jid-resolver.ts`, `send.ts` | `grep -q 'resolveJidWithBrazil' extensions/whatsapp/src/send.ts` |
-| P4 | Chat Mirror | **Extracted** → own file | `chat-mirror.ts`, `server-chat.ts` | `test -f src/gateway/chat-mirror.ts` |
+| P4 | [Chat Mirror](chat-mirror/README.md) | **Bulletproof** — own registry + callback | `chat-mirror.ts`, `server-chat.ts`, `chat.ts` | `grep -q 'MIRROR_REGISTRY_KEY' src/gateway/chat-mirror.ts` |
 | P5 | WS Inbound Push | Own file + additive | `inbound-events.ts`, `agent-events.ts` | `test -f src/infra/inbound-events.ts` |
 | P7 | TUI Dark Theme | 1-line change | `theme.ts` | `grep -q '236' src/tui/theme/theme.ts` |
 | P8 | Status Card | **Extracted** → own file | `status-card-format.ts`, `status.ts` | `test -f src/auto-reply/status-card-format.ts` |
@@ -112,7 +112,8 @@ Post-rebase audit identified 5 fragile/band-aid patches and fixed all of them:
 | Commit | What |
 |--------|------|
 | `c53690954c` | P15: split reasoning guards — emitAgentEvent independent of channel callback |
-| `f576eefa8d` | P4: extract to `chat-mirror.ts`, P8: extract to `status-card-format.ts`, P17: named constant |
+| `f576eefa8d` | P8: extract to `status-card-format.ts`, P17: named constant |
+| `8079dc3798` | P4: bulletproof mirror — own registry, `onFinalText` callback, schema-free extraction. [Full docs](chat-mirror/README.md) |
 | `046b03c80b` | P16: session-scoped broadcast via `sessionMessageSubscribers` |
 
 Before hardening: 6 patches rated fragile/band-aid. After: 0.
