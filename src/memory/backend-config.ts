@@ -67,6 +67,8 @@ export type ResolvedQmdConfig = {
   limits: ResolvedQmdLimitsConfig;
   includeDefaultMemory: boolean;
   scope?: SessionSendPolicyConfig;
+  /** [FORK-PATCH-9] Optional max output chars override. */
+  maxOutputChars?: number;
 };
 
 const DEFAULT_BACKEND: MemoryBackend = "builtin";

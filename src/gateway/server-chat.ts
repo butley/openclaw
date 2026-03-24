@@ -1,9 +1,12 @@
 import { DEFAULT_HEARTBEAT_ACK_MAX_CHARS, stripHeartbeatToken } from "../auto-reply/heartbeat.js";
 import { normalizeVerboseLevel } from "../auto-reply/thinking.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
+// [FORK-PATCH-4] Chat Mirror — static import for WA delivery.
+import { sendMessageWhatsApp } from "../channel-web.js";
 import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
 import {
   deriveGatewaySessionLifecycleSnapshot,
@@ -11,6 +14,9 @@ import {
 } from "./session-lifecycle-state.js";
 import { loadGatewaySessionRow, loadSessionEntry } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
+
+const log = createSubsystemLogger("gateway/server-chat");
+const reasoningDebugEnabled = process.env.OPENCLAW_DEBUG_REASONING === "1";
 
 function resolveHeartbeatAckMaxChars(): number {
   try {
@@ -463,6 +469,14 @@ export function createAgentEventHandler({
   toolEventRecipients,
   sessionEventSubscribers,
 }: AgentEventHandlerOptions) {
+  // [FORK-PATCH-32] SSE Retryable Error Suppression — retryable provider errors (429, overload)
+  // don't finalize chat runs. Keeps SSE stream open during gateway retries/failover so text
+  // flows normally when retry succeeds. Without this, first 429 kills the stream permanently.
+  const RETRYABLE_LIFECYCLE_ERROR_RE =
+    /\b(?:429|rate\s*limit(?:ed)?|too\s*many\s*requests|temporarily\s*overloaded|overloaded)\b/i;
+
+  const _broadcastToConnIds = broadcastToConnIds;
+
   const buildSessionEventSnapshot = (sessionKey: string, evt?: AgentEventPayload) => {
     const row = loadGatewaySessionRow(sessionKey);
     const lifecyclePatch = evt
@@ -531,7 +545,8 @@ export function createAgentEventHandler({
     }
     const now = Date.now();
     const last = chatRunState.deltaSentAt.get(clientRunId) ?? 0;
-    if (now - last < 150) {
+    // [FORK-PATCH-17] Streaming Throttle — 50ms throttle for smoother UI updates.
+    if (now - last < 50) {
       return;
     }
     chatRunState.deltaSentAt.set(clientRunId, now);
@@ -685,7 +700,6 @@ export function createAgentEventHandler({
     const chatLink = chatRunState.registry.peek(evt.runId);
     const eventSessionKey =
       typeof evt.sessionKey === "string" && evt.sessionKey.trim() ? evt.sessionKey : undefined;
-    const isControlUiVisible = getAgentRunContext(evt.runId)?.isControlUiVisible ?? true;
     const sessionKey =
       chatLink?.sessionKey ?? eventSessionKey ?? resolveSessionKeyForRun(evt.runId);
     const clientRunId = chatLink?.clientRunId ?? evt.runId;
@@ -728,8 +742,16 @@ export function createAgentEventHandler({
       const toolPhase = typeof evt.data?.phase === "string" ? evt.data.phase : "";
       // Flush pending assistant text before tool-start events so clients can
       // render complete pre-tool text above tool cards (not truncated by delta throttle).
-      if (toolPhase === "start" && isControlUiVisible && sessionKey && !isAborted) {
+      if (toolPhase === "start" && sessionKey && !isAborted) {
         flushBufferedChatDeltaIfNeeded(sessionKey, clientRunId, evt.runId, evt.seq);
+        // [FORK-PATCH-16] Reset accumulated text buffer after tool-start so the
+        // next assistant turn starts fresh. The Pi SDK resets its own
+        // lastStreamedAssistantCleaned between tool calls, so the gateway
+        // buffer must match — otherwise mergedText accumulates text from ALL
+        // prior turns and the SSE subscriber (which resets lastTextLen=0 on
+        // tool-start) re-emits the entire conversation prefix.
+        chatRunState.buffers.delete(clientRunId);
+        chatRunState.deltaLastBroadcastLen.delete(clientRunId);
       }
       // Always broadcast tool events to registered WS recipients with
       // tool-events capability, regardless of verboseLevel. The verbose
@@ -737,7 +759,7 @@ export function createAgentEventHandler({
       // messages to messaging surfaces (Telegram, Discord, etc.).
       const recipients = toolEventRecipients.get(evt.runId);
       if (recipients && recipients.size > 0) {
-        broadcastToConnIds("agent", toolPayload, recipients);
+        _broadcastToConnIds("agent", toolPayload, recipients);
       }
       // Session subscribers power operator UIs that attach to an existing
       // in-flight session after the run has already started. Those clients do
@@ -747,17 +769,36 @@ export function createAgentEventHandler({
       if (sessionKey) {
         const sessionSubscribers = sessionEventSubscribers.getAll();
         if (sessionSubscribers.size > 0) {
-          broadcastToConnIds("session.tool", toolPayload, sessionSubscribers, { dropIfSlow: true });
+          _broadcastToConnIds("session.tool", toolPayload, sessionSubscribers, {
+            dropIfSlow: true,
+          });
         }
       }
+      // [FORK-PATCH-16] Tool Events Broadcast — also broadcast to all connected WS/SSE clients.
+      broadcast("agent", toolPayload, { dropIfSlow: true });
     } else {
       broadcast("agent", agentPayload);
+      if (reasoningDebugEnabled && evt.stream === "thinking") {
+        const rawDeltaLen =
+          typeof evt.data?.rawDelta === "string"
+            ? evt.data.rawDelta.length
+            : typeof evt.data?.delta === "string"
+              ? evt.data.delta.length
+              : 0;
+        log.info(
+          `[reasoning:gateway] runId=${evt.runId} clientRunId=${clientRunId} sessionKey=${sessionKey ?? "NONE"} visible=${String(getAgentRunContext(evt.runId)?.isControlUiVisible ?? true)} rawDeltaLen=${rawDeltaLen}`,
+        );
+      }
     }
 
     const lifecyclePhase =
       evt.stream === "lifecycle" && typeof evt.data?.phase === "string" ? evt.data.phase : null;
+    const lifecycleErrorText =
+      lifecyclePhase === "error" && typeof evt.data?.error === "string" ? evt.data.error : "";
+    const isRetryableLifecycleError =
+      lifecyclePhase === "error" && RETRYABLE_LIFECYCLE_ERROR_RE.test(lifecycleErrorText);
 
-    if (isControlUiVisible && sessionKey) {
+    if (sessionKey) {
       // Send tool events to node/channel subscribers only when verbose is enabled;
       // WS clients already received the event above via broadcastToConnIds.
       if (!isToolEvent || toolVerbose !== "off") {
@@ -765,7 +806,10 @@ export function createAgentEventHandler({
       }
       if (!isAborted && evt.stream === "assistant" && typeof evt.data?.text === "string") {
         emitChatDelta(sessionKey, clientRunId, evt.runId, evt.seq, evt.data.text, evt.data.delta);
-      } else if (!isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
+      } else if (
+        !isAborted &&
+        (lifecyclePhase === "end" || (lifecyclePhase === "error" && !isRetryableLifecycleError))
+      ) {
         const evtStopReason =
           typeof evt.data?.stopReason === "string" ? evt.data.stopReason : undefined;
         if (chatLink) {
@@ -783,6 +827,27 @@ export function createAgentEventHandler({
             evt.data?.error,
             evtStopReason,
           );
+          // [FORK-PATCH-4] Chat Mirror — re-deliver final reply to the session's
+          // original channel (e.g. WhatsApp) when the run was initiated from webchat.
+          const { text } = resolveBufferedChatTextState(finished.clientRunId, evt.runId);
+          const runContext = getAgentRunContext(evt.runId);
+          if (runContext?.mirror && text) {
+            try {
+              const keyParts = finished.sessionKey.split(":").filter(Boolean);
+              // Format: agent:{agentId}:{channel}:{peerKind}:{peerId}
+              if (keyParts.length >= 5 && keyParts[0] === "agent") {
+                const channel = keyParts[2];
+                const peerId = keyParts.slice(4).join(":");
+                if (channel === "whatsapp" && peerId) {
+                  sendMessageWhatsApp(peerId, text, { verbose: false })
+                    .then(() => console.log(`[mirror] sent to ${channel}:${peerId}`))
+                    .catch((err: unknown) => console.warn(`[mirror] failed: ${String(err)}`));
+                }
+              }
+            } catch (mirrorErr) {
+              console.warn(`[mirror] error: ${String(mirrorErr)}`);
+            }
+          }
         } else {
           emitChatFinal(
             sessionKey,
@@ -793,6 +858,27 @@ export function createAgentEventHandler({
             evt.data?.error,
             evtStopReason,
           );
+          // [FORK-PATCH-4] Chat Mirror — re-deliver final reply to the session's
+          // original channel (e.g. WhatsApp) when the run was initiated from webchat.
+          const { text } = resolveBufferedChatTextState(eventRunId, evt.runId);
+          const runContext = getAgentRunContext(evt.runId);
+          if (runContext?.mirror && text) {
+            try {
+              const keyParts = sessionKey.split(":").filter(Boolean);
+              // Format: agent:{agentId}:{channel}:{peerKind}:{peerId}
+              if (keyParts.length >= 5 && keyParts[0] === "agent") {
+                const channel = keyParts[2];
+                const peerId = keyParts.slice(4).join(":");
+                if (channel === "whatsapp" && peerId) {
+                  sendMessageWhatsApp(peerId, text, { verbose: false })
+                    .then(() => console.log(`[mirror] sent to ${channel}:${peerId}`))
+                    .catch((err: unknown) => console.warn(`[mirror] failed: ${String(err)}`));
+                }
+              }
+            } catch (mirrorErr) {
+              console.warn(`[mirror] error: ${String(mirrorErr)}`);
+            }
+          }
         }
       } else if (isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
         chatRunState.abortedRuns.delete(clientRunId);
@@ -805,7 +891,7 @@ export function createAgentEventHandler({
       }
     }
 
-    if (lifecyclePhase === "end" || lifecyclePhase === "error") {
+    if (lifecyclePhase === "end" || (lifecyclePhase === "error" && !isRetryableLifecycleError)) {
       toolEventRecipients.markFinal(evt.runId);
       clearAgentRunContext(evt.runId);
       agentRunSeq.delete(evt.runId);
@@ -819,7 +905,7 @@ export function createAgentEventHandler({
       void persistGatewaySessionLifecycleEvent({ sessionKey, event: evt }).catch(() => undefined);
       const sessionEventConnIds = sessionEventSubscribers.getAll();
       if (sessionEventConnIds.size > 0) {
-        broadcastToConnIds(
+        _broadcastToConnIds(
           "sessions.changed",
           {
             sessionKey,

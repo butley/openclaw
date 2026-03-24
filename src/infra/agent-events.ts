@@ -20,6 +20,8 @@ export type AgentRunContext = {
   isHeartbeat?: boolean;
   /** Whether control UI clients should receive chat/agent updates for this run. */
   isControlUiVisible?: boolean;
+  /** [FORK-PATCH-4] Whether to mirror final reply back to the session's original channel. */
+  mirror?: boolean;
 };
 
 type AgentEventState = {

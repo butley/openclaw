@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { listChannelAgentTools } from "../agents/channel-tools.js";
 import { createOpenClawTools } from "../agents/openclaw-tools.js";
 import { runBeforeToolCallHook } from "../agents/pi-tools.before-tool-call.js";
 import { resolveToolLoopDetectionConfig } from "../agents/pi-tools.js";
@@ -247,28 +248,31 @@ export async function handleToolsInvokeHttpRequest(
     ? resolveSubagentToolPolicy(cfg)
     : undefined;
 
-  // Build tool list (core + plugin tools).
-  const allTools = createOpenClawTools({
-    agentSessionKey: sessionKey,
-    agentChannel: messageChannel ?? undefined,
-    agentAccountId: accountId,
-    agentTo,
-    agentThreadId,
-    allowGatewaySubagentBinding: true,
-    // HTTP callers consume tool output directly; preserve raw media invoke payloads.
-    allowMediaInvokeCommands: true,
-    config: cfg,
-    pluginToolAllowlist: collectExplicitAllowlist([
-      profilePolicy,
-      providerProfilePolicy,
-      globalPolicy,
-      globalProviderPolicy,
-      agentPolicy,
-      agentProviderPolicy,
-      groupPolicy,
-      subagentPolicy,
-    ]),
-  });
+  // [FORK-PATCH-25] HTTP Tools Channel Registration — include channel plugin tools in HTTP invoke path.
+  const allTools = [
+    ...listChannelAgentTools({ cfg }),
+    ...createOpenClawTools({
+      agentSessionKey: sessionKey,
+      agentChannel: messageChannel ?? undefined,
+      agentAccountId: accountId,
+      agentTo,
+      agentThreadId,
+      allowGatewaySubagentBinding: true,
+      // HTTP callers consume tool output directly; preserve raw media invoke payloads.
+      allowMediaInvokeCommands: true,
+      config: cfg,
+      pluginToolAllowlist: collectExplicitAllowlist([
+        profilePolicy,
+        providerProfilePolicy,
+        globalPolicy,
+        globalProviderPolicy,
+        agentPolicy,
+        agentProviderPolicy,
+        groupPolicy,
+        subagentPolicy,
+      ]),
+    }),
+  ];
 
   const subagentFiltered = applyToolPolicyPipeline({
     // oxlint-disable-next-line typescript/no-explicit-any
