@@ -460,6 +460,8 @@ export type AgentEventHandlerOptions = {
   clearAgentRunContext: (runId: string) => void;
   toolEventRecipients: ToolEventRecipientRegistry;
   sessionEventSubscribers: SessionEventSubscriberRegistry;
+  // [FORK-PATCH-16] Session-scoped message subscribers for tool event broadcast.
+  sessionMessageSubscribers: SessionMessageSubscriberRegistry;
 };
 
 export function createAgentEventHandler({
@@ -472,6 +474,7 @@ export function createAgentEventHandler({
   clearAgentRunContext,
   toolEventRecipients,
   sessionEventSubscribers,
+  sessionMessageSubscribers,
 }: AgentEventHandlerOptions) {
   // [FORK-PATCH-32] SSE Retryable Error Suppression — retryable provider errors (429, overload)
   // don't finalize chat runs. Keeps SSE stream open during gateway retries/failover so text
@@ -778,10 +781,20 @@ export function createAgentEventHandler({
           });
         }
       }
-      // [FORK-PATCH-16] Tool Events Broadcast — upstream only sends to run-scoped recipients
-      // and session subscribers. This broadcast ensures ALL connected WS/SSE clients (including
-      // webchat clients that connected after run start) receive tool lifecycle events.
-      broadcast("agent", toolPayload, { dropIfSlow: true });
+      // [FORK-PATCH-16] Tool Events Broadcast — session-scoped.
+      // Upstream sends to run-scoped recipients + global session subscribers only.
+      // Webchat clients that opened after the run started aren't in either set, but
+      // they ARE in sessionMessageSubscribers (via sessions.messages.subscribe).
+      // Broadcast to those connIds so they get live tool cards without leaking
+      // tool events across sessions.
+      if (sessionKey) {
+        const msgSubscribers = sessionMessageSubscribers.get(sessionKey);
+        if (msgSubscribers.size > 0) {
+          _broadcastToConnIds("agent", toolPayload, msgSubscribers, {
+            dropIfSlow: true,
+          });
+        }
+      }
     } else {
       broadcast("agent", agentPayload);
       if (reasoningDebugEnabled && evt.stream === "thinking") {
