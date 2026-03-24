@@ -47,7 +47,10 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     reasoningMode,
     includeReasoning: reasoningMode === "on",
     shouldEmitPartialReplies: !(reasoningMode === "on" && !params.onBlockReply),
-    streamReasoning: reasoningMode === "stream" && typeof params.onReasoningStream === "function",
+    // [FORK-PATCH-15] Webchat Thinking Stream — always stream reasoning for WS/SSE consumers.
+    // Without this, emitReasoningStream() early-returns and thinking deltas never reach
+    // broadcast("agent", ...) in server-chat.ts, breaking real-time thinking in webchat/SSE.
+    streamReasoning: true,
     deltaBuffer: "",
     blockBuffer: "",
     // Track if a streamed chunk opened a <think> block (stateful across chunks).
