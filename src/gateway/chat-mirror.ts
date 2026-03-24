@@ -18,6 +18,7 @@ export function maybeMirrorToChannel(params: {
     return;
   }
   const runContext = getAgentRunContext(runId);
+  log.info(`[mirror-check] runId=${runId} sessionKey=${sessionKey} textLen=${text.length} mirror=${runContext?.mirror} hasContext=${!!runContext}`);
   if (!runContext?.mirror) {
     return;
   }

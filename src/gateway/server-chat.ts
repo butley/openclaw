@@ -668,6 +668,11 @@ export function createAgentEventHandler({
       };
       broadcast("chat", payload);
       nodeSendToSession(sessionKey, "chat", payload);
+      // [FORK-PATCH-4] Chat Mirror — must run here BEFORE buffer is gone.
+      // text was captured above before buffers.delete().
+      if (text && !shouldSuppressSilent) {
+        maybeMirrorToChannel({ sessionKey, runId: sourceRunId, text });
+      }
       return;
     }
     const payload = {
@@ -846,9 +851,6 @@ export function createAgentEventHandler({
             evt.data?.error,
             evtStopReason,
           );
-          // [FORK-PATCH-4] Chat Mirror
-          const { text } = resolveBufferedChatTextState(finished.clientRunId, evt.runId);
-          maybeMirrorToChannel({ sessionKey: finished.sessionKey, runId: evt.runId, text });
         } else {
           emitChatFinal(
             sessionKey,
@@ -859,9 +861,6 @@ export function createAgentEventHandler({
             evt.data?.error,
             evtStopReason,
           );
-          // [FORK-PATCH-4] Chat Mirror
-          const { text } = resolveBufferedChatTextState(eventRunId, evt.runId);
-          maybeMirrorToChannel({ sessionKey, runId: evt.runId, text });
         }
       } else if (isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
         chatRunState.abortedRuns.delete(clientRunId);

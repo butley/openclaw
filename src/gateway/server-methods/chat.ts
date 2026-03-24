@@ -1694,10 +1694,8 @@ export const chatHandlers: GatewayRequestHandlers = {
           images: parsedImages.length > 0 ? parsedImages : undefined,
           onAgentRunStart: (runId) => {
             agentRunStarted = true;
-            // [FORK-PATCH-4] Chat Mirror — propagate mirror flag to run context
-            if (p.mirror !== undefined) {
-              registerAgentRunContext(runId, { mirror: p.mirror });
-            }
+            // [FORK-PATCH-4] Chat Mirror — default true for webchat, respect explicit override
+            registerAgentRunContext(runId, { mirror: p.mirror ?? true });
             void emitUserTranscriptUpdate();
             const connId = typeof client?.connId === "string" ? client.connId : undefined;
             const wantsToolEvents = hasGatewayClientCap(
