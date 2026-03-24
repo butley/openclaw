@@ -36,6 +36,8 @@ export async function deliverWebReply(params: {
   maxMediaBytes: number;
   textLimit: number;
   chunkMode?: ChunkMode;
+  // [FORK-PATCH-11] WA Paragraph Streaming — configurable per-paragraph typing delay.
+  streamDelayMs?: (charCount: number) => number;
   replyLogger: {
     info: (obj: unknown, msg: string) => void;
     warn: (obj: unknown, msg: string) => void;
@@ -85,6 +87,21 @@ export async function deliverWebReply(params: {
   if (mediaList.length === 0 && textChunks.length) {
     const totalChunks = textChunks.length;
     for (const [index, chunk] of textChunks.entries()) {
+      if (index > 0 && params.streamDelayMs) {
+        const delayMs = params.streamDelayMs(textChunks[index - 1].length);
+        if (delayMs > 0) {
+          await msg.sendComposing?.();
+          let elapsed = 0;
+          while (elapsed < delayMs) {
+            const step = Math.min(3000, delayMs - elapsed);
+            await sleep(step);
+            elapsed += step;
+            if (elapsed < delayMs) {
+              await msg.sendComposing?.();
+            }
+          }
+        }
+      }
       const chunkStarted = Date.now();
       await sendWithRetry(() => msg.reply(chunk), "text");
       if (!skipLog) {

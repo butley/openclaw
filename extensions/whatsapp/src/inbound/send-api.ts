@@ -1,7 +1,10 @@
 import type { AnyMessageContent, WAPresence } from "@whiskeysockets/baileys";
 import { recordChannelActivity } from "openclaw/plugin-sdk/infra-runtime";
 import { toWhatsappJid } from "openclaw/plugin-sdk/text-runtime";
+import { normalizeE164 } from "openclaw/plugin-sdk/whatsapp-core";
 import type { ActiveWebSendOptions } from "../active-listener.js";
+import { resolveBrazilianJid } from "./brazil-jid-resolver.js";
+import { getContactPhone, readLidForPhone } from "./contact-names.js";
 
 function recordWhatsAppOutbound(accountId: string) {
   recordChannelActivity({
@@ -17,13 +20,88 @@ function resolveOutboundMessageId(result: unknown): string {
     : "unknown";
 }
 
+// [FORK-PATCH-14] WA Outbound Mentions — convert outbound @mentions into WhatsApp mentions.
+export function processOutboundMentions(text: string): { text: string; mentions: string[] } {
+  const mentions: string[] = [];
+  let result = text;
+
+  const addMention = (digits: string) => {
+    const lidJid = readLidForPhone(digits);
+    const jid = lidJid ?? `${digits}@s.whatsapp.net`;
+    if (!mentions.includes(jid)) {
+      mentions.push(jid);
+    }
+  };
+
+  const phonePattern = /@(\+?\d{10,15})\b/g;
+  const phoneMatches: Array<{ full: string; digits: string }> = [];
+  let match: RegExpExecArray | null;
+  while ((match = phonePattern.exec(text)) !== null) {
+    const raw = match[1];
+    const digits = raw.replace(/^\+/, "");
+    normalizeE164(raw);
+    phoneMatches.push({ full: match[0], digits });
+    addMention(digits);
+  }
+  for (const item of phoneMatches) {
+    const lidJid = readLidForPhone(item.digits);
+    if (lidJid) {
+      const lidNum = lidJid.replace(/@.*/, "");
+      result = result.replace(item.full, `@${lidNum}`);
+    }
+  }
+
+  const namePattern =
+    /@([A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u00FF][A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u00FF0-9_ ]{0,30})\b/g;
+  const nameMatches: Array<{ full: string; name: string }> = [];
+  while ((match = namePattern.exec(result)) !== null) {
+    const name = match[1].trim();
+    if (name) {
+      nameMatches.push({ full: match[0], name });
+    }
+  }
+  for (const item of nameMatches) {
+    const phone = getContactPhone(item.name);
+    if (phone) {
+      const digits = phone.replace(/^\+/, "");
+      const lidJid = readLidForPhone(digits);
+      if (lidJid) {
+        const lidNum = lidJid.replace(/@.*/, "");
+        result = result.replace(item.full, `@${lidNum}`);
+        addMention(digits);
+      } else {
+        addMention(digits);
+      }
+    }
+  }
+
+  return { text: result, mentions };
+}
+
 export function createWebSendApi(params: {
   sock: {
     sendMessage: (jid: string, content: AnyMessageContent) => Promise<unknown>;
     sendPresenceUpdate: (presence: WAPresence, jid?: string) => Promise<unknown>;
+    onWhatsApp?: (jid: string) => Promise<Array<{ exists?: boolean; jid?: string }>>;
   };
   defaultAccountId: string;
 }) {
+  const resolveJid = async (to: string): Promise<string> => {
+    const jid = toWhatsappJid(to);
+    if (!params.sock.onWhatsApp) {
+      return jid;
+    }
+    try {
+      return await resolveBrazilianJid({ onWhatsApp: params.sock.onWhatsApp }, jid);
+    } catch (err) {
+      console.warn(
+        "[send-api] Brazil JID resolution failed, using original:",
+        err instanceof Error ? err.message : err,
+      );
+      return jid;
+    }
+  };
+
   return {
     sendMessage: async (
       to: string,
@@ -32,7 +110,7 @@ export function createWebSendApi(params: {
       mediaType?: string,
       sendOptions?: ActiveWebSendOptions,
     ): Promise<{ messageId: string }> => {
-      const jid = toWhatsappJid(to);
+      const jid = await resolveJid(to);
       let payload: AnyMessageContent;
       if (mediaBuffer && mediaType) {
         if (mediaType.startsWith("image/")) {
@@ -61,7 +139,12 @@ export function createWebSendApi(params: {
           };
         }
       } else {
-        payload = { text };
+        // [FORK-PATCH-14] WA Outbound Mentions
+        const processed = processOutboundMentions(text);
+        payload =
+          processed.mentions.length > 0
+            ? { text: processed.text, mentions: processed.mentions }
+            : { text };
       }
       const result = await params.sock.sendMessage(jid, payload);
       const accountId = sendOptions?.accountId ?? params.defaultAccountId;
@@ -73,7 +156,7 @@ export function createWebSendApi(params: {
       to: string,
       poll: { question: string; options: string[]; maxSelections?: number },
     ): Promise<{ messageId: string }> => {
-      const jid = toWhatsappJid(to);
+      const jid = await resolveJid(to);
       const result = await params.sock.sendMessage(jid, {
         poll: {
           name: poll.question,
@@ -92,7 +175,7 @@ export function createWebSendApi(params: {
       fromMe: boolean,
       participant?: string,
     ): Promise<void> => {
-      const jid = toWhatsappJid(chatJid);
+      const jid = await resolveJid(chatJid);
       await params.sock.sendMessage(jid, {
         react: {
           text: emoji,
@@ -106,7 +189,7 @@ export function createWebSendApi(params: {
       } as AnyMessageContent);
     },
     sendComposingTo: async (to: string): Promise<void> => {
-      const jid = toWhatsappJid(to);
+      const jid = await resolveJid(to);
       await params.sock.sendPresenceUpdate("composing", jid);
     },
   } as const;

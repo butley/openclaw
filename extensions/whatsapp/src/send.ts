@@ -10,9 +10,33 @@ import { markdownToWhatsApp } from "openclaw/plugin-sdk/text-runtime";
 import { toWhatsappJid } from "openclaw/plugin-sdk/text-runtime";
 import { resolveWhatsAppAccount, resolveWhatsAppMediaMaxBytes } from "./accounts.js";
 import { type ActiveWebSendOptions, requireActiveWebListener } from "./active-listener.js";
+import { resolveBrazilianJid } from "./inbound/brazil-jid-resolver.js";
 import { loadWebMedia } from "./media.js";
 
 const outboundLog = createSubsystemLogger("gateway/channels/whatsapp").child("outbound");
+
+// [FORK-PATCH-2] Brazil JID Resolution — resolve +55 numbers with/without 9th digit before send.
+async function resolveJidWithBrazil(active: Record<string, unknown>, to: string): Promise<string> {
+  const jid = toWhatsappJid(to);
+  const onWhatsApp = active.onWhatsApp as
+    | ((jid: string) => Promise<Array<{ exists?: boolean; jid?: string }>>)
+    | undefined;
+  if (!onWhatsApp) {
+    return jid;
+  }
+  try {
+    const resolved = await resolveBrazilianJid({ onWhatsApp }, jid);
+    if (resolved !== jid) {
+      outboundLog.info(`[brazil-jid] Resolved ${jid} -> ${resolved}`);
+    }
+    return resolved;
+  } catch (err) {
+    outboundLog.warn(
+      `[brazil-jid] Resolution failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return jid;
+  }
+}
 
 export async function sendMessageWhatsApp(
   to: string,
@@ -27,15 +51,16 @@ export async function sendMessageWhatsApp(
   },
 ): Promise<{ messageId: string; toJid: string }> {
   let text = body.trimStart();
-  const jid = toWhatsappJid(to);
+  // [FORK-PATCH-2] Brazil JID Resolution
+  const { listener: active, accountId: resolvedAccountId } = requireActiveWebListener(
+    options.accountId,
+  );
+  const jid = await resolveJidWithBrazil(active, to);
   if (!text && !options.mediaUrl) {
     return { messageId: "", toJid: jid };
   }
   const correlationId = generateSecureUuid();
   const startedAt = Date.now();
-  const { listener: active, accountId: resolvedAccountId } = requireActiveWebListener(
-    options.accountId,
-  );
   const cfg = options.cfg ?? loadConfig();
   const account = resolveWhatsAppAccount({
     cfg,
