@@ -102,17 +102,17 @@ These are isolated, well-scoped, and survive merges cleanly:
 
 ---
 
-## Fragile Patches — Monitor But Don't Fix Now
+## Previously Fragile — Now Hardened ✅
 
-| Patch | Risk | Watch For |
-|-------|------|-----------|
-| P8 (status card) | 80+ lines in frequently-changed `status.ts` | Any upstream status refactor |
-| P16 (tool broadcast) | Inline in hot event handler | Event system refactors |
-| P17 (stream throttle) | Same handler as P16 | Same |
-| P26 (thinkingDefault) | Wraps catalog lookup | Model catalog restructure |
+All 4 formerly-fragile patches resolved in commit `f576eefa8d`:
 
-**Future improvement:** P8 → extract to `status-card-format.ts`. P16/P17 → config-driven.
-P26 → upstream PR (it's a legit optimization).
+| Patch | Was | Fix | Merge Resilience |
+|-------|-----|-----|-----------------|
+| P8 (status card) | 78 lines inline in `status.ts` | Extracted to `status-card-format.ts` | ⭐⭐⭐⭐⭐ — own file |
+| P4 (chat mirror) | 40 lines copy-pasted 2x in `server-chat.ts` | Extracted to `chat-mirror.ts` | ⭐⭐⭐⭐⭐ — own file |
+| P17 (stream throttle) | Magic number `50` inline | Named constant `STREAM_DELTA_THROTTLE_MS` | ⭐⭐⭐⭐ — visible in conflicts |
+| P16 (tool broadcast) | 3 lines in event handler | Improved comments (code was already minimal) | ⭐⭐⭐⭐ — clear intent |
+| P26 (thinkingDefault) | Re-evaluated: NOT fragile | Additive early return wrapping upstream code | ⭐⭐⭐⭐⭐ — never conflicts |
 
 ---
 
