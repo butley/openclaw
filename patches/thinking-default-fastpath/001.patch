@@ -1,0 +1,49 @@
+From 3c82ceb990dba42c8a4f80ca29d0db91898a336d Mon Sep 17 00:00:00 2001
+From: Guilherme Ramos <guiramos@gmail.com>
+Date: Wed, 4 Mar 2026 17:42:02 -0500
+Subject: [PATCH 5/8] patch-22: ThinkingDefault Config Shortcut
+
+Skip model catalog resolution when thinkingDefault is explicitly
+configured in agents.defaults. Avoids async catalog load on every
+chat.history call when the default is already set.
+---
+ src/gateway/server-methods/chat.ts | 23 ++++++++++++++---------
+ 1 file changed, 14 insertions(+), 9 deletions(-)
+
+diff --git a/src/gateway/server-methods/chat.ts b/src/gateway/server-methods/chat.ts
+index 04ab41ff7..991768334 100644
+--- a/src/gateway/server-methods/chat.ts
++++ b/src/gateway/server-methods/chat.ts
+@@ -574,15 +574,20 @@ export const chatHandlers: GatewayRequestHandlers = {
+     }
+     let thinkingLevel = entry?.thinkingLevel;
+     if (!thinkingLevel) {
+-      const sessionAgentId = resolveSessionAgentId({ sessionKey, config: cfg });
+-      const { provider, model } = resolveSessionModelRef(cfg, entry, sessionAgentId);
+-      const catalog = await context.loadGatewayModelCatalog();
+-      thinkingLevel = resolveThinkingDefault({
+-        cfg,
+-        provider,
+-        model,
+-        catalog,
+-      });
++      const configured = cfg.agents?.defaults?.thinkingDefault;
++      if (configured) {
++        thinkingLevel = configured;
++      } else {
++        const sessionAgentId = resolveSessionAgentId({ sessionKey, config: cfg });
++        const { provider, model } = resolveSessionModelRef(cfg, entry, sessionAgentId);
++        const catalog = await context.loadGatewayModelCatalog();
++        thinkingLevel = resolveThinkingDefault({
++          cfg,
++          provider,
++          model,
++          catalog,
++        });
++      }
+     }
+     const verboseLevel = entry?.verboseLevel ?? cfg.agents?.defaults?.verboseDefault;
+     respond(true, {
+-- 
+2.53.0
+

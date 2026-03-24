@@ -1,0 +1,65 @@
+From 092b9ddd6123befde677213595de935649aed29f Mon Sep 17 00:00:00 2001
+From: Guilherme Ramos <guiramos@gmail.com>
+Date: Wed, 4 Mar 2026 17:43:23 -0500
+Subject: [PATCH 6/8] patch-19: Chat.send Internal Routing
+
+Remove channel routing logic (routeChannelCandidate, originatingTo,
+accountId, messageThreadId) from webchat chat.send. Always use
+INTERNAL_MESSAGE_CHANNEL as OriginatingChannel for webchat messages.
+---
+ src/gateway/server-methods/chat.ts | 25 ++-----------------------
+ 1 file changed, 2 insertions(+), 23 deletions(-)
+
+diff --git a/src/gateway/server-methods/chat.ts b/src/gateway/server-methods/chat.ts
+index 991768334..9775431a8 100644
+--- a/src/gateway/server-methods/chat.ts
++++ b/src/gateway/server-methods/chat.ts
+@@ -14,7 +14,7 @@ import {
+   stripInlineDirectiveTagsForDisplay,
+   stripInlineDirectiveTagsFromMessageForDisplay,
+ } from "../../utils/directive-tags.js";
+-import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
++import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
+ import {
+   abortChatRunById,
+   abortChatRunsForSessionKey,
+@@ -807,24 +807,6 @@ export const chatHandlers: GatewayRequestHandlers = {
+       );
+       const commandBody = injectThinking ? `/think ${p.thinking} ${parsedMessage}` : parsedMessage;
+       const clientInfo = client?.connect?.client;
+-      const routeChannelCandidate = normalizeMessageChannel(
+-        entry?.deliveryContext?.channel ?? entry?.lastChannel,
+-      );
+-      const routeToCandidate = entry?.deliveryContext?.to ?? entry?.lastTo;
+-      const routeAccountIdCandidate =
+-        entry?.deliveryContext?.accountId ?? entry?.lastAccountId ?? undefined;
+-      const routeThreadIdCandidate = entry?.deliveryContext?.threadId ?? entry?.lastThreadId;
+-      const hasDeliverableRoute =
+-        routeChannelCandidate &&
+-        routeChannelCandidate !== INTERNAL_MESSAGE_CHANNEL &&
+-        typeof routeToCandidate === "string" &&
+-        routeToCandidate.trim().length > 0;
+-      const originatingChannel = hasDeliverableRoute
+-        ? routeChannelCandidate
+-        : INTERNAL_MESSAGE_CHANNEL;
+-      const originatingTo = hasDeliverableRoute ? routeToCandidate : undefined;
+-      const accountId = hasDeliverableRoute ? routeAccountIdCandidate : undefined;
+-      const messageThreadId = hasDeliverableRoute ? routeThreadIdCandidate : undefined;
+       // Inject timestamp so agents know the current date/time.
+       // Only BodyForAgent gets the timestamp — Body stays raw for UI display.
+       // See: https://github.com/moltbot/moltbot/issues/3658
+@@ -839,10 +821,7 @@ export const chatHandlers: GatewayRequestHandlers = {
+         SessionKey: sessionKey,
+         Provider: INTERNAL_MESSAGE_CHANNEL,
+         Surface: INTERNAL_MESSAGE_CHANNEL,
+-        OriginatingChannel: originatingChannel,
+-        OriginatingTo: originatingTo,
+-        AccountId: accountId,
+-        MessageThreadId: messageThreadId,
++        OriginatingChannel: INTERNAL_MESSAGE_CHANNEL,
+         ChatType: "direct",
+         CommandAuthorized: true,
+         MessageSid: clientRunId,
+-- 
+2.53.0
+

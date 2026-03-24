@@ -1,0 +1,318 @@
+From e3e891bdea82285dfa49b7443cbef37856a874ae Mon Sep 17 00:00:00 2001
+From: Guilherme Ramos <guiramos@gmail.com>
+Date: Wed, 4 Mar 2026 17:46:07 -0500
+Subject: [PATCH 8/8] patch-18: Chat Media URL Pipeline
+
+End-to-end media URL propagation for chat history and live broadcasts:
+- Extract audioUrl/imageUrl from toolResult details before sanitize
+  strips them (audioUrlByIndex + imageUrlByIndex maps)
+- Stamp extracted URLs onto final assistant messages in history response
+- Collect MEDIA markers and mediaUrl/mediaUrls from deliver callbacks
+- Attach audioUrl/imageUrl to broadcastChatFinal for live playback
+- Add audioUrl to TTS tool result details
+- Extract MEDIA markers in dispatch-from-config silent-reply filter
+---
+ src/agents/tools/tts-tool.ts                 |   5 +-
+ src/auto-reply/reply/dispatch-from-config.ts |   8 +
+ src/gateway/server-methods/chat.ts           | 206 ++++++++++++++++++-
+ 3 files changed, 215 insertions(+), 4 deletions(-)
+
+diff --git a/src/agents/tools/tts-tool.ts b/src/agents/tools/tts-tool.ts
+index 71533f4da..fcf8c4725 100644
+--- a/src/agents/tools/tts-tool.ts
++++ b/src/agents/tools/tts-tool.ts
+@@ -35,6 +35,9 @@ export function createTtsTool(opts?: {
+       });
+ 
+       if (result.success && result.audioPath) {
++        const pathMod = await import("node:path");
++        const filename = pathMod.basename(result.audioPath);
++        const audioUrl = `/media/${filename}`;
+         const lines: string[] = [];
+         // Tag Opus output as a voice bubble instead of a file attachment.
+         if (result.voiceCompatible) {
+@@ -46,7 +49,7 @@ export function createTtsTool(opts?: {
+         lines.push(`MEDIA:${result.audioPath}`);
+         return {
+           content: [{ type: "text", text: lines.join("\n") }],
+-          details: { audioPath: result.audioPath, provider: result.provider },
++          details: { audioPath: result.audioPath, audioUrl, provider: result.provider },
+         };
+       }
+ 
+diff --git a/src/auto-reply/reply/dispatch-from-config.ts b/src/auto-reply/reply/dispatch-from-config.ts
+index 456f4ee1b..840acad6a 100644
+--- a/src/auto-reply/reply/dispatch-from-config.ts
++++ b/src/auto-reply/reply/dispatch-from-config.ts
+@@ -609,6 +609,14 @@ export async function dispatchReplyFromConfig(params: {
+       // tool results (for example TTS audio) must still be delivered.
+       const hasMedia = Boolean(payload.mediaUrl) || (payload.mediaUrls?.length ?? 0) > 0;
+       if (!hasMedia) {
++        // Check for MEDIA: markers in text (e.g. image_generate tool results).
++        // Extract paths into mediaUrls so the deliver callback can collect them
++        // for imageReady/audioReady emission.
++        const mediaMatches = (payload.text ?? "").match(/MEDIA:\/[^\s`]+/g);
++        if (mediaMatches && mediaMatches.length > 0) {
++          const urls = mediaMatches.map((m) => m.slice("MEDIA:".length).trim());
++          return { ...payload, text: undefined, mediaUrls: urls };
++        }
+         return null;
+       }
+       return { ...payload, text: undefined };
+diff --git a/src/gateway/server-methods/chat.ts b/src/gateway/server-methods/chat.ts
+index 7a09ce74c..0f4e6d5a4 100644
+--- a/src/gateway/server-methods/chat.ts
++++ b/src/gateway/server-methods/chat.ts
+@@ -561,7 +561,67 @@ export const chatHandlers: GatewayRequestHandlers = {
+     const max = Math.min(hardMax, requested);
+     const sliced = rawMessages.length > max ? rawMessages.slice(-max) : rawMessages;
+     const sanitized = stripEnvelopeFromMessages(sliced);
++    // Extract audioUrl mapping BEFORE sanitize (which deletes `details`).
++    // Maps message index → audioUrl for the final assistant message after a TTS toolResult.
++    // Skips intermediate assistant messages with stopReason="toolUse" (still in tool-call loop).
++    const audioUrlByIndex = new Map<number, string>();
++    {
++      let pendingAudioUrl: string | undefined;
++      for (let i = 0; i < sanitized.length; i++) {
++        const msg = sanitized[i] as Record<string, unknown>;
++        const role = msg.role as string | undefined;
++        const details = msg.details as Record<string, unknown> | undefined;
++        if (role === "toolResult" && details?.audioUrl) {
++          // TTS tool completed — hold the audioUrl until final assistant message
++          pendingAudioUrl = details.audioUrl as string;
++        } else if (role === "assistant") {
++          const stopReason = msg.stopReason as string | undefined;
++          if (pendingAudioUrl && stopReason !== "toolUse") {
++            // Final assistant message (stop/end-turn) — attach audioUrl here
++            audioUrlByIndex.set(i, pendingAudioUrl);
++            pendingAudioUrl = undefined;
++          }
++          // If stopReason=toolUse, keep pendingAudioUrl for the next assistant
++        } else if (role === "user") {
++          // User message resets state (new turn)
++          pendingAudioUrl = undefined;
++        }
++      }
++    }
++    // Same pattern for imageUrl (image_generate tool result → final assistant message).
++    const imageUrlByIndex = new Map<number, string>();
++    {
++      let pendingImageUrl: string | undefined;
++      for (let i = 0; i < sanitized.length; i++) {
++        const msg = sanitized[i] as Record<string, unknown>;
++        const role = msg.role as string | undefined;
++        const details = msg.details as Record<string, unknown> | undefined;
++        if (role === "toolResult" && details?.imageUrl) {
++          pendingImageUrl = details.imageUrl as string;
++        } else if (role === "assistant") {
++          const stopReason = msg.stopReason as string | undefined;
++          if (pendingImageUrl && stopReason !== "toolUse") {
++            imageUrlByIndex.set(i, pendingImageUrl);
++            pendingImageUrl = undefined;
++          }
++        } else if (role === "user") {
++          pendingImageUrl = undefined;
++        }
++      }
++    }
+     const normalized = sanitizeChatHistoryMessages(sanitized);
++    // Apply audioUrl to the sanitized (normalized) messages.
++    for (const [idx, url] of audioUrlByIndex) {
++      if (idx < normalized.length) {
++        (normalized[idx] as Record<string, unknown>).audioUrl = url;
++      }
++    }
++    // Apply imageUrl to the sanitized (normalized) messages.
++    for (const [idx, url] of imageUrlByIndex) {
++      if (idx < normalized.length) {
++        (normalized[idx] as Record<string, unknown>).imageUrl = url;
++      }
++    }
+     const maxHistoryBytes = getMaxChatHistoryMessagesBytes();
+     const perMessageHardCap = Math.min(CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES, maxHistoryBytes);
+     const replaced = replaceOversizedChatHistoryMessages({
+@@ -883,24 +943,61 @@ export const chatHandlers: GatewayRequestHandlers = {
+         channel: INTERNAL_MESSAGE_CHANNEL,
+       });
+       const finalReplyParts: string[] = [];
++      const collectedMediaUrls: string[] = [];
+       const dispatcher = createReplyDispatcher({
+         ...prefixOptions,
+         onError: (err) => {
+           context.logGateway.warn(`webchat dispatch failed: ${formatForLog(err)}`);
+         },
+         deliver: async (payload, info) => {
++          // Log every deliver call so we can see which kinds arrive
++          context.logGateway.info(
++            `[media-deliver] kind=${info.kind} hasMediaUrls=${Array.isArray(payload.mediaUrls)} mediaUrl=${payload.mediaUrl} text=${(payload.text ?? "").slice(0, 80)}`,
++          );
++          // Capture media hints from every payload BEFORE any early-return.
++          captureMediaFromPayload(payload);
++          const payloadText = payload.text?.trim() ?? "";
++
++          // Only accumulate final text for the chat response
+           if (info.kind !== "final") {
+             return;
+           }
+-          const text = payload.text?.trim() ?? "";
+-          if (!text) {
++          if (!payloadText) {
+             return;
+           }
+-          finalReplyParts.push(text);
++          finalReplyParts.push(payloadText);
+         },
+       });
+ 
+       let agentRunStarted = false;
++      const captureMediaFromPayload = (payload: {
++        text?: string;
++        mediaUrl?: string;
++        mediaUrls?: string[];
++      }) => {
++        if (Array.isArray(payload.mediaUrls)) {
++          for (const url of payload.mediaUrls) {
++            if (url && !collectedMediaUrls.includes(url)) {
++              collectedMediaUrls.push(url);
++            }
++          }
++        }
++        if (payload.mediaUrl && !collectedMediaUrls.includes(payload.mediaUrl)) {
++          collectedMediaUrls.push(payload.mediaUrl);
++        }
++        const text = payload.text?.trim() ?? "";
++        if (!text) {
++          return;
++        }
++        const mediaMatches = text.match(/MEDIA:\/[^\s`]+/g) ?? [];
++        for (const marker of mediaMatches) {
++          const mediaPath = marker.slice("MEDIA:".length).trim();
++          if (mediaPath && !collectedMediaUrls.includes(mediaPath)) {
++            collectedMediaUrls.push(mediaPath);
++          }
++        }
++      };
++
+       void dispatchInboundMessage({
+         ctx,
+         cfg,
+@@ -969,6 +1066,22 @@ export const chatHandlers: GatewayRequestHandlers = {
+                 };
+               }
+             }
++            // If TTS audio was generated, extract the filename for the /media/ endpoint
++            // and attach it to the broadcast so the frontend can play it without regeneration.
++            const mediaUrls = collectedMediaUrls.map((u) => {
++              const parts = u.split("/");
++              return `/media/${parts[parts.length - 1]}`;
++            });
++            const audioUrls = mediaUrls.filter((u) => /\.(mp3|opus|ogg|wav|webm)$/i.test(u));
++            const imageUrls = mediaUrls.filter((u) => /\.(png|jpe?g|gif|webp)$/i.test(u));
++            if (message) {
++              if (audioUrls.length > 0) {
++                (message as Record<string, unknown>).audioUrl = audioUrls[0];
++              }
++              if (imageUrls.length > 0) {
++                (message as Record<string, unknown>).imageUrl = imageUrls[0];
++              }
++            }
+             broadcastChatFinal({
+               context,
+               runId: clientRunId,
+@@ -997,6 +1110,93 @@ export const chatHandlers: GatewayRequestHandlers = {
+                 context.logGateway.warn(`[mirror] error: ${String(mirrorErr)}`);
+               }
+             }
++          } else if (collectedMediaUrls.length > 0) {
++            context.logGateway.info(
++              `[media-emit] agentRunStarted=true, collectedMediaUrls=${JSON.stringify(collectedMediaUrls)}`,
++            );
++            // Agent run handled its own broadcast. Emit structured media hints so
++            // the frontend can classify/render message cards without parsing paths.
++            const mediaUrls = collectedMediaUrls.map((u) => {
++              const parts = u.split("/");
++              return `/media/${parts[parts.length - 1]}`;
++            });
++            const audioUrls = mediaUrls.filter((u) => /\.(mp3|opus|ogg|wav|webm)$/i.test(u));
++            const imageUrls = mediaUrls.filter((u) => /\.(png|jpe?g|gif|webp)$/i.test(u));
++            context.logGateway.info(
++              `[media-emit] audioUrls=${JSON.stringify(audioUrls)} imageUrls=${JSON.stringify(imageUrls)}`,
++            );
++
++            if (audioUrls.length > 0) {
++              const seq = nextChatSeq(
++                { agentRunSeq: context.agentRunSeq },
++                clientRunId,
++              );
++              context.broadcast("chat", {
++                runId: clientRunId,
++                sessionKey: rawSessionKey,
++                seq,
++                state: "audioReady" as const,
++                audioUrl: audioUrls[0],
++              });
++            }
++
++            if (imageUrls.length > 0) {
++              const seq = nextChatSeq(
++                { agentRunSeq: context.agentRunSeq },
++                clientRunId,
++              );
++              context.broadcast("chat", {
++                runId: clientRunId,
++                sessionKey: rawSessionKey,
++                seq,
++                state: "imageReady" as const,
++                imageUrl: imageUrls[0],
++              });
++            }
++          } else if (agentRunStarted) {
++            // Fallback: ACP dispatch path doesn't forward MEDIA markers through
++            // the deliver callback (tool results are formatted as summaries).
++            // Scan the session transcript for tool results with imageUrl in details.
++            try {
++              const { storePath: postRunStorePath, entry: postRunEntry } =
++                loadSessionEntry(sessionKey);
++              const postRunSessionId = postRunEntry?.sessionId ?? entry?.sessionId;
++              if (postRunSessionId && postRunStorePath) {
++                const recentMsgs = readSessionMessages(
++                  postRunSessionId,
++                  postRunStorePath,
++                  postRunEntry?.sessionFile,
++                );
++                // Look for the last toolResult with details.imageUrl
++                for (let i = recentMsgs.length - 1; i >= 0; i--) {
++                  const msg = recentMsgs[i] as Record<string, unknown>;
++                  if (msg.role !== "toolResult") continue;
++                  const details = msg.details as Record<string, unknown> | undefined;
++                  if (details?.imageUrl) {
++                    const imageUrl = details.imageUrl as string;
++                    context.logGateway.info(
++                      `[media-emit] extracted imageUrl from session transcript: ${imageUrl}`,
++                    );
++                    const seq = nextChatSeq(
++                      { agentRunSeq: context.agentRunSeq },
++                      clientRunId,
++                    );
++                    context.broadcast("chat", {
++                      runId: clientRunId,
++                      sessionKey: rawSessionKey,
++                      seq,
++                      state: "imageReady" as const,
++                      imageUrl,
++                    });
++                    break;
++                  }
++                }
++              }
++            } catch (scanErr) {
++              context.logGateway.warn(
++                `[media-emit] session transcript scan failed: ${String(scanErr)}`,
++              );
++            }
+           }
+           context.dedupe.set(`chat:${clientRunId}`, {
+             ts: Date.now(),
+-- 
+2.53.0
+

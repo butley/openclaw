@@ -119,13 +119,34 @@ Before hardening: 6 patches rated fragile/band-aid. After: 0.
 
 ---
 
-## Scope Legend
+## Full Documentation
 
-- **WA** — WhatsApp only (`extensions/whatsapp/`)
-- **Shared** — Cross-channel (`src/auto-reply/`)
-- **Gateway** — Gateway server (`src/gateway/`)
-- **Infra** — Infrastructure (`src/infra/`)
-- **TUI** — Terminal UI (`src/tui/`)
-- **CLI** — CLI commands (`src/cli/`)
-- **Memory** — Memory/QMD (`src/memory/`)
-- **Agents** — Agent runtime (`src/agents/`)
+See `docs/FORK.md` for the complete picture: streaming pipeline integration map,
+diagnostic traces, implementation order for future rebases, authorship, and merge protocol.
+
+---
+
+## Historical — Absorbed Patches
+
+### P3 — Audio Transcript Hook (absorbed in v2026.3.22)
+Emitted a second `message_received` hook AFTER transcription completes, with
+transcript in content and `isTranscript: true` in metadata. Upstream added native
+`message:transcribed` hooks in v3.22, making this unnecessary.
+
+### P12 — WA Login Tool Dedup (absorbed in v2026.3.22)
+Removed duplicate `api.registerTool()` for `whatsapp_login` from WA extension.
+Upstream v2026.2.26+ registers it natively. Original add: Guilherme (`55399b9`),
+removal: `aab4460`. Author: Guilherme Ramos.
+
+### P20 — Image Generate Tool (absorbed in v2026.3.22)
+Gemini image generation tool (`image_generate`) calling `v1beta/models/{model}:generateContent`.
+Upstream added `image-generate-tool.ts` natively in v3.22.
+
+### P24 — Silent Reply Filter Removal (skipped)
+Would remove `extractAssistantTextForSilentCheck` and silent-token filtering from
+chat history. Skipped during v3.22 rebase — no evidence of the bug it was meant to fix.
+Function still exists in upstream v3.22.
+
+### P28 — SSE Cron Filter (dropped)
+Filtered `:cron:` events from SSE stream. Replaced by P16's session-scoped broadcast
+which inherently prevents cross-session event leaks.
