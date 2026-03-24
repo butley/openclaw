@@ -11,22 +11,60 @@
 
 ## Why This Patch Exists
 
-OpenClaw routes conversations by **session key**. When Luke sends a WhatsApp
-message, the session key is `agent:main:whatsapp:direct:+553196348700`. The
-agent runs, generates a reply, and OpenClaw delivers it back to WhatsApp.
+### The Product Problem
 
-But Luke also uses the **webchat Control UI** (browser dashboard). When he sends
-a message from webchat, the reply goes to webchat — but his WhatsApp shows
-nothing. The conversation looks dead on the phone while active on the computer.
+In a Butley deployment, an AI agent talks to **third-party end users**
+(customers, leads, clients) via WhatsApp. The agent's owner — the person who
+deployed it — **cannot see those conversations on their own WhatsApp**. WhatsApp
+doesn't let you read messages sent to someone else's number. The only way for
+the owner to observe what their agent is saying to clients is through the
+**webchat dashboard (Control UI)**.
 
-**The mirror patch solves this:** when a message comes from webchat, the
-assistant's final reply is automatically re-delivered ("mirrored") to the
-session's original WhatsApp channel. Both surfaces stay in sync.
+But observation isn't enough. The owner needs to **intervene** — correct the
+agent, take over a conversation, send a message as the agent ("puppet mode").
+When they type in the webchat, the message needs to reach the client on
+WhatsApp. And when the agent replies (triggered from the webchat), that reply
+also needs to appear on WhatsApp — otherwise the client sees silence while the
+owner sees activity on their screen.
 
-### Why upstream doesn't have this
+**This is the core need:** two-way sync between webchat and WhatsApp, so the
+owner can monitor, interact with, and puppet their agent's conversations with
+third parties.
+
+### What Mirror Specifically Solves
+
+The "mirror" is one half of this two-way sync: **webchat → WhatsApp delivery**.
+
+When a message is sent from the webchat (either by the owner typing, or by the
+agent responding to a webchat-initiated prompt), the assistant's final reply is
+automatically re-delivered ("mirrored") to the session's WhatsApp channel. This
+ensures the end user on WhatsApp sees the response, even though it was triggered
+from the webchat.
+
+Without mirror:
+- Owner types in webchat → agent replies → reply appears in webchat only →
+  WhatsApp client sees nothing → conversation breaks
+
+With mirror:
+- Owner types in webchat → agent replies → reply appears in webchat AND is
+  delivered to WhatsApp → client sees the response → conversation continues
+  naturally
+
+### Why This Matters for Butley as a Product
+
+Every Butley customer will have this exact need. They deploy an agent, it talks
+to their clients on WhatsApp, and they need a dashboard to supervise and
+intervene. Mirror is not a personal convenience feature — it's **infrastructure
+for the multi-tenant agent platform**. Without it, the webchat is read-only and
+owners can't meaningfully interact with their agents' conversations.
+
+Future: mirror will extend to other channels (Telegram, Instagram DM, etc.) as
+Butley adds them.
+
+### Why Upstream Doesn't Have This
 
 OpenClaw treats each channel as independent. The concept of "this session
-belongs to WhatsApp but I'm temporarily chatting from webchat" doesn't exist
+belongs to WhatsApp but I'm temporarily interacting from webchat" doesn't exist
 upstream. They'd need a notion of "session home channel" vs "current surface"
 — a bigger architectural change. Our patch is a pragmatic shortcut: the webchat
 client sends `mirror: true` in `chat.send`, and our code handles the rest.
@@ -220,3 +258,13 @@ grep -q "onFinalText" "$DIST_FILE"
 3. Parse the peerId from the sessionKey (same format: `agent:{id}:{channel}:{kind}:{peer}`).
 
 The registry and callback pattern don't need to change.
+
+---
+
+## Future: Full Two-Way Sync
+
+Mirror is one half of the equation (webchat → channel). The other half —
+channel → webchat push (making inbound WhatsApp messages appear in the webchat
+in real-time) — is handled by the existing OpenClaw WebSocket broadcast system.
+Together, they enable the full supervision + puppet workflow that Butley
+customers need.
