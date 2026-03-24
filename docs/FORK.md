@@ -27,7 +27,7 @@ Last updated: 2026-03-24.
 | # | Name | Type | Files |
 |---|------|------|-------|
 | P2 | Brazil JID Resolution | Own file + hook | `brazil-jid-resolver.ts`, `send.ts` |
-| P4 | Chat Mirror | Extracted → own file | `chat-mirror.ts`, `server-chat.ts`, `chat.ts`, `logs-chat.ts`, `agent-events.ts` |
+| P4 | Chat Mirror | Bulletproof rewrite | `chat-mirror.ts` (own registry), `server-chat.ts` (onFinalText callback), `chat.ts` (extractMirrorParam) |
 | P5 | WS Inbound Push | Own file + additive | `inbound-events.ts`, `agent-events.ts` |
 | P7 | TUI Dark Theme | 1 line | `theme.ts` |
 | P8 | Status Card | Extracted → own file | `status-card-format.ts`, `status.ts` |
@@ -169,13 +169,18 @@ if (msgSubscribers.size > 0) {
 
 **If it breaks:** Verify `SessionMessageSubscriberRegistry` still has `.get(key)` and `_broadcastToConnIds` signature unchanged.
 
-### P4 — Chat Mirror Extraction
+### P4 — Chat Mirror (Bulletproof Architecture)
 
-**Problem:** 20-line mirror block copy-pasted in 2 places in `server-chat.ts`. Double merge conflicts.
+**Problem:** Webchat messages need to mirror replies to WhatsApp. Previous implementations broke on every upstream merge due to tight coupling with AgentRunContext, buffer lifecycle, and schema validation.
 
-**Fix:** `src/gateway/chat-mirror.ts` → `maybeMirrorToChannel()`. Both call sites: 1 line each.
+**Architecture (v3.22 rewrite):**
+1. **Self-contained registry** — `chat-mirror.ts` owns a `Map<runId, MirrorEntry>` via `globalThis[Symbol.for()]`. No dependency on upstream `AgentRunContext`.
+2. **`onFinalText` callback** — `emitChatFinal` accepts `opts?: { onFinalText? }`. Text delivered to callback BEFORE buffer cleanup. Structurally prevents buffer-after-delete bugs.
+3. **Schema-free param extraction** — `extractMirrorParam()` strips `mirror` from raw params BEFORE schema validation. Upstream `additionalProperties: false` can never reject it.
 
-**v3.22 rebase fix:** v3.22 added `additionalProperties: false` to `ChatSendParamsSchema`, rejecting the `mirror` field. Fix: declared `mirror` in schema (`logs-chat.ts`), propagated in handler (`chat.ts`), and added merge clause in `agent-events.ts` (required because `registerAgentRunContext` does field-by-field merge — unlisted fields are silently dropped).
+**Upstream touch surface:** ~4 lines in `server-chat.ts` + ~4 lines in `chat.ts`. All trivially mergeable.
+
+**Merge guide:** See `patches/chat-mirror/README.md` for detailed instructions.
 
 ### P8 — Status Card Extraction
 
@@ -224,8 +229,8 @@ extensions/whatsapp/src/inbound/contact-names.ts        # P11/P14
 | Patch | File | Hook |
 |-------|------|------|
 | P2 | `send.ts` | `resolveJidWithBrazil` call |
-| P4 | `server-chat.ts` | `maybeMirrorToChannel()` import + calls |
-| P5 | `agent-events.ts` | `mirror` field |
+| P4 | `server-chat.ts` | `onFinalText` callback + `consumeMirror`/`deliverMirror` |
+| P5 | `agent-events.ts` | inbound-events import |
 | P8 | `status.ts` | `formatStatusCard` import + call |
 | P10 | `logs-cli.ts` | `--pretty` flag |
 | P11 | `deliver-reply.ts` | Paragraph streaming hook |
