@@ -1,8 +1,8 @@
 import { DEFAULT_HEARTBEAT_ACK_MAX_CHARS, stripHeartbeatToken } from "../auto-reply/heartbeat.js";
 import { normalizeVerboseLevel } from "../auto-reply/thinking.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
-// [FORK-PATCH-4] Chat Mirror — static import for WA delivery.
-import { sendMessageWhatsApp } from "../channel-web.js";
+// [FORK-PATCH-4] Chat Mirror — extracted to chat-mirror.ts
+import { maybeMirrorToChannel } from "./chat-mirror.js";
 import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
@@ -17,6 +17,10 @@ import { formatForLog } from "./ws-log.js";
 
 const log = createSubsystemLogger("gateway/server-chat");
 const reasoningDebugEnabled = process.env.OPENCLAW_DEBUG_REASONING === "1";
+
+// [FORK-PATCH-17] Streaming delta throttle (ms). Upstream default: 150ms.
+// Lower = smoother UI streaming but more WS messages. 50ms is good for local/LAN.
+const STREAM_DELTA_THROTTLE_MS = 50;
 
 function resolveHeartbeatAckMaxChars(): number {
   try {
@@ -545,8 +549,8 @@ export function createAgentEventHandler({
     }
     const now = Date.now();
     const last = chatRunState.deltaSentAt.get(clientRunId) ?? 0;
-    // [FORK-PATCH-17] Streaming Throttle — 50ms throttle for smoother UI updates.
-    if (now - last < 50) {
+    // [FORK-PATCH-17] Streaming Throttle — see STREAM_DELTA_THROTTLE_MS at top of file.
+    if (now - last < STREAM_DELTA_THROTTLE_MS) {
       return;
     }
     chatRunState.deltaSentAt.set(clientRunId, now);
@@ -774,7 +778,9 @@ export function createAgentEventHandler({
           });
         }
       }
-      // [FORK-PATCH-16] Tool Events Broadcast — also broadcast to all connected WS/SSE clients.
+      // [FORK-PATCH-16] Tool Events Broadcast — upstream only sends to run-scoped recipients
+      // and session subscribers. This broadcast ensures ALL connected WS/SSE clients (including
+      // webchat clients that connected after run start) receive tool lifecycle events.
       broadcast("agent", toolPayload, { dropIfSlow: true });
     } else {
       broadcast("agent", agentPayload);
@@ -827,27 +833,9 @@ export function createAgentEventHandler({
             evt.data?.error,
             evtStopReason,
           );
-          // [FORK-PATCH-4] Chat Mirror — re-deliver final reply to the session's
-          // original channel (e.g. WhatsApp) when the run was initiated from webchat.
+          // [FORK-PATCH-4] Chat Mirror
           const { text } = resolveBufferedChatTextState(finished.clientRunId, evt.runId);
-          const runContext = getAgentRunContext(evt.runId);
-          if (runContext?.mirror && text) {
-            try {
-              const keyParts = finished.sessionKey.split(":").filter(Boolean);
-              // Format: agent:{agentId}:{channel}:{peerKind}:{peerId}
-              if (keyParts.length >= 5 && keyParts[0] === "agent") {
-                const channel = keyParts[2];
-                const peerId = keyParts.slice(4).join(":");
-                if (channel === "whatsapp" && peerId) {
-                  sendMessageWhatsApp(peerId, text, { verbose: false })
-                    .then(() => console.log(`[mirror] sent to ${channel}:${peerId}`))
-                    .catch((err: unknown) => console.warn(`[mirror] failed: ${String(err)}`));
-                }
-              }
-            } catch (mirrorErr) {
-              console.warn(`[mirror] error: ${String(mirrorErr)}`);
-            }
-          }
+          maybeMirrorToChannel({ sessionKey: finished.sessionKey, runId: evt.runId, text });
         } else {
           emitChatFinal(
             sessionKey,
@@ -858,27 +846,9 @@ export function createAgentEventHandler({
             evt.data?.error,
             evtStopReason,
           );
-          // [FORK-PATCH-4] Chat Mirror — re-deliver final reply to the session's
-          // original channel (e.g. WhatsApp) when the run was initiated from webchat.
+          // [FORK-PATCH-4] Chat Mirror
           const { text } = resolveBufferedChatTextState(eventRunId, evt.runId);
-          const runContext = getAgentRunContext(evt.runId);
-          if (runContext?.mirror && text) {
-            try {
-              const keyParts = sessionKey.split(":").filter(Boolean);
-              // Format: agent:{agentId}:{channel}:{peerKind}:{peerId}
-              if (keyParts.length >= 5 && keyParts[0] === "agent") {
-                const channel = keyParts[2];
-                const peerId = keyParts.slice(4).join(":");
-                if (channel === "whatsapp" && peerId) {
-                  sendMessageWhatsApp(peerId, text, { verbose: false })
-                    .then(() => console.log(`[mirror] sent to ${channel}:${peerId}`))
-                    .catch((err: unknown) => console.warn(`[mirror] failed: ${String(err)}`));
-                }
-              }
-            } catch (mirrorErr) {
-              console.warn(`[mirror] error: ${String(mirrorErr)}`);
-            }
-          }
+          maybeMirrorToChannel({ sessionKey, runId: evt.runId, text });
         }
       } else if (isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
         chatRunState.abortedRuns.delete(clientRunId);

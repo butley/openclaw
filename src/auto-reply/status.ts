@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { formatStatusCard } from "./status-card-format.js";
 import { resolveContextTokensForModel } from "../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { resolveModelAuthMode } from "../agents/model-auth.js";
@@ -789,76 +790,35 @@ export function buildStatusMessage(args: StatusArgs): string {
   const mediaLine = formatMediaUnderstandingLine(args.mediaDecisions);
   const voiceLine = formatVoiceModeLine(args.config, args.sessionEntry);
 
-  // [FORK-PATCH-8] Status Card Redesign — monospace aligned card for WhatsApp/terminal
-  const padLabel = (value: string) => value.padEnd(11);
-
+  // [FORK-PATCH-8] Status Card — formatting extracted to status-card-format.ts
   const providerLabel = (() => {
     const raw = selectedAuthLabelValue ?? selectedProvider;
     const match = raw?.match(/\(([^)]+)\)/);
     return match ? match[1] : raw;
   })();
 
-  const rows: string[] = [];
-  rows.push(`◈ ${padLabel("Model")}${selectedModelLabel}${modelNote}`);
-  rows.push(`∴ ${padLabel("Key")}${providerLabel}`);
-
-  if (fallbackState.active) {
-    const showFbAuth = activeAuthLabelValue && activeAuthLabelValue !== selectedAuthLabelValue;
-    rows.push(
-      `↩ ${padLabel("Fallback")}${activeModelLabel}${showFbAuth ? ` · ${activeAuthLabelValue}` : ""} (${fallbackState.reason ?? "unavailable"})`,
-    );
-  }
-
-  if (usageCostLine) {
-    const cleanUsage = usageCostLine
-      .replace(/🧮\s*Tokens:\s*/u, "")
-      .replace(/💵\s*Cost:\s*/u, "cost: ");
-    rows.push(`↕ ${padLabel("Tokens")}${cleanUsage}`);
-  }
-
-  if (cacheLine) {
-    const cleanCache = cacheLine.replace(/🗄️\s*Cache:\s*/u, "");
-    rows.push(`≡ ${padLabel("Cache")}${cleanCache}`);
-  }
-
-  const cleanContext = contextLine
-    .replace(/^Context:\s*/, "")
-    .replace(/🧹\s*Compactions/, "compactions");
-  rows.push(`▰ ${padLabel("Context")}${cleanContext}`);
-
-  if (mediaLine) {
-    rows.push(`◇ ${padLabel("Media")}${mediaLine.replace(/^[^\w]*/u, "")}`);
-  }
-
-  const shortSession = (args.sessionKey ?? "unknown")
-    .replace(/^agent:main:/, "")
-    .replace(/(group:\d{6})\d+@g\.us/, "$1…");
-  rows.push(`► ${padLabel("Session")}${shortSession}`);
-
-  if (args.subagentsLine) {
-    rows.push(`⊞ ${padLabel("Subs")}${args.subagentsLine.replace(/^[^\w]*/u, "")}`);
-  }
-
-  const cleanOptions = optionsLine.replace(/^Runtime:\s*/, "");
-  rows.push(`△ ${padLabel("Runtime")}${cleanOptions}`);
-
-  if (voiceLine) {
-    rows.push(`♫ ${padLabel("Voice")}${voiceLine.replace(/🔊\s*Voice:\s*/u, "")}`);
-  }
-
-  if (groupActivationValue) {
-    rows.push(`⊕ ${padLabel("Activation")}${groupActivationValue}`);
-  }
-  rows.push(`⌂ ${padLabel("Queue")}${queueMode}${queueDetails}`);
-
-  const parts: string[] = [versionLine];
-  if (args.timeLine) {
-    parts.push(args.timeLine.replace(/🕒\s*Time:\s*/u, ""));
-  }
-  parts.push("```");
-  parts.push(...rows);
-  parts[parts.length - 1] += "```";
-  return parts.join("\n");
+  return formatStatusCard({
+    versionLine,
+    timeLine: args.timeLine,
+    selectedModelLabel,
+    modelNote,
+    providerLabel,
+    fallbackState,
+    activeModelLabel,
+    activeAuthLabelValue,
+    selectedAuthLabelValue,
+    usageCostLine,
+    cacheLine,
+    contextLine,
+    mediaLine,
+    sessionKey: args.sessionKey,
+    subagentsLine: args.subagentsLine,
+    optionsLine,
+    voiceLine,
+    groupActivationValue,
+    queueMode,
+    queueDetails,
+  });
 }
 
 const CATEGORY_LABELS: Record<CommandCategory, string> = {
