@@ -18,7 +18,7 @@ In a Butley deployment, an AI agent talks to **third-party end users**
 deployed it — **cannot see those conversations on their own WhatsApp**. WhatsApp
 doesn't let you read messages sent to someone else's number. The only way for
 the owner to observe what their agent is saying to clients is through the
-**webchat dashboard (Control UI)**.
+**webchat dashboard**.
 
 But observation isn't enough. The owner needs to **intervene** — correct the
 agent, take over a conversation, send a message as the agent ("puppet mode").
@@ -60,6 +60,17 @@ owners can't meaningfully interact with their agents' conversations.
 
 Future: mirror will extend to other channels (Telegram, Instagram DM, etc.) as
 Butley adds them.
+
+### Implementation Note: OpenClaw Control UI Under the Hood
+
+The Butley webchat dashboard currently uses the OpenClaw Control UI webchat
+protocol (`client.id = openclaw-control-ui`) under the hood. This is a
+pragmatic choice — it gives us a working WebSocket transport and session
+management for free. Whether Butley should eventually have its own webchat
+protocol (independent of OpenClaw's Control UI) is an open architectural
+question. The mirror patch is designed to be transport-agnostic: it only cares
+about the `mirror: true` flag in `chat.send`, not about how the webchat
+connects.
 
 ### Why Upstream Doesn't Have This
 
@@ -261,10 +272,15 @@ The registry and callback pattern don't need to change.
 
 ---
 
-## Future: Full Two-Way Sync
+## Two-Way Sync — Current State
 
-Mirror is one half of the equation (webchat → channel). The other half —
-channel → webchat push (making inbound WhatsApp messages appear in the webchat
-in real-time) — is handled by the existing OpenClaw WebSocket broadcast system.
-Together, they enable the full supervision + puppet workflow that Butley
-customers need.
+Both directions of the webchat ↔ WhatsApp sync are **already working**:
+
+| Direction | How it works | Status |
+|---|---|---|
+| **WhatsApp → webchat** | OpenClaw's native WebSocket broadcast pushes inbound WA messages to all connected webchat clients in real-time. When a client messages the agent on WA, the owner sees it appear in the dashboard immediately. | ✅ Works (upstream) |
+| **Webchat → WhatsApp** | This patch (P4 mirror). When the owner or agent sends from webchat, the reply is mirrored to the WA channel so the end-user client receives it. | ✅ Works (fork patch) |
+
+Together, they enable the full supervision + puppet workflow: the owner watches
+conversations in real-time via the dashboard and can intervene at any point,
+with all messages flowing to both surfaces.
