@@ -567,8 +567,15 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     }
   };
 
+  // [FORK-PATCH-15] Webchat/SSE Thinking Stream
+  // Upstream merged two independent concerns into a single guard:
+  //   if (!state.streamReasoning || !params.onReasoningStream) return;
+  // This kills emitAgentEvent (WS/SSE broadcast) when no channel callback is passed,
+  // which is always the case for webchat (typingPolicy='internal_webchat' → onReasoningStream=undefined).
+  // Fix: split guards back. emitAgentEvent (broadcast) depends only on streamReasoning.
+  // onReasoningStream callback is optional — only invoked when the channel provides one.
   const emitReasoningStream = (text: string) => {
-    if (!state.streamReasoning || !params.onReasoningStream) {
+    if (!state.streamReasoning) {
       return;
     }
     const formatted = formatReasoningMessage(text);
@@ -594,9 +601,12 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       },
     });
 
-    void params.onReasoningStream({
-      text: formatted,
-    });
+    // Channel-specific callback (Discord, Telegram, etc.) — optional
+    if (params.onReasoningStream) {
+      void params.onReasoningStream({
+        text: formatted,
+      });
+    }
   };
 
   const resetForCompactionRetry = () => {
