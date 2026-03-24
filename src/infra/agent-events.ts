@@ -59,6 +59,10 @@ export function registerAgentRunContext(runId: string, context: AgentRunContext)
   if (context.isHeartbeat !== undefined && existing.isHeartbeat !== context.isHeartbeat) {
     existing.isHeartbeat = context.isHeartbeat;
   }
+  // [FORK-PATCH-4] Chat Mirror — merge mirror flag
+  if (context.mirror !== undefined) {
+    existing.mirror = context.mirror;
+  }
 }
 
 export function getAgentRunContext(runId: string) {

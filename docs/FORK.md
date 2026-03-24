@@ -27,7 +27,7 @@ Last updated: 2026-03-24.
 | # | Name | Type | Files |
 |---|------|------|-------|
 | P2 | Brazil JID Resolution | Own file + hook | `brazil-jid-resolver.ts`, `send.ts` |
-| P4 | Chat Mirror | Extracted → own file | `chat-mirror.ts`, `server-chat.ts` |
+| P4 | Chat Mirror | Extracted → own file | `chat-mirror.ts`, `server-chat.ts`, `chat.ts`, `logs-chat.ts`, `agent-events.ts` |
 | P5 | WS Inbound Push | Own file + additive | `inbound-events.ts`, `agent-events.ts` |
 | P7 | TUI Dark Theme | 1 line | `theme.ts` |
 | P8 | Status Card | Extracted → own file | `status-card-format.ts`, `status.ts` |
@@ -174,6 +174,8 @@ if (msgSubscribers.size > 0) {
 **Problem:** 20-line mirror block copy-pasted in 2 places in `server-chat.ts`. Double merge conflicts.
 
 **Fix:** `src/gateway/chat-mirror.ts` → `maybeMirrorToChannel()`. Both call sites: 1 line each.
+
+**v3.22 rebase fix:** v3.22 added `additionalProperties: false` to `ChatSendParamsSchema`, rejecting the `mirror` field. Fix: declared `mirror` in schema (`logs-chat.ts`), propagated in handler (`chat.ts`), and added merge clause in `agent-events.ts` (required because `registerAgentRunContext` does field-by-field merge — unlisted fields are silently dropped).
 
 ### P8 — Status Card Extraction
 

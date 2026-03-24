@@ -34,7 +34,7 @@ check() {
 
 echo "── Core Patches ──"
 check "P2.  Brazil JID"                "grep -q 'resolveJidWithBrazil' extensions/whatsapp/src/send.ts || grep -q 'resolveJidWithBrazil' src/web/outbound.ts"
-check "P4.  Chat Mirror"               "test -f src/gateway/chat-mirror.ts && grep -q 'maybeMirrorToChannel' src/gateway/server-chat.ts"
+check "P4.  Chat Mirror"               "test -f src/gateway/chat-mirror.ts && grep -q 'maybeMirrorToChannel' src/gateway/server-chat.ts && grep -q 'mirror.*Type.Optional' src/gateway/protocol/schema/logs-chat.ts && grep -q 'context.mirror' src/infra/agent-events.ts"
 check "P5.  WS Inbound Push"           "test -f src/infra/inbound-events.ts"
 check "P7.  TUI Dark Theme"            "grep -q '236' src/tui/theme/theme.ts"
 check "P8.  Status Card"               "test -f src/auto-reply/status-card-format.ts && grep -q 'formatStatusCard' src/auto-reply/status.ts"
