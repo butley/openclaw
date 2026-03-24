@@ -219,6 +219,7 @@ export async function sendChatMessage(
       sessionKey: state.sessionKey,
       message: msg,
       deliver: false,
+      mirror: true,
       idempotencyKey: runId,
       attachments: apiAttachments,
     });
