@@ -42,6 +42,8 @@ export const ChatSendParamsSchema = Type.Object(
     systemInputProvenance: Type.Optional(InputProvenanceSchema),
     systemProvenanceReceipt: Type.Optional(Type.String()),
     idempotencyKey: NonEmptyString,
+    // [FORK-PATCH-4] Chat Mirror — allow frontend to request WA mirror delivery
+    mirror: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
