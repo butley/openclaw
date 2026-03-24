@@ -1,5 +1,5 @@
 export type ThinkLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "adaptive";
-export type VerboseLevel = "off" | "on" | "full";
+export type VerboseLevel = "off" | "light" | "on" | "full";
 export type NoticeLevel = "off" | "on" | "full";
 export type ElevatedLevel = "off" | "on" | "ask" | "full";
 export type ElevatedMode = "off" | "ask" | "full";
@@ -171,6 +171,10 @@ function normalizeOnOffFullLevel(raw?: string | null): OnOffFullLevel | undefine
   }
   if (["full", "all", "everything"].includes(key)) {
     return "full";
+  }
+  // [FORK-PATCH-13] "light" shows tool narration one-liners only
+  if (["light"].includes(key)) {
+    return "light" as OnOffFullLevel;
   }
   if (["on", "minimal", "true", "yes", "1"].includes(key)) {
     return "on";
