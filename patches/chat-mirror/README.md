@@ -1,52 +1,76 @@
-# P4 — Chat Mirror
+# P4 — Chat Mirror (webchat → WhatsApp)
 
-**Branch:** `feat/rebase-3.22`
-**Type:** Extracted → own file (hardened 2026-03-24)
-**Files:** `src/gateway/chat-mirror.ts` (new), `src/gateway/server-chat.ts` (calls), `src/gateway/server-methods/chat.ts` (schema + propagation), `src/gateway/protocol/schema/logs-chat.ts` (schema), `src/infra/agent-events.ts` (merge logic)
+**Status:** ✅ Active — bulletproof rewrite (2026-03-24)  
+**Branch:** `feat/rebase-3.22`  
+**Upstream risk:** Very low — 4 lines touch upstream files
 
 ## What It Does
 
-When `mirror: true` is set on `chat.send`, AI responses from webchat are relayed to the session's original channel (e.g., WhatsApp). Core Butley functionality — webchat→WA delivery.
+When a message is sent from the webchat Control UI, the assistant's reply is
+automatically re-delivered ("mirrored") to the session's original channel
+(currently WhatsApp). This lets users interact via webchat while keeping their
+WhatsApp conversation in sync.
 
 ## Architecture
 
-### Flow
-1. **Schema** — `ChatSendParamsSchema` in `logs-chat.ts` declares `mirror: Type.Optional(Type.Boolean())`
-2. **Handler** — `chat.ts` casts `mirror` from params, passes to `registerAgentRunContext(runId, { mirror: p.mirror })` in `onAgentRunStart`
-3. **Merge** — `agent-events.ts` `registerAgentRunContext()` merges `mirror` into existing context (required because context is created first by `agent-runner-execution.ts` without mirror, then updated by `onAgentRunStart`)
-4. **Delivery** — `maybeMirrorToChannel(sessionKey, runId, text)` in `chat-mirror.ts` reads `getAgentRunContext(runId).mirror` and sends via `sendMessageWhatsApp`
+The mirror patch is designed for **zero upstream coupling**:
 
-### Key Detail
-`registerAgentRunContext` uses field-by-field merge (not spread) when context already exists. Each fork field (`mirror`, etc.) MUST have an explicit merge clause — otherwise it's silently dropped. This was a bug in the initial v3.22 rebase (mirror was set but never merged into existing context).
+### 1. Self-Contained Registry (`chat-mirror.ts`)
+- `mirrorRegistry`: `Map<runId, { sessionKey, registeredAt }>` using
+  `globalThis[Symbol.for()]` singleton (survives bundler chunk duplication).
+- `registerMirror(runId, sessionKey)` — called from chat.send handler.
+- `consumeMirror(runId)` — one-shot: returns entry and auto-deletes.
+- `deliverMirror(sessionKey, text)` — parses sessionKey, sends to WhatsApp.
+- Auto-cleanup timer (10min) prevents leaks from crashed runs.
 
-### `maybeMirrorToChannel`
-1. Parses `channel` + `peerId` from sessionKey format `agent:{id}:{channel}:{kind}:{peer}`
-2. Validates WA channel
-3. Calls `sendMessageWhatsApp`
+**No dependency on AgentRunContext.** Upstream can refactor that type freely.
 
-Called from both success and error paths in `server-chat.ts`.
+### 2. `onFinalText` Callback (`server-chat.ts`)
+- `emitChatFinal` accepts `opts?: { onFinalText?: (text: string) => void }`.
+- Callback fires **before** `buffers.delete()` — structurally prevents the
+  buffer-after-delete bug that broke the previous implementation.
+- Only 2 lines added to the upstream function signature + 2 lines in body.
 
-## History
+### 3. Schema-Free Param Extraction (`chat-mirror.ts`)
+- `extractMirrorParam(raw)` — strips `mirror` from raw params object **before**
+  TypeBox/Zod schema validation runs.
+- Upstream `additionalProperties: false` can never reject it.
+- Default: `true` (all webchat sends mirror to WA unless `mirror: false`).
 
-- **Original:** 20-line mirror block copy-pasted in 2 places in `server-chat.ts` (Guilherme)
-- **Hardened (2026-03-24):** Extracted to `chat-mirror.ts` — single function, 2 one-line call sites
-- **v3.22 rebase fix (2026-03-24):** Added `mirror` to `ChatSendParamsSchema` (v3.22 added `additionalProperties: false` which rejected unknown fields), propagation in `chat.ts`, and merge clause in `agent-events.ts`
+## Files Modified
 
-## Merge Resilience
+| File | What changed | Lines |
+|---|---|---|
+| `src/gateway/chat-mirror.ts` | **100% fork-owned.** Full module. | ~120 |
+| `src/gateway/server-chat.ts` | `onFinalText` param on emitChatFinal + mirrorCallback in event handler | ~8 |
+| `src/gateway/server-methods/chat.ts` | `extractMirrorParam()` before validation + `registerMirror()` in onAgentRunStart | ~6 |
 
-**Low conflict** — own file for delivery logic. Schema/handler changes are 1-2 lines each.
+**Not modified (by design):**
+- `src/infra/agent-events.ts` — no mirror field on AgentRunContext
+- `src/gateway/protocol/schema/logs-chat.ts` — no mirror in schema
 
-**Watch for:** If upstream adds more fields to `registerAgentRunContext` merge logic, our `mirror` clause stays safe. If upstream changes `ChatSendParamsSchema` to a different validation lib, mirror field needs re-adding.
+## Upstream Merge Guide
 
-## Verify
+On future merges, these are the only patterns to verify:
+
+1. **`emitChatFinal` signature** — ensure `opts?` parameter is last. If upstream
+   adds parameters before it, just shift it.
+2. **`chat.send` handler** — `extractMirrorParam(params)` must run before
+   `validateChatSendParams(params)`. If upstream restructures the handler,
+   move the call accordingly.
+3. **Event handler lifecycle block** — the `mirrorCallback` + `{ onFinalText }`
+   pattern on both `emitChatFinal` call sites. Easy to spot in merge diffs.
+
+## verify-patches.sh Pattern
 
 ```bash
-test -f src/gateway/chat-mirror.ts && echo "OK" || echo "MISSING"
-grep -q 'maybeMirrorToChannel' src/gateway/server-chat.ts && echo "OK" || echo "MISSING"
-grep -q 'mirror.*Type.Optional' src/gateway/protocol/schema/logs-chat.ts && echo "OK" || echo "MISSING"
-grep -q 'context.mirror' src/infra/agent-events.ts && echo "OK" || echo "MISSING"
+grep -q "consumeMirror\|deliverMirror\|registerMirror" "$DIST_FILE"
+grep -q "onFinalText" "$DIST_FILE"
 ```
 
-## Author
+## Bug History
 
-Bob + Guilherme (original), Bob (extraction + v3.22 fix) — webchat→WA cross-channel for Butley.
+- **v3.13 (alpha):** Worked — mirror was inline in server-chat.ts with direct buffer access.
+- **v3.22 (first port):** Broke — extracted to chat-mirror.ts but called after buffer deletion.
+- **v3.22 (quick fix, `1d5d616acb`):** Moved call inside emitChatFinal body. Fixed but fragile.
+- **v3.22 (bulletproof, `8079dc3798`):** Current architecture. Own registry, callback pattern, schema-free.
