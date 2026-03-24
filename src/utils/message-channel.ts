@@ -48,10 +48,13 @@ export function isInternalMessageChannel(raw?: string | null): raw is InternalMe
 
 export function isWebchatClient(client?: GatewayClientInfoLike | null): boolean {
   const mode = normalizeGatewayClientMode(client?.mode);
-  if (mode === GATEWAY_CLIENT_MODES.WEBCHAT) {
+  if (mode === GATEWAY_CLIENT_MODES.WEBCHAT || mode === GATEWAY_CLIENT_MODES.UI) {
     return true;
   }
-  return normalizeGatewayClientName(client?.id) === GATEWAY_CLIENT_NAMES.WEBCHAT_UI;
+  // [FORK-PATCH-23] Also treat openclaw-control-ui (Butley dashboard) as webchat
+  // to prevent dashboard messages from inheriting WhatsApp delivery routes.
+  const name = normalizeGatewayClientName(client?.id);
+  return name === GATEWAY_CLIENT_NAMES.WEBCHAT_UI || name === GATEWAY_CLIENT_NAMES.CONTROL_UI;
 }
 
 export function normalizeMessageChannel(raw?: string | null): string | undefined {

@@ -1102,8 +1102,165 @@ export const chatHandlers: GatewayRequestHandlers = {
     const requested = typeof limit === "number" ? limit : defaultLimit;
     const max = Math.min(hardMax, requested);
     const sliced = rawMessages.length > max ? rawMessages.slice(-max) : rawMessages;
+
+    // [FORK-PATCH-29] Extract sender metadata before envelope stripping removes it
+    const senderMetaByIndex = new Map<number, { name: string; id: string; isGroupChat: boolean }>();
+    // [FORK-PATCH-30] Extract group chat history and thread history before stripping
+    const chatHistoryByIndex = new Map<
+      number,
+      Array<{ sender: string; timestamp_ms: number; body: string }>
+    >();
+    const threadHistoryIndices = new Set<number>();
+    for (let i = 0; i < sliced.length; i += 1) {
+      const msg = sliced[i] as Record<string, unknown>;
+      if (msg.role !== "user") {
+        continue;
+      }
+      const text =
+        typeof msg.content === "string"
+          ? msg.content
+          : Array.isArray(msg.content)
+            ? (msg.content as Array<Record<string, unknown>>)
+                .filter((b) => b.type === "text" && typeof b.text === "string")
+                .map((b) => b.text as string)
+                .join("")
+            : "";
+      if (!text) {
+        continue;
+      }
+      // P30: thread history detection
+      if (text.trimStart().startsWith("[Thread history - for context]")) {
+        threadHistoryIndices.add(i);
+      }
+      // P30: chat history extraction
+      const chatHistMatch = text.match(
+        /Chat history since last reply \(untrusted, for context\):\s*```json\s*(\[[\s\S]*?\])\s*```/,
+      );
+      if (chatHistMatch) {
+        try {
+          const entries = JSON.parse(chatHistMatch[1]) as Array<Record<string, unknown>>;
+          const parsed = entries
+            .filter((e) => typeof e.sender === "string" && typeof e.body === "string")
+            .map((e) => ({
+              sender: e.sender as string,
+              timestamp_ms: typeof e.timestamp_ms === "number" ? e.timestamp_ms : 0,
+              body: e.body as string,
+            }));
+          if (parsed.length > 0) {
+            chatHistoryByIndex.set(i, parsed);
+          }
+        } catch {
+          /* ignore malformed */
+        }
+      }
+      // P29: sender metadata extraction
+      const senderMatch = text.match(
+        /Sender \(untrusted metadata\):\s*```json\s*(\{[\s\S]*?\})\s*```/,
+      );
+      if (senderMatch) {
+        try {
+          const sender = JSON.parse(senderMatch[1]) as Record<string, unknown>;
+          const name = typeof sender.name === "string" ? sender.name : "";
+          const id = typeof sender.id === "string" ? sender.id : "";
+          if (name) {
+            let isGroupChat = false;
+            const convMatch = text.match(
+              /Conversation info \(untrusted metadata\):\s*```json\s*(\{[\s\S]*?\})\s*```/,
+            );
+            if (convMatch) {
+              try {
+                const conv = JSON.parse(convMatch[1]) as Record<string, unknown>;
+                isGroupChat = conv.is_group_chat === true;
+              } catch {
+                /* ignore */
+              }
+            }
+            senderMetaByIndex.set(i, { name, id, isGroupChat });
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
     const sanitized = stripEnvelopeFromMessages(sliced);
+
+    // [FORK-PATCH-22] Scan for audioUrl/imageUrl in tool results, attach to next assistant message
+    const audioUrlByIndex = new Map<number, string>();
+    const imageUrlByIndex = new Map<number, string>();
+    {
+      let pendingAudioUrl: string | undefined;
+      let pendingImageUrl: string | undefined;
+      for (let i = 0; i < sanitized.length; i += 1) {
+        const msg = sanitized[i] as Record<string, unknown>;
+        const role = msg.role as string | undefined;
+        const details = msg.details as Record<string, unknown> | undefined;
+        if (role === "toolResult") {
+          if (typeof details?.audioUrl === "string") {
+            pendingAudioUrl = details.audioUrl;
+          }
+          if (typeof details?.imageUrl === "string") {
+            pendingImageUrl = details.imageUrl;
+          }
+        } else if (role === "assistant") {
+          const stopReason = msg.stopReason as string | undefined;
+          if (stopReason !== "toolUse") {
+            if (pendingAudioUrl) {
+              audioUrlByIndex.set(i, pendingAudioUrl);
+              pendingAudioUrl = undefined;
+            }
+            if (pendingImageUrl) {
+              imageUrlByIndex.set(i, pendingImageUrl);
+              pendingImageUrl = undefined;
+            }
+          }
+        } else if (role === "user") {
+          pendingAudioUrl = undefined;
+          pendingImageUrl = undefined;
+        }
+      }
+    }
+
     const normalized = sanitizeChatHistoryMessages(sanitized);
+
+    // [FORK-PATCH-22] Attach media URLs to assistant messages
+    for (const [idx, url] of audioUrlByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).audioUrl = url;
+      }
+    }
+    for (const [idx, url] of imageUrlByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).imageUrl = url;
+      }
+    }
+    // [FORK-PATCH-29] Re-attach sender metadata after sanitization
+    for (const [idx, meta] of senderMetaByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).senderMeta = meta;
+      }
+    }
+    // [FORK-PATCH-30] Re-attach group context after sanitization
+    for (const [idx, entries] of chatHistoryByIndex) {
+      if (idx < normalized.length) {
+        (normalized[idx] as Record<string, unknown>).chatHistory = entries;
+      }
+    }
+    for (const idx of threadHistoryIndices) {
+      if (idx < normalized.length) {
+        const raw = sliced[idx] as Record<string, unknown>;
+        const rawText =
+          typeof raw.content === "string"
+            ? raw.content
+            : Array.isArray(raw.content)
+              ? (raw.content as Array<Record<string, unknown>>)
+                  .filter((b) => b.type === "text" && typeof b.text === "string")
+                  .map((b) => b.text as string)
+                  .join("")
+              : "";
+        (normalized[idx] as Record<string, unknown>).threadHistoryRaw = rawText;
+      }
+    }
     const maxHistoryBytes = getMaxChatHistoryMessagesBytes();
     const perMessageHardCap = Math.min(CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES, maxHistoryBytes);
     const replaced = replaceOversizedChatHistoryMessages({
@@ -1121,15 +1278,19 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
     let thinkingLevel = entry?.thinkingLevel;
     if (!thinkingLevel) {
-      const sessionAgentId = resolveSessionAgentId({ sessionKey, config: cfg });
-      const { provider, model } = resolveSessionModelRef(cfg, entry, sessionAgentId);
-      const catalog = await context.loadGatewayModelCatalog();
-      thinkingLevel = resolveThinkingDefault({
-        cfg,
-        provider,
-        model,
-        catalog,
-      });
+      // [FORK-PATCH-26] Skip expensive model catalog lookup when thinkingDefault is configured
+      thinkingLevel = cfg.agents?.defaults?.thinkingDefault;
+      if (!thinkingLevel) {
+        const sessionAgentId = resolveSessionAgentId({ sessionKey, config: cfg });
+        const { provider, model } = resolveSessionModelRef(cfg, entry, sessionAgentId);
+        const catalog = await context.loadGatewayModelCatalog();
+        thinkingLevel = resolveThinkingDefault({
+          cfg,
+          provider,
+          model,
+          catalog,
+        });
+      }
     }
     const verboseLevel = entry?.verboseLevel ?? cfg.agents?.defaults?.verboseDefault;
     respond(true, {
