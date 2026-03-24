@@ -20,8 +20,6 @@ export type AgentRunContext = {
   isHeartbeat?: boolean;
   /** Whether control UI clients should receive chat/agent updates for this run. */
   isControlUiVisible?: boolean;
-  /** [FORK-PATCH-4] Whether to mirror final reply back to the session's original channel. */
-  mirror?: boolean;
 };
 
 type AgentEventState = {
@@ -58,10 +56,6 @@ export function registerAgentRunContext(runId: string, context: AgentRunContext)
   }
   if (context.isHeartbeat !== undefined && existing.isHeartbeat !== context.isHeartbeat) {
     existing.isHeartbeat = context.isHeartbeat;
-  }
-  // [FORK-PATCH-4] Chat Mirror — merge mirror flag
-  if (context.mirror !== undefined) {
-    existing.mirror = context.mirror;
   }
 }
 

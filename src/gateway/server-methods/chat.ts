@@ -3,8 +3,8 @@ import path from "node:path";
 import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveThinkingDefault } from "../../agents/model-selection.js";
-// [FORK-PATCH-4] Chat Mirror — register mirror flag on run context
-import { registerAgentRunContext } from "../../infra/agent-events.js";
+// [FORK-PATCH-4] Chat Mirror — self-contained mirror module
+import { extractMirrorParam, registerMirror } from "../chat-mirror.js";
 import { rewriteTranscriptEntriesInSessionFile } from "../../agents/pi-embedded-runner/transcript-rewrite.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
@@ -1386,6 +1386,11 @@ export const chatHandlers: GatewayRequestHandlers = {
     });
   },
   "chat.send": async ({ params, respond, context, client }) => {
+    // [FORK-PATCH-4] Extract mirror param BEFORE schema validation.
+    // Upstream schema uses additionalProperties:false, so mirror must be
+    // stripped before it reaches Zod/TypeBox. Default: true for webchat.
+    const mirrorRequested = extractMirrorParam(params as Record<string, unknown>);
+
     if (!validateChatSendParams(params)) {
       respond(
         false,
@@ -1412,8 +1417,6 @@ export const chatHandlers: GatewayRequestHandlers = {
       systemInputProvenance?: InputProvenance;
       systemProvenanceReceipt?: string;
       idempotencyKey: string;
-      // [FORK-PATCH-4] Chat Mirror
-      mirror?: boolean;
     };
     if ((p.systemInputProvenance || p.systemProvenanceReceipt) && !isAcpBridgeClient(client)) {
       respond(
@@ -1694,8 +1697,10 @@ export const chatHandlers: GatewayRequestHandlers = {
           images: parsedImages.length > 0 ? parsedImages : undefined,
           onAgentRunStart: (runId) => {
             agentRunStarted = true;
-            // [FORK-PATCH-4] Chat Mirror — default true for webchat, respect explicit override
-            registerAgentRunContext(runId, { mirror: p.mirror ?? true });
+            // [FORK-PATCH-4] Chat Mirror — register mirror intent in self-contained registry
+            if (mirrorRequested) {
+              registerMirror(runId, p.sessionKey);
+            }
             void emitUserTranscriptUpdate();
             const connId = typeof client?.connId === "string" ? client.connId : undefined;
             const wantsToolEvents = hasGatewayClientCap(

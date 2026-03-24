@@ -1,8 +1,8 @@
 import { DEFAULT_HEARTBEAT_ACK_MAX_CHARS, stripHeartbeatToken } from "../auto-reply/heartbeat.js";
 import { normalizeVerboseLevel } from "../auto-reply/thinking.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
-// [FORK-PATCH-4] Chat Mirror — extracted to chat-mirror.ts
-import { maybeMirrorToChannel } from "./chat-mirror.js";
+// [FORK-PATCH-4] Chat Mirror — self-contained module
+import { consumeMirror, deliverMirror } from "./chat-mirror.js";
 import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
@@ -640,6 +640,10 @@ export function createAgentEventHandler({
     jobState: "done" | "error",
     error?: unknown,
     stopReason?: string,
+    // [FORK-PATCH-4] Optional callback invoked with the resolved final text
+    // BEFORE the buffer is deleted. Used by chat mirror (and potentially
+    // other fork hooks) to capture the text without racing buffer cleanup.
+    opts?: { onFinalText?: (text: string) => void },
   ) => {
     const { text, shouldSuppressSilent } = resolveBufferedChatTextState(clientRunId, sourceRunId);
     // Flush any throttled delta so streaming clients receive the complete text
@@ -647,6 +651,12 @@ export function createAgentEventHandler({
     // suppressed the most recent chunk, leaving the client with stale text.
     // Only flush if the buffer has grown since the last broadcast to avoid duplicates.
     flushBufferedChatDeltaIfNeeded(sessionKey, clientRunId, sourceRunId, seq);
+
+    // [FORK-PATCH-4] Fire callback with text before buffer cleanup
+    if (text && !shouldSuppressSilent && opts?.onFinalText) {
+      opts.onFinalText(text);
+    }
+
     chatRunState.deltaLastBroadcastLen.delete(clientRunId);
     chatRunState.buffers.delete(clientRunId);
     chatRunState.deltaSentAt.delete(clientRunId);
@@ -668,11 +678,6 @@ export function createAgentEventHandler({
       };
       broadcast("chat", payload);
       nodeSendToSession(sessionKey, "chat", payload);
-      // [FORK-PATCH-4] Chat Mirror — must run here BEFORE buffer is gone.
-      // text was captured above before buffers.delete().
-      if (text && !shouldSuppressSilent) {
-        maybeMirrorToChannel({ sessionKey, runId: sourceRunId, text });
-      }
       return;
     }
     const payload = {
@@ -836,6 +841,12 @@ export function createAgentEventHandler({
       ) {
         const evtStopReason =
           typeof evt.data?.stopReason === "string" ? evt.data.stopReason : undefined;
+        // [FORK-PATCH-4] Chat Mirror callback — consume mirror entry and deliver
+        const mirrorCallback = (text: string) => {
+          const mirror = consumeMirror(evt.runId);
+          if (mirror) deliverMirror(mirror.sessionKey, text);
+        };
+
         if (chatLink) {
           const finished = chatRunState.registry.shift(evt.runId);
           if (!finished) {
@@ -850,6 +861,7 @@ export function createAgentEventHandler({
             lifecyclePhase === "error" ? "error" : "done",
             evt.data?.error,
             evtStopReason,
+            { onFinalText: mirrorCallback },
           );
         } else {
           emitChatFinal(
@@ -860,6 +872,7 @@ export function createAgentEventHandler({
             lifecyclePhase === "error" ? "error" : "done",
             evt.data?.error,
             evtStopReason,
+            { onFinalText: mirrorCallback },
           );
         }
       } else if (isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
