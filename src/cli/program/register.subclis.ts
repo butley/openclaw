@@ -316,15 +316,6 @@ const entries: SubCliEntry[] = [
       mod.registerCompletionCli(program);
     },
   },
-  {
-    name: "qmd",
-    description: "Proxy qmd commands with agent-scoped XDG_CACHE_HOME",
-    hasSubcommands: false,
-    register: async (program) => {
-      const mod = await import("../qmd-cli.js");
-      mod.registerQmdCli(program);
-    },
-  },
 ];
 
 export function getSubCliEntries(): SubCliEntry[] {
