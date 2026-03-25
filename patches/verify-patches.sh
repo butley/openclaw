@@ -49,7 +49,7 @@ check "P14. WA Outbound Mentions"      "grep -q 'processOutboundMentions' extens
 echo ""
 echo "── Streaming Pipeline ──"
 check "P15. Webchat Thinking"          "grep -q 'streamReasoning: true' src/agents/pi-embedded-subscribe.ts"
-check "P16. Tool Events Broadcast"     "grep -q 'sessionMessageSubscribers' src/gateway/server-chat.ts"
+check "P16. Tool Events Broadcast"     "grep -q 'gatewayEventBus.emit.*toolPayload' src/gateway/server-chat.ts && grep -q 'sessionMessageSubscribers' src/gateway/server-chat.ts"
 check "P17. Streaming Throttle"        "grep -q 'STREAM_DELTA_THROTTLE_MS' src/gateway/server-chat.ts"
 check "P18. SSE Streaming"             "test -f src/gateway/server-sse.ts"
 check "P31. SSE EventBus Singleton"    "grep -q '__openclaw_gatewayEventBus__' src/gateway/server-broadcast.ts"
