@@ -57,7 +57,7 @@ Last updated: 2026-03-25.
 
 | # | Name | Type | Files | Verify |
 |---|------|------|-------|--------|
-| P15 | Webchat Thinking Stream | Guard split (surgical) | `pi-embedded-subscribe.ts` | `grep -q 'streamReasoning: true' src/agents/pi-embedded-subscribe.ts` |
+| P15 | Webchat Thinking Stream | Guard split + SSE dedup | `pi-embedded-subscribe.ts`, `server-sse.ts` | `grep -q 'streamReasoning: true' src/agents/pi-embedded-subscribe.ts` |
 | P16 | Tool Events Broadcast | **Scoped** → session-only | `server-chat.ts`, `server.impl.ts` | `grep -q 'sessionMessageSubscribers' src/gateway/server-chat.ts` |
 | P17 | Streaming Throttle | Named constant | `server-chat.ts` | `grep -q 'STREAM_DELTA_THROTTLE_MS' src/gateway/server-chat.ts` |
 | P18 | SSE Streaming Endpoint | Own file (~460 lines) | `server-sse.ts` | `test -f src/gateway/server-sse.ts` |

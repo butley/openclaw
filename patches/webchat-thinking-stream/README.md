@@ -32,25 +32,46 @@ if (params.onReasoningStream) {               // optional channel callback
 
 See `docs/FORK.md` → "Diagnostic Traces → P15" for the complete 6-step trace from `resolveRunTypingPolicy` through `createTypingSignaler` to the guard.
 
-## SSE Formatting Strip
+## SSE Formatting Strip + Deduplication
 
 Upstream's `emitAgentEvent` wraps reasoning text with a `Reasoning:\n` prefix and
-`_italic_` markdown. This formatting is meant for channel delivery (WhatsApp/Telegram)
-but leaks into the SSE stream, which the webchat frontend doesn't expect — it renders
-its own reasoning UI and the prefix/wrapping shows as literal text.
+`_italic_` per-line markdown (`formatReasoningMessage` in `pi-embedded-utils.ts`).
+This formatting is meant for channel delivery (WhatsApp/Telegram) but leaks into
+the SSE stream, which the webchat frontend doesn't expect — it renders its own
+reasoning UI and the prefix/wrapping shows as literal text.
 
-**Fix:** `server-sse.ts` strips the formatting at output time (consumer-side), before
-emitting `reasoning_delta` SSE events:
+**Fix (in `server-sse.ts`):**
 
-```ts
-const stripReasoningFormat = (s: string): string =>
-  s.replace(/^Reasoning:\n/i, "").replace(/^_/, "").replace(/_$/, "");
-```
+1. **Per-line strip** — `formatReasoningMessage` wraps each non-empty line in `_..._`,
+   so stripping must process each line individually, not just the string boundaries:
+   ```ts
+   const stripReasoningFormat = (s: string): string =>
+     s
+       .replace(/^Reasoning:\n/i, "")
+       .split("\n")
+       .map((line) => line.replace(/^_/, "").replace(/_$/, ""))
+       .join("\n");
+   ```
 
-This is intentionally done at the SSE consumer (not the producer) because:
+2. **fullText-first dedup** — The gateway-level delta (from `pi-embedded-subscribe.ts`)
+   can be the ENTIRE formatted text when the `startsWith(prior)` prefix check fails
+   (happens every time text grows mid-line because the closing `_` shifts position).
+   The frontend SSE handler appends deltas (`+=`), so a full-text delta = duplication
+   ("meThe", "deployedThe" concatenation artifacts). Fix: always prefer
+   `fullText.slice(lastReasoningLen)` as the canonical incremental source. Raw delta
+   is only used as fallback when fullText is absent:
+   ```ts
+   const newContent = fullText && fullText.length > lastReasoningLen
+     ? fullText.slice(lastReasoningLen)
+     : delta && (!fullText || fullText.length > lastReasoningLen)
+       ? delta
+       : null;
+   ```
+
+**Why consumer-side (not producer):**
 - The formatting is correct for other consumers (WA, Telegram)
 - Changing the producer (`pi-embedded-subscribe.ts`) would be invasive and affect all channels
-- SSE is the only path that needs raw text — it's the right place to strip
+- SSE is the only path that needs raw text — it's the right place to strip and dedup
 
 ## Merge Resilience
 

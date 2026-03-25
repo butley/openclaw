@@ -46,7 +46,7 @@ Last updated: 2026-03-24.
 
 | # | Name | Type | Files |
 |---|------|------|-------|
-| P15 | Webchat Thinking Stream | Guard split | `pi-embedded-subscribe.ts` |
+| P15 | Webchat Thinking Stream | Guard split + SSE dedup | `pi-embedded-subscribe.ts`, `server-sse.ts` |
 | P16 | Tool Events Broadcast | Scoped → session-only | `server-chat.ts`, `server.impl.ts` |
 | P17 | Streaming Throttle | Named constant | `server-chat.ts` |
 | P18 | SSE Endpoint | Own file (~460 lines) | `server-sse.ts` |
@@ -148,6 +148,11 @@ This killed `emitAgentEvent` for webchat because webchat never passes `onReasoni
 6. `pi-embedded-subscribe.ts` → combined guard fails → `emitAgentEvent` never fires → no thinking in SSE
 
 **Fix:** Split guards. `emitAgentEvent` depends only on `state.streamReasoning` (config). `onReasoningStream` is optional, called separately. Broadcast (WS/SSE) and channel callback (WA typing) are independent concerns.
+
+**SSE dedup fix (commit `99fbfdeb99`):** Two additional bugs in `server-sse.ts` caused reasoning text to duplicate in webchat:
+1. `stripReasoningFormat` only stripped `_` from string boundaries, not per-line (but `formatReasoningMessage` wraps EACH line in `_..._`)
+2. SSE delta logic prioritized raw gateway delta — which can be the ENTIRE text when `startsWith(prior)` fails in the producer. Frontend SSE handler appends (`+=`), so full-text-as-delta = duplication.
+Fix: per-line strip + prefer `fullText.slice(lastReasoningLen)` as canonical incremental source.
 
 **If it breaks after a merge:** Search for `emitAgentEvent.*thinking` in `pi-embedded-subscribe.ts`. If gated on `onReasoningStream` → split the guard. Root cause: `dispatch-from-config.ts` doesn't pass `onReasoningStream` for webchat by design.
 
@@ -290,7 +295,7 @@ bash patches/verify-patches.sh .
 | `src/auto-reply/status-card-format.ts` | P8 |
 | `src/cli/logs-pretty-formatter.ts` | P10 |
 | `src/gateway/chat-mirror.ts` | P4 |
-| `src/gateway/server-sse.ts` | P18 |
+| `src/gateway/server-sse.ts` | P15, P18 |
 | `src/infra/inbound-events.ts` | P5 |
 | `extensions/whatsapp/src/inbound/brazil-jid-resolver.ts` | P2 |
 | `extensions/whatsapp/src/inbound/contact-names.ts` | P14 |
