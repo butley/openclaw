@@ -805,6 +805,13 @@ export function createAgentEventHandler({
           });
         }
       }
+      // [FORK-PATCH-16] Global broadcast for tool events — matches alpha behavior.
+      // The targeted paths above cover run-scoped recipients and session subscribers,
+      // but SSE listeners subscribe via gatewayEventBus (fired by broadcast()),
+      // NOT via any recipient registry. Without this, SSE intermittently misses
+      // tool events (depends on whether toolEventRecipients has entries).
+      broadcast("agent", toolPayload, { dropIfSlow: true });
+      log.info(`[tool:broadcast] runId=${evt.runId} phase=${(evt.data as Record<string, unknown>)?.phase} tool=${(evt.data as Record<string, unknown>)?.tool ?? (evt.data as Record<string, unknown>)?.name}`);
     } else {
       broadcast("agent", agentPayload);
       if (reasoningDebugEnabled && evt.stream === "thinking") {

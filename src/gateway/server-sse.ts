@@ -421,6 +421,7 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
     if (payload.stream === "tool") {
       const phase = payload.data?.phase as string | undefined;
       const toolName = (payload.data?.tool ?? payload.data?.name ?? "tool") as string;
+      log.info(`[sse:tool] runId=${payload.runId} phase=${phase} tool=${toolName} sessionKey=${agentSessionKey}`);
       const toolCallId = (payload.data?.toolCallId ??
         payload.data?.id ??
         `tool_${Date.now()}`) as string;
