@@ -1,6 +1,6 @@
 # Custom Patches — butley/openclaw
 
-34 active custom patches on top of upstream openclaw/openclaw.
+35 active custom patches on top of upstream openclaw/openclaw.
 
 ## Absorbed by Upstream (no longer maintained)
 
@@ -51,6 +51,7 @@
 | 36 | Butley System Prompt | `butley-system-prompt/` | Agents | `work` | `grep -q "BUTLEY_IDENTITY_PROMPT" src/agents/system-prompt.ts` |
 | 37 | Token Usage Tracking (input, output, cacheRead, cacheWrite) | — | Agents | `work` | `grep -q "FORK-PATCH-37" src/agents/pi-embedded-runner/run.ts` |
 | 38 | Hide OpenClaw Branding | `hide-openclaw-branding/` | Agents | `work` | `! grep -n "OpenClaw" src/agents/system-prompt.ts \| grep -v "import\|//"` |
+| 39 | Hardcode Universal Instructions | — | Agents | `work` | `grep -q "First Run" src/agents/butley-system-prompt.ts && grep -q "Every Session" src/agents/butley-system-prompt.ts` |
 
 
 ## Re-application Order
