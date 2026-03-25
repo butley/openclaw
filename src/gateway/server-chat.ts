@@ -3,6 +3,8 @@ import { normalizeVerboseLevel } from "../auto-reply/thinking.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 // [FORK-PATCH-4] Chat Mirror — self-contained module
 import { consumeMirror, deliverMirror } from "./chat-mirror.js";
+// [FORK-PATCH-16] SSE tool event delivery
+import { gatewayEventBus } from "./server-broadcast.js";
 import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
@@ -805,13 +807,14 @@ export function createAgentEventHandler({
           });
         }
       }
-      // [FORK-PATCH-16] Global broadcast for tool events — matches alpha behavior.
-      // The targeted paths above cover run-scoped recipients and session subscribers,
-      // but SSE listeners subscribe via gatewayEventBus (fired by broadcast()),
-      // NOT via any recipient registry. Without this, SSE intermittently misses
-      // tool events (depends on whether toolEventRecipients has entries).
-      broadcast("agent", toolPayload, { dropIfSlow: true });
-      log.info(`[tool:broadcast] runId=${evt.runId} phase=${(evt.data as Record<string, unknown>)?.phase} tool=${(evt.data as Record<string, unknown>)?.tool ?? (evt.data as Record<string, unknown>)?.name}`);
+      // [FORK-PATCH-16] SSE tool event delivery.
+      // Upstream v3.22 moved tool events from global broadcast() to targeted
+      // broadcastToConnIds() for security (avoid leaking tool data cross-session).
+      // But broadcastToConnIds() doesn't emit on gatewayEventBus — which is
+      // exactly how SSE listeners receive events. Without this line, SSE gets
+      // zero tool events. The SSE handler already filters by sessionKey, so
+      // there's no cross-session leak risk.
+      gatewayEventBus.emit("agent", toolPayload);
     } else {
       broadcast("agent", agentPayload);
       if (reasoningDebugEnabled && evt.stream === "thinking") {
