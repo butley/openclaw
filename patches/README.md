@@ -1,6 +1,6 @@
 # Custom Patches — butley/openclaw
 
-33 active custom patches on top of upstream openclaw/openclaw.
+34 active custom patches on top of upstream openclaw/openclaw.
 
 ## Absorbed by Upstream (no longer maintained)
 
@@ -50,6 +50,7 @@
 | 35 | Context1m per-model in all context token callsites | — | Agents | `work` | `grep -q "FORK-PATCH-35" src/agents/context-window-guard.ts src/auto-reply/reply/agent-runner.ts src/auto-reply/reply/followup-runner.ts src/auto-reply/reply/agent-runner-memory.ts` |
 | 36 | Butley System Prompt | `butley-system-prompt/` | Agents | `work` | `grep -q "BUTLEY_IDENTITY_PROMPT" src/agents/system-prompt.ts` |
 | 37 | Token Usage Tracking (input, output, cacheRead, cacheWrite) | — | Agents | `work` | `grep -q "FORK-PATCH-37" src/agents/pi-embedded-runner/run.ts` |
+| 38 | Hide OpenClaw Branding | `hide-openclaw-branding/` | Agents | `work` | `! grep -n "OpenClaw" src/agents/system-prompt.ts \| grep -v "import\|//"` |
 
 
 ## Re-application Order
@@ -68,7 +69,8 @@ for p in \
   patches/chat-send-internal-routing/001.patch \
   patches/chat-audio-inbound/001.patch \
   patches/chat-media-pipeline/001.patch \
-  patches/butley-system-prompt/001.patch; do
+  patches/butley-system-prompt/001.patch \
+  patches/hide-openclaw-branding/001.patch; do
   git apply --3way "$p" || echo "CONFLICT in $p — resolve manually"
 done
 ```
