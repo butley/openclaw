@@ -374,20 +374,21 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
 
     // ── Thinking / Reasoning ──
     if (payload.stream === "thinking") {
-      // Prefer rawDelta/rawText (unformatted, no "Reasoning:" prefix or _italic_ wrapping).
-      // Fall back to delta/text for backward compat with older gateway code.
-      const delta =
-        typeof payload.data?.rawDelta === "string"
-          ? payload.data.rawDelta
-          : typeof payload.data?.delta === "string"
-            ? payload.data.delta
-            : null;
-      const fullText =
-        typeof payload.data?.rawText === "string"
-          ? payload.data.rawText
-          : typeof payload.data?.text === "string"
-            ? payload.data.text
-            : null;
+      // Strip upstream formatting ("Reasoning:\n" prefix and _italic_ wrapping)
+      // so SSE consumers get clean reasoning text.
+      const stripReasoningFormat = (s: string): string =>
+        s.replace(/^Reasoning:\n/i, "").replace(/^_/, "").replace(/_$/, "");
+
+      const rawDelta =
+        typeof payload.data?.delta === "string"
+          ? payload.data.delta
+          : null;
+      const delta = rawDelta ? stripReasoningFormat(rawDelta) : null;
+      const rawFullText =
+        typeof payload.data?.text === "string"
+          ? payload.data.text
+          : null;
+      const fullText = rawFullText ? stripReasoningFormat(rawFullText) : null;
 
       // Use delta directly if available; otherwise extract from full text
       const newContent = delta

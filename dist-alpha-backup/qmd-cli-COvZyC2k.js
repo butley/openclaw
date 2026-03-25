@@ -1,0 +1,109 @@
+import { g as resolveStateDir } from "./paths-tuenh9TL.js";
+import "./globals-cEUy0WVg.js";
+import "./theme-CipOb_We.js";
+import "./utils-B1xPTYn-.js";
+import { q as formatHelpExamples, u_ as loadConfig } from "./reply-BRIrPGWy.js";
+import { f as resolveDefaultAgentId } from "./agent-scope-D85sFDRQ.js";
+import { p as defaultRuntime } from "./subsystem-Du2dCfuD.js";
+import "./openclaw-root-B76Z4doY.js";
+import "./logger-CTiHjjqB.js";
+import "./exec-C6U2qsJQ.js";
+import "./github-copilot-token-deWTDWZu.js";
+import "./boolean-D8Ha5nYV.js";
+import "./env-DWcyui2j.js";
+import "./env-overrides-B59mbP3-.js";
+import "./registry-3SOFgkh6.js";
+import "./skills-CObtH1pm.js";
+import "./frontmatter-D-zbDLA0.js";
+import "./plugins-B3EU9SbO.js";
+import "./query-expansion-D7MNjl_J.js";
+import "./redact-BnV2ewAv.js";
+import "./path-alias-guards-CGklijb0.js";
+import "./fetch-Dp4lHtjH.js";
+import "./errors-BVotJzwa.js";
+import "./cmd-argv-BjL6p-dP.js";
+import "./delivery-queue-CYy8h7nH.js";
+import "./paths-B4q5wccl.js";
+import "./session-cost-usage-DTqf62Zp.js";
+import "./prompt-style-BJRiCD0E.js";
+import "./links-TpjR6UKS.js";
+import "./cli-utils-Bal-Phw0.js";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+//#region src/cli/qmd-cli.ts
+/**
+* Extract `--agent <id>` from argv, returning the agent id and the remaining
+* args that should be forwarded to qmd.  We do this manually so we don't need
+* commander's passThroughOptions (which requires enablePositionalOptions on the
+* parent) and so unknown qmd flags aren't swallowed.
+*/
+function extractAgentArg(argv) {
+	const rest = [];
+	let agentId = null;
+	let i = 0;
+	while (i < argv.length) {
+		const arg = argv[i];
+		if ((arg === "--agent" || arg === "-a") && i + 1 < argv.length) {
+			agentId = argv[i + 1];
+			i += 2;
+		} else if (arg?.startsWith("--agent=")) {
+			agentId = arg.slice(8);
+			i += 1;
+		} else {
+			rest.push(arg);
+			i += 1;
+		}
+	}
+	return {
+		agentId,
+		rest
+	};
+}
+function resolveAgent(agentId) {
+	if (agentId) return agentId.trim();
+	try {
+		return resolveDefaultAgentId(loadConfig());
+	} catch {
+		return "main";
+	}
+}
+function resolveXdgCacheHome(agentId) {
+	const stateDir = resolveStateDir(process.env, os.homedir);
+	return path.join(stateDir, "agents", agentId, "qmd", "xdg-cache");
+}
+function findQmdBinary() {
+	if (process.env.OPENCLAW_QMD_BIN) return process.env.OPENCLAW_QMD_BIN;
+	return "qmd";
+}
+function registerQmdCli(program) {
+	program.command("qmd").description("Proxy qmd commands with agent-scoped XDG_CACHE_HOME").addHelpText("after", () => `\n${formatHelpExamples([
+		["openclaw qmd status --index index", "Show qmd index status."],
+		["openclaw qmd query \"search term\"", "Run a semantic query."],
+		["openclaw qmd embed --index index", "Re-embed the index."],
+		["openclaw qmd --agent work status --index index", "Use a different agent's index."]
+	])}\n`).option("--agent <id>", "Agent ID whose qmd index to use (default: default agent)").allowUnknownOption(true).allowExcessArguments(true).action(() => {
+		const argv = process.argv;
+		const qmdIdx = argv.findIndex((arg, i) => i >= 2 && arg === "qmd");
+		const { agentId: parsedAgent, rest: qmdArgs } = extractAgentArg(qmdIdx >= 0 ? argv.slice(qmdIdx + 1) : []);
+		const xdgCacheHome = resolveXdgCacheHome(resolveAgent(parsedAgent));
+		const qmdBin = findQmdBinary();
+		const result = spawnSync(qmdBin, qmdArgs, {
+			env: {
+				...process.env,
+				XDG_CACHE_HOME: xdgCacheHome
+			},
+			stdio: "inherit",
+			shell: false
+		});
+		if (result.error) {
+			defaultRuntime.error(`qmd: failed to spawn '${qmdBin}': ${result.error.message}\nMake sure qmd is installed and available in PATH.`);
+			defaultRuntime.exit(1);
+			return;
+		}
+		const code = result.status ?? 1;
+		if (code !== 0) defaultRuntime.exit(code);
+	});
+}
+//#endregion
+export { registerQmdCli };
