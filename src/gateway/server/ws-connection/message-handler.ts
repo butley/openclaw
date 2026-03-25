@@ -520,11 +520,16 @@ export function attachGatewayWsMessageHandler(params: {
             authOk,
             authMethod,
           });
+          // [FORK-PATCH-23] When dangerouslyDisableDeviceAuth is true, preserve
+          // self-declared scopes for control-ui clients regardless of locality.
+          // Without this, external webchat (via funnel/proxy) loses operator.read
+          // and all queries fail with "missing scope: operator.read".
           const preserveInsecureLocalControlUiScopes =
             isControlUi &&
-            controlUiAuthPolicy.allowInsecureAuthConfigured &&
-            isLocalClient &&
-            (authMethod === "token" || authMethod === "password");
+            (controlUiAuthPolicy.dangerouslyDisableDeviceAuth ||
+              (controlUiAuthPolicy.allowInsecureAuthConfigured &&
+                isLocalClient &&
+                (authMethod === "token" || authMethod === "password")));
           const decision = evaluateMissingDeviceIdentity({
             hasDeviceIdentity: Boolean(device),
             role,
