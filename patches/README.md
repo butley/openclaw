@@ -1,8 +1,8 @@
 # Custom Patches — butley/openclaw
 
-22 active patches on `feat/rebase-3.22` (base: upstream v2026.3.22).
+23 active patches on `feat/rebase-3.22` (base: upstream v2026.3.22).
 
-Last updated: 2026-03-24 (post-hardening audit).
+Last updated: 2026-03-25.
 
 ---
 
@@ -77,6 +77,17 @@ Last updated: 2026-03-24 (post-hardening audit).
 | P29 | Chat Sender Meta | Pre-sanitization extract | `server-methods/chat.ts` | `grep -q 'senderMeta' src/gateway/server-methods/chat.ts` |
 | P30 | Chat Group Context | Pre-sanitization extract | `server-methods/chat.ts` | `grep -q 'chatHistory' src/gateway/server-methods/chat.ts` |
 
+### Auth / Scope
+
+| # | Name | Type | Files | Verify |
+|---|------|------|-------|--------|
+| P23b | [Control UI Scope Preservation](control-ui-scope-preservation/README.md) | ⚠️ Provisional — 1 condition widened | `message-handler.ts` | `grep -q 'dangerouslyDisableDeviceAuth' src/gateway/server/ws-connection/message-handler.ts` |
+
+> **Note:** P23b is a provisional fix that trusts client-declared scopes when
+> `dangerouslyDisableDeviceAuth` is true. The real fix is session-based scope
+> resolution via Better Auth JWT → Convex user role → server-side scopes.
+> See [full docs](control-ui-scope-preservation/README.md) for the path forward.
+
 ### Optional / Pending
 
 | # | Name | Status | Files |
@@ -92,7 +103,7 @@ Last updated: 2026-03-24 (post-hardening audit).
 
 **Minimal conflict (additive):** P7, P9, P13, P25, P26, P29, P30, P31, P32 — only break if upstream renames the exact function/field they touch.
 
-**Watch closely (inline modifications):** P15, P16, P17, P22, P23 — touch upstream code directly. Review on every merge.
+**Watch closely (inline modifications):** P15, P16, P17, P22, P23, P23b — touch upstream code directly. Review on every merge.
 
 ---
 

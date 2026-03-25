@@ -60,6 +60,7 @@ Last updated: 2026-03-24.
 | P19 | Media Endpoint | Additive route | `server-http.ts` |
 | P22 | Chat Media Pipeline | Pre-sanitization extract | `server-methods/chat.ts` |
 | P23 | Chat.send Internal Routing | Routing override | `server-methods/chat.ts`, `message-channel.ts` |
+| P23b | Control UI Scope Preservation | ⚠️ Provisional — 1 condition | `message-handler.ts` |
 | P25 | HTTP Tools Channel Reg | Additive import | `tools-invoke-http.ts` |
 | P26 | ThinkingDefault Shortcut | Additive early return | `server-methods/chat.ts` |
 | P27 | Media Inbound Path | Additive route | `server-http.ts` |
@@ -90,7 +91,7 @@ Last updated: 2026-03-24.
 
 **Zero conflict (own files):** P2, P4, P5, P8, P10, P11, P18
 **Minimal conflict (additive):** P7, P9, P13, P25, P26, P29, P30, P31, P32
-**Watch closely (inline mods):** P15, P16, P17, P22, P23
+**Watch closely (inline mods):** P15, P16, P17, P22, P23, P23b
 
 ---
 
