@@ -374,10 +374,15 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
 
     // ── Thinking / Reasoning ──
     if (payload.stream === "thinking") {
-      // Strip upstream formatting ("Reasoning:\n" prefix and _italic_ wrapping)
-      // so SSE consumers get clean reasoning text.
+      // Strip upstream formatting ("Reasoning:\n" prefix and _italic_ wrapping per line)
+      // so SSE consumers get clean reasoning text. formatReasoningMessage wraps each
+      // non-empty line in underscores: "_line_", so we strip leading/trailing _ per line.
       const stripReasoningFormat = (s: string): string =>
-        s.replace(/^Reasoning:\n/i, "").replace(/^_/, "").replace(/_$/, "");
+        s
+          .replace(/^Reasoning:\n/i, "")
+          .split("\n")
+          .map((line) => line.replace(/^_/, "").replace(/_$/, ""))
+          .join("\n");
 
       const rawDelta =
         typeof payload.data?.delta === "string"
@@ -390,11 +395,15 @@ export function handleSseStream(req: IncomingMessage, res: ServerResponse): bool
           : null;
       const fullText = rawFullText ? stripReasoningFormat(rawFullText) : null;
 
-      // Use delta directly if available; otherwise extract from full text
-      const newContent = delta
-        ? delta
-        : fullText && fullText.length > lastReasoningLen
-          ? fullText.slice(lastReasoningLen)
+      // Use full text (slicing from lastReasoningLen) as the canonical source of
+      // incremental content. The gateway-level delta can be the ENTIRE formatted text
+      // when the per-line italic wrapping breaks the startsWith prefix check in
+      // pi-embedded-subscribe, so relying on delta alone causes duplication.
+      // Fall back to delta only when no full text is available.
+      const newContent = fullText && fullText.length > lastReasoningLen
+        ? fullText.slice(lastReasoningLen)
+        : delta && (!fullText || fullText.length > lastReasoningLen)
+          ? delta
           : null;
       if (reasoningDebugEnabled) {
         log.info(
