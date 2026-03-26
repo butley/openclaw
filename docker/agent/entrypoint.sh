@@ -4,6 +4,11 @@ set -e
 # Add bun to PATH (for QMD memory search)
 export PATH="/root/.bun/bin:$PATH"
 
+# Sync platform extensions from image to mounted volume (manifest-driven)
+if [ -f /opt/openclaw/scripts/sync-platform.sh ]; then
+    bash /opt/openclaw/scripts/sync-platform.sh
+fi
+
 # Export gateway token — must happen before exec so the gateway process inherits it.
 if [ -f /root/.openclaw/gateway-credentials.json ]; then
     export OPENCLAW_GATEWAY_TOKEN=$(python3 -c \
