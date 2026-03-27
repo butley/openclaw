@@ -8,8 +8,9 @@ Phases:
   4. Create .bootstrap-done marker
   5. Onboarding injection (if BOOTSTRAP.md exists)
   6. Session registration
+  7. System cron provisioning (idempotent, every start)
 
-Phases 1-2 run on every container start (idempotent).
+Phases 1-2 and 7 run on every container start (idempotent).
 Phases 3-6 only run on first boot (skipped if .bootstrap-done exists).
 """
 
@@ -434,8 +435,154 @@ def register_session() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 7: System cron provisioning
+# ---------------------------------------------------------------------------
+
+SYSTEM_CRONS = [
+    {
+        "name": "system-context-harvester",
+        "schedule": {"kind": "every", "everyMs": 1800000},
+        "sessionTarget": "isolated",
+        "payload": {
+            "kind": "agentTurn",
+            "message": (
+                "Run the context harvester script: "
+                "cd /root/workspace/tools/context-harvester && bash run.sh. "
+                "Report a brief summary of what changed (sessions scanned, "
+                "messages collected, topics added/removed). If it fails, report the error."
+            ),
+            "model": "haiku",
+            "timeoutSeconds": 300,
+        },
+        "delivery": {"mode": "none"},
+        "enabled": True,
+    },
+]
+
+
+def provision_system_crons() -> None:
+    """Ensure system-* cron jobs exist via ``openclaw cron`` CLI (idempotent).
+
+    Lists existing cron jobs, skips any that already exist (matched by name),
+    and creates missing ones using ``openclaw cron add``.
+    """
+    log.info("Phase 7: System cron provisioning — start")
+    t0 = time.monotonic()
+
+    # Check if context-harvester tool exists
+    harvester_path = WORKSPACE / "tools" / "context-harvester" / "run.sh"
+    if not harvester_path.exists():
+        log.info("  Context harvester not installed at %s — skipping cron provisioning", harvester_path)
+        elapsed = time.monotonic() - t0
+        log.info("Phase 7: System cron provisioning — skipped (%.2fs)", elapsed)
+        return
+
+    # List existing cron jobs via CLI (--json for machine-readable output)
+    existing_names: set[str] = set()
+    try:
+        result = subprocess.run(
+            ["openclaw", "cron", "list", "--json"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout)
+            jobs = data if isinstance(data, list) else data.get("jobs", [])
+            existing_names = {j.get("name", "") for j in jobs}
+            log.info("  Found %d existing cron job(s): %s", len(jobs), existing_names or "(none)")
+        else:
+            log.warning("  cron list returned rc=%d — stderr: %s", result.returncode, result.stderr.strip()[:200])
+    except json.JSONDecodeError:
+        log.warning("  cron list output not valid JSON — will attempt creation anyway")
+    except Exception as exc:
+        log.warning("  Could not list cron jobs: %s — will attempt creation anyway", exc)
+
+    # Create missing system crons using CLI flags
+    created = 0
+    skipped = 0
+    for cron_def in SYSTEM_CRONS:
+        name = cron_def["name"]
+        if name in existing_names:
+            log.info("  Cron '%s' already exists — skipping", name)
+            skipped += 1
+            continue
+
+        log.info("  Creating cron '%s'...", name)
+        try:
+            cmd = ["openclaw", "cron", "add", "--name", name]
+
+            # Schedule
+            schedule = cron_def["schedule"]
+            if schedule["kind"] == "every":
+                every_ms = schedule["everyMs"]
+                # Convert ms to human duration for CLI
+                if every_ms >= 3600000:
+                    cmd += ["--every", f"{every_ms // 3600000}h"]
+                elif every_ms >= 60000:
+                    cmd += ["--every", f"{every_ms // 60000}m"]
+                else:
+                    cmd += ["--every", f"{every_ms // 1000}s"]
+            elif schedule["kind"] == "cron":
+                cmd += ["--cron", schedule["expr"]]
+                if schedule.get("tz"):
+                    cmd += ["--tz", schedule["tz"]]
+
+            # Payload
+            payload = cron_def["payload"]
+            if payload["kind"] == "agentTurn":
+                cmd += ["--message", payload["message"]]
+                cmd += ["--session", cron_def.get("sessionTarget", "isolated")]
+                if payload.get("model"):
+                    cmd += ["--model", payload["model"]]
+                if payload.get("timeoutSeconds"):
+                    cmd += ["--timeout-seconds", str(payload["timeoutSeconds"])]
+
+            # Delivery
+            delivery = cron_def.get("delivery", {})
+            if delivery.get("mode") == "none":
+                cmd += ["--no-deliver"]
+
+            cmd += ["--json"]
+
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                log.info("  Created cron '%s': %s", name, result.stdout.strip()[:200])
+                created += 1
+            else:
+                log.warning("  Failed to create cron '%s' (rc=%d): %s %s",
+                            name, result.returncode,
+                            result.stderr.strip()[:200],
+                            result.stdout.strip()[:200])
+        except Exception as exc:
+            log.warning("  Failed to create cron '%s': %s", name, exc)
+
+    elapsed = time.monotonic() - t0
+    log.info("Phase 7: System cron provisioning — done (created=%d, skipped=%d, %.2fs)", created, skipped, elapsed)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def wait_for_gateway_quick(port: int, timeout: int = 30) -> bool:
+    """Quick gateway readiness check (shorter timeout for restart scenarios)."""
+    log.debug("Quick gateway check (port=%d, timeout=%ds)", port, timeout)
+    url = f"http://127.0.0.1:{port}/__openclaw__/canvas/"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urlopen(url, timeout=3) as resp:
+                log.debug("Gateway ready (status=%d)", resp.status)
+                return True
+        except URLError as exc:
+            if hasattr(exc, "code"):
+                return True
+        except OSError:
+            pass
+        time.sleep(1)
+    return False
+
+
 def load_gateway_token() -> str:
     """Read gateway token from credentials file."""
     log.debug("Reading gateway token from %s", CREDS_FILE)
@@ -514,6 +661,13 @@ def main() -> None:
                     log.warning("User can still interact manually via the chat UI")
             else:
                 log.info("No BOOTSTRAP.md at %s — skipping onboarding (agent already initialized or manual setup)", BOOTSTRAP_MD)
+
+        # Phase 7: System cron provisioning (runs every start, needs gateway)
+        port = int(os.environ.get("OPENCLAW_PORT", "18789"))
+        if wait_for_gateway_quick(port):
+            provision_system_crons()
+        else:
+            log.warning("Gateway not ready — skipping system cron provisioning")
 
     except Exception:
         log.exception("Bootstrap failed with unexpected error")
