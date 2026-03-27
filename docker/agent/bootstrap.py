@@ -564,9 +564,9 @@ def provision_system_crons() -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def wait_for_gateway_quick(port: int, timeout: int = 30) -> bool:
-    """Quick gateway readiness check (shorter timeout for restart scenarios)."""
-    log.debug("Quick gateway check (port=%d, timeout=%ds)", port, timeout)
+def wait_for_gateway_quick(port: int, timeout: int = 90) -> bool:
+    """Gateway readiness check for restart scenarios (phase 7)."""
+    log.info("Waiting for gateway (port=%d, timeout=%ds)", port, timeout)
     url = f"http://127.0.0.1:{port}/__openclaw__/canvas/"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
