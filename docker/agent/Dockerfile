@@ -196,6 +196,14 @@ COPY --from=builder /opt/openclaw/dist/runtime ./dist/runtime
 COPY docker/agent/scripts/sync-platform.sh /opt/openclaw/scripts/sync-platform.sh
 RUN chmod +x /opt/openclaw/scripts/sync-platform.sh
 
+# Context Harvester: Copy tool files and install dependencies
+# The harvester runs every 30 min via cron to generate live context snapshots
+RUN mkdir -p /root/workspace/tools/context-harvester
+COPY docker/agent/context-harvester-files /root/workspace/tools/context-harvester/
+WORKDIR /root/workspace/tools/context-harvester
+RUN npm install && chmod +x run.sh
+WORKDIR /root
+
 # Verify the build
 RUN openclaw --version || echo "Version check skipped"
 
