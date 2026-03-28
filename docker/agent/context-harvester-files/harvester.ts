@@ -1,15 +1,22 @@
 import 'dotenv/config';
 import { execSync } from 'child_process';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import OpenAI from 'openai';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 // ── Config ──────────────────────────────────────────────────────────
-const CONTEXT_MD_PATH = join(process.env.HOME ?? '~', 'clawd', 'memory', 'CONTEXT.md');
+const WORKSPACE = join(process.env.HOME ?? '~', 'clawd');
+const CONTEXT_MD_PATH = join(WORKSPACE, 'memory', 'CONTEXT.md');
+const FOLLOWUP_STATE_PATH = join(__dirname, '.followup-state.json');
 const SESSIONS_DIR = join(process.env.HOME ?? '~', '.openclaw', 'agents', 'main', 'sessions');
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
 const MAX_MESSAGES_PER_SESSION = 50;
+const FOLLOWUP_COOLDOWN_MS = 2 * 60 * 60 * 1000; // 2h default cooldown
 
 const deepseek = new OpenAI({
   baseURL: 'https://api.deepseek.com',
@@ -31,6 +38,22 @@ interface SessionMessage {
   role: string;
   text: string;
   timestamp: string;
+}
+
+interface FollowUp {
+  sessionKey: string;
+  message: string;
+  reason: string;
+  urgency: 'high' | 'medium';
+}
+
+interface DeepSeekResponse {
+  contextMd: string;
+  followUps: FollowUp[];
+}
+
+interface FollowUpState {
+  [sessionKey: string]: number; // timestamp of last followUp sent
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -93,13 +116,36 @@ function readSessionHistory(sessionId: string): SessionMessage[] {
     console.warn(`Failed to read session file ${sessionId}: ${e.message}`);
   }
 
-  // Return last N messages only
   return messages.slice(-MAX_MESSAGES_PER_SESSION);
+}
+
+function loadFollowUpState(): FollowUpState {
+  try {
+    if (existsSync(FOLLOWUP_STATE_PATH)) {
+      return JSON.parse(readFileSync(FOLLOWUP_STATE_PATH, 'utf-8'));
+    }
+  } catch {
+    // corrupted state, start fresh
+  }
+  return {};
+}
+
+function saveFollowUpState(state: FollowUpState): void {
+  writeFileSync(FOLLOWUP_STATE_PATH, JSON.stringify(state, null, 2), 'utf-8');
+}
+
+function formatTimeSince(ms: number): string {
+  const hours = Math.floor(ms / 3600000);
+  const mins = Math.floor((ms % 3600000) / 60000);
+  if (hours > 0) return `${hours}h${mins}m ago`;
+  return `${mins}m ago`;
 }
 
 // ── Main ────────────────────────────────────────────────────────────
 async function main() {
-  console.log('🌾 Context Harvester starting...');
+  const nowISO = new Date().toISOString();
+  const nowMs = Date.now();
+  console.log(`🌾 Context Harvester starting at ${nowISO}`);
 
   // 1. Get active sessions
   const sessionsRaw = run('openclaw sessions --json --active 60');
@@ -158,7 +204,19 @@ async function main() {
     console.log('No existing CONTEXT.md — will create fresh.');
   }
 
-  // 4. Build prompt for DeepSeek
+  // 4. Load followUp state
+  const followUpState = loadFollowUpState();
+
+  // 5. Build session key list with cooldown info
+  const sessionKeyList = allSessionData.map(({ session }) => {
+    const lastFollowUp = followUpState[session.key];
+    const cooldownInfo = lastFollowUp
+      ? `last follow-up: ${formatTimeSince(nowMs - lastFollowUp)}`
+      : 'never followed up';
+    return `- ${session.key} (channel: ${session.channel || 'unknown'}, peer: ${session.peer || 'unknown'}) [${cooldownInfo}]`;
+  }).join('\n');
+
+  // 6. Build prompt for DeepSeek
   const sessionSummaries = allSessionData
     .map(({ session, messages }) => {
       const header = `### Session: ${session.key} (channel: ${session.channel || 'unknown'}, peer: ${session.peer || 'unknown'})`;
@@ -172,7 +230,13 @@ async function main() {
     })
     .join('\n\n---\n\n');
 
-  const userPrompt = `## Current CONTEXT.md
+  const userPrompt = `## Current Time
+${nowISO}
+
+## Available Session Keys
+${sessionKeyList}
+
+## Current CONTEXT.md
 ${existingContext || '(empty — first run)'}
 
 ---
@@ -181,10 +245,18 @@ ${existingContext || '(empty — first run)'}
 
 ${sessionSummaries}`;
 
-  // 5. Call DeepSeek with retries
-  const systemPrompt = `You receive the current CONTEXT.md and new messages from active sessions.
+  const systemPrompt = `You are a context analyzer. You receive session data and produce a structured JSON response.
 
-REWRITE the CONTEXT.md from scratch reflecting ONLY:
+## Current time: ${nowISO}
+
+Your response MUST be valid JSON with exactly this structure:
+{
+  "contextMd": "the full CONTEXT.md content as a string",
+  "followUps": []
+}
+
+### contextMd rules:
+REWRITE CONTEXT.md from scratch reflecting ONLY:
 - Topics that are still active or relevant
 - People with recent interactions (last 24h)
 - Topics with pending actions or follow-ups
@@ -194,23 +266,42 @@ REMOVE naturally:
 - Conversations that ended without needed action
 - Noise, small talk, one-off interactions
 
-Structure:
+Structure the markdown as:
+# CONTEXT.md - Live Context Map
+> Last updated: ${nowISO}
+> Sessions scanned: [N] | New messages: [N]
+
 ## 👤 [Person Name]
 ### [Channel]
 #### [Topic]
 - Key details
 - Status: 🟡 IN PROGRESS / ✅ DONE / ⏳ WAITING
 
-The file should be CONCISE and USEFUL - like a briefing for someone who just woke up and needs to know what's going on.
+The file should be CONCISE and USEFUL — like a briefing for someone who just woke up.
 
-Header format:
-# CONTEXT.md - Live Context Map
-> Last updated: [timestamp]
-> Sessions scanned: [N] | New messages: [N]
+### followUps rules:
+Follow-ups are OPTIONAL — use your judgment. If a follow-up makes sense, include it.
 
-Use the actual current timestamp (ISO format) and the real counts from the data provided.`;
+Consider a followUp when:
+- A topic has pending action and the user hasn't responded
+- Something time-sensitive needs attention
+- A reminder would genuinely help move things forward
 
-  let result: string | null = null;
+Respect the cooldown: check each session's "last follow-up" timestamp. Don't send another follow-up to the same session within 2 hours of the last one.
+
+Each followUp must have:
+- sessionKey: exact session key from the "Available Session Keys" list
+- message: a natural, helpful message (write as a human assistant would — warm, not robotic)
+- reason: brief internal reason why this followUp is needed
+- urgency: "high" (legal, financial, expiring deadline) or "medium" (helpful but not critical)
+
+Skip followUps when:
+- The user already acknowledged or responded to the topic
+- The session was recently followed up (within 2 hours)
+- It's noise, small talk, or something clearly resolved`;
+
+  // 7. Call DeepSeek with JSON mode
+  let result: DeepSeekResponse | null = null;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -223,18 +314,30 @@ Use the actual current timestamp (ISO format) and the real counts from the data 
         ],
         temperature: 0.3,
         max_tokens: 4096,
+        response_format: { type: 'json_object' },
       });
 
-      result = response.choices[0]?.message?.content ?? null;
-      if (result) {
-        console.log('DeepSeek responded successfully.');
-        break;
+      const raw = response.choices[0]?.message?.content ?? null;
+      if (raw) {
+        try {
+          result = JSON.parse(raw) as DeepSeekResponse;
+          if (!result.contextMd) {
+            console.error('DeepSeek returned JSON but missing contextMd field.');
+            result = null;
+          } else {
+            console.log('DeepSeek responded successfully (JSON parsed).');
+            break;
+          }
+        } catch (parseErr: any) {
+          console.error(`DeepSeek returned invalid JSON (attempt ${attempt}):`, parseErr.message);
+          console.error('Raw response:', raw.slice(0, 200));
+        }
       }
     } catch (err: any) {
       console.error(`DeepSeek API error (attempt ${attempt}):`, err.message);
-      if (attempt < MAX_RETRIES) {
-        await sleep(RETRY_DELAY_MS * attempt);
-      }
+    }
+    if (attempt < MAX_RETRIES) {
+      await sleep(RETRY_DELAY_MS * attempt);
     }
   }
 
@@ -243,9 +346,56 @@ Use the actual current timestamp (ISO format) and the real counts from the data 
     process.exit(1);
   }
 
-  // 6. Write CONTEXT.md
-  writeFileSync(CONTEXT_MD_PATH, result, 'utf-8');
-  console.log(`✅ CONTEXT.md written (${result.length} chars) → ${CONTEXT_MD_PATH}`);
+  // 8. Write CONTEXT.md
+  writeFileSync(CONTEXT_MD_PATH, result.contextMd, 'utf-8');
+  console.log(`✅ CONTEXT.md written (${result.contextMd.length} chars) → ${CONTEXT_MD_PATH}`);
+
+  // 9. Process followUps
+  const followUps = result.followUps ?? [];
+  if (followUps.length === 0) {
+    console.log('📭 No follow-ups suggested by DeepSeek.');
+  } else {
+    console.log(`📬 ${followUps.length} follow-up(s) suggested:`);
+
+    // Filter by cooldown
+    const validFollowUps: FollowUp[] = [];
+    for (const fu of followUps) {
+      const lastSent = followUpState[fu.sessionKey];
+      if (lastSent && (nowMs - lastSent) < FOLLOWUP_COOLDOWN_MS) {
+        const elapsed = formatTimeSince(nowMs - lastSent);
+        console.log(`  ⏳ SKIPPED (cooldown) → ${fu.sessionKey} — last sent ${elapsed}, min cooldown 2h`);
+        continue;
+      }
+      // Validate session key exists
+      const sessionExists = allSessionData.some(d => d.session.key === fu.sessionKey);
+      if (!sessionExists) {
+        console.log(`  ⚠️ SKIPPED (invalid key) → ${fu.sessionKey}`);
+        continue;
+      }
+      validFollowUps.push(fu);
+    }
+
+    if (validFollowUps.length === 0) {
+      console.log('📭 All follow-ups filtered out (cooldown or invalid).');
+    } else {
+      // Output followUps as structured block for the cron agent to process
+      console.log('\n===FOLLOWUPS_START===');
+      console.log(JSON.stringify(validFollowUps, null, 2));
+      console.log('===FOLLOWUPS_END===');
+
+      // Update state for all valid followUps (agent will process them)
+      for (const fu of validFollowUps) {
+        followUpState[fu.sessionKey] = nowMs;
+      }
+      saveFollowUpState(followUpState);
+    }
+  }
+
+  // 10. Summary
+  console.log(`\n📊 Summary: ${allSessionData.length} sessions, ${totalMessages} messages, ${followUps.length} followUps suggested, ${followUps.filter(f => {
+    const last = followUpState[f.sessionKey];
+    return !last || (nowMs - last) < 1000; // just updated = valid
+  }).length} will be sent`);
 }
 
 function writeMinimal(reason: string) {
