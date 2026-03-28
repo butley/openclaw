@@ -17,6 +17,7 @@ const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
 const MAX_MESSAGES_PER_SESSION = 50;
 const FOLLOWUP_COOLDOWN_MS = 2 * 60 * 60 * 1000; // 2h default cooldown
+const FOLLOWUPS_ENABLED = false; // Disable followUp injection until proper delivery mechanism is implemented
 
 const deepseek = new OpenAI({
   baseURL: 'https://api.deepseek.com',
@@ -350,9 +351,11 @@ Skip followUps when:
   writeFileSync(CONTEXT_MD_PATH, result.contextMd, 'utf-8');
   console.log(`✅ CONTEXT.md written (${result.contextMd.length} chars) → ${CONTEXT_MD_PATH}`);
 
-  // 9. Process followUps
+  // 9. Process followUps (disabled — flag FOLLOWUPS_ENABLED controls this)
   const followUps = result.followUps ?? [];
-  if (followUps.length === 0) {
+  if (!FOLLOWUPS_ENABLED) {
+    console.log(`📭 Follow-ups disabled (FOLLOWUPS_ENABLED=false). ${followUps.length} suggestion(s) ignored.`);
+  } else if (followUps.length === 0) {
     console.log('📭 No follow-ups suggested by DeepSeek.');
   } else {
     console.log(`📬 ${followUps.length} follow-up(s) suggested:`);
