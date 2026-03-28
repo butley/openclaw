@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // ── Config ──────────────────────────────────────────────────────────
-const WORKSPACE = join(process.env.HOME ?? '~', 'clawd');
+const WORKSPACE = process.env.OPENCLAW_WORKSPACE ?? join(process.env.HOME ?? '~', 'workspace');
 const CONTEXT_MD_PATH = join(WORKSPACE, 'memory', 'CONTEXT.md');
 const FOLLOWUP_STATE_PATH = join(__dirname, '.followup-state.json');
 const SESSIONS_DIR = join(process.env.HOME ?? '~', '.openclaw', 'agents', 'main', 'sessions');
@@ -371,6 +371,7 @@ Skip followUps when:
   }
 
   // 8. Write CONTEXT.md
+  ensureDir(CONTEXT_MD_PATH);
   writeFileSync(CONTEXT_MD_PATH, result.contextMd, 'utf-8');
   console.log(`✅ CONTEXT.md written (${result.contextMd.length} chars) → ${CONTEXT_MD_PATH}`);
 
@@ -424,6 +425,14 @@ Skip followUps when:
   }).length} will be sent`);
 }
 
+function ensureDir(filePath: string): void {
+  const dir = dirname(filePath);
+  if (!existsSync(dir)) {
+    const { mkdirSync } = require('fs');
+    mkdirSync(dir, { recursive: true });
+  }
+}
+
 function writeMinimal(reason: string) {
   const content = `# CONTEXT.md - Live Context Map
 > Last updated: ${new Date().toISOString()}
@@ -431,6 +440,7 @@ function writeMinimal(reason: string) {
 
 *${reason}*
 `;
+  ensureDir(CONTEXT_MD_PATH);
   writeFileSync(CONTEXT_MD_PATH, content, 'utf-8');
   console.log(`Wrote minimal CONTEXT.md → ${CONTEXT_MD_PATH}`);
 }
