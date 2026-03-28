@@ -1,0 +1,9 @@
+{
+  "id": "agent-registry",
+  "channels": ["agent-registry"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
