@@ -192,6 +192,10 @@ RUN ln -s /opt/openclaw/openclaw.mjs /usr/local/bin/openclaw && \
 # See builder stage for the bundling step.
 COPY --from=builder /opt/openclaw/dist/runtime ./dist/runtime
 
+# Patch: Remove duplicate qmd CLI registration (OpenClaw 2026.3.14 bug)
+COPY docker/agent/scripts/patch-qmd-duplicate.py /tmp/patch-qmd-duplicate.py
+RUN python3 /tmp/patch-qmd-duplicate.py && rm /tmp/patch-qmd-duplicate.py
+
 # Copy runtime sync script
 COPY docker/agent/scripts/sync-platform.sh /opt/openclaw/scripts/sync-platform.sh
 RUN chmod +x /opt/openclaw/scripts/sync-platform.sh
