@@ -1,0 +1,20 @@
+# Context Harvester Setup
+# Add this snippet to the agent Dockerfile if you want context-harvester bundled
+
+# Copy context-harvester tool into workspace
+COPY docker/agent/context-harvester-files /app/workspace/tools/context-harvester/
+
+# Install context-harvester dependencies
+WORKDIR /app/workspace/tools/context-harvester
+RUN npm install
+
+# Make run script executable
+RUN chmod +x run.sh
+
+# Return to app directory
+WORKDIR /app
+
+# Note: DEEPSEEK_API_KEY should be provided at runtime via:
+# - Environment variable
+# - Secret mounted as file
+# - Set in .env at startup

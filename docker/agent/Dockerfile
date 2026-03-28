@@ -192,9 +192,21 @@ RUN ln -s /opt/openclaw/openclaw.mjs /usr/local/bin/openclaw && \
 # See builder stage for the bundling step.
 COPY --from=builder /opt/openclaw/dist/runtime ./dist/runtime
 
+# Patch: Remove duplicate qmd CLI registration (OpenClaw 2026.3.14 bug)
+COPY docker/agent/scripts/patch-qmd-duplicate.py /tmp/patch-qmd-duplicate.py
+RUN python3 /tmp/patch-qmd-duplicate.py && rm /tmp/patch-qmd-duplicate.py
+
 # Copy runtime sync script
 COPY docker/agent/scripts/sync-platform.sh /opt/openclaw/scripts/sync-platform.sh
 RUN chmod +x /opt/openclaw/scripts/sync-platform.sh
+
+# Context Harvester: Copy tool files and install dependencies
+# The harvester runs every 30 min via cron to generate live context snapshots
+RUN mkdir -p /root/workspace/tools/context-harvester
+COPY docker/agent/context-harvester-files /root/workspace/tools/context-harvester/
+WORKDIR /root/workspace/tools/context-harvester
+RUN npm install && chmod +x run.sh
+WORKDIR /root
 
 # Verify the build
 RUN openclaw --version || echo "Version check skipped"
