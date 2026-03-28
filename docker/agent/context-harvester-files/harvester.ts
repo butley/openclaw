@@ -149,21 +149,44 @@ async function main() {
   console.log(`🌾 Context Harvester starting at ${nowISO}`);
 
   // 1. Get active sessions
+  //    Primary: openclaw sessions CLI. Fallback: scan JSONL files directly.
+  let sessions: SessionInfo[] = [];
+
   const sessionsRaw = run('openclaw sessions --json --active 60');
-  if (!sessionsRaw.trim()) {
-    console.log('No sessions output. Writing minimal CONTEXT.md.');
-    writeMinimal('No active sessions found.');
-    return;
+  if (sessionsRaw.trim()) {
+    try {
+      const parsed = JSON.parse(sessionsRaw);
+      sessions = Array.isArray(parsed) ? parsed : (parsed.sessions ?? []);
+    } catch {
+      console.warn('Failed to parse sessions JSON from CLI, falling back to JSONL scan.');
+    }
   }
 
-  let sessions: SessionInfo[];
-  try {
-    const parsed = JSON.parse(sessionsRaw);
-    sessions = Array.isArray(parsed) ? parsed : (parsed.sessions ?? []);
-  } catch {
-    console.error('Failed to parse sessions JSON.');
-    writeMinimal('Failed to parse sessions.');
-    return;
+  // Fallback: scan session JSONL files modified in the last 60 minutes
+  if (sessions.length === 0) {
+    console.log('CLI unavailable or returned no sessions. Scanning JSONL files directly...');
+    try {
+      const { readdirSync, statSync } = await import('fs');
+      const cutoff = nowMs - 60 * 60 * 1000;
+      const files = readdirSync(SESSIONS_DIR).filter(f => f.endsWith('.jsonl') && !f.includes('.reset.'));
+      for (const file of files) {
+        const fullPath = join(SESSIONS_DIR, file);
+        try {
+          const stat = statSync(fullPath);
+          if (stat.mtimeMs >= cutoff) {
+            const sessionId = file.replace('.jsonl', '');
+            sessions.push({
+              key: `agent:main:${sessionId}`,
+              sessionId,
+              label: sessionId,
+            });
+          }
+        } catch { /* skip unreadable files */ }
+      }
+      console.log(`Found ${sessions.length} recently active session files.`);
+    } catch (e: any) {
+      console.error(`JSONL scan failed: ${e.message}`);
+    }
   }
 
   if (sessions.length === 0) {
