@@ -79,7 +79,7 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
 
   gateway: {
     startAccount: async (ctx) => {
-      const { account, accountId, log, setStatus, getStatus, channelRuntime } = ctx;
+      const { account, accountId, log, setStatus, getStatus, channelRuntime, abortSignal } = ctx;
       const config = account.config;
 
       if (!config.enabled || !config.hostname) {
@@ -160,14 +160,14 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
         log?.info?.("Pilot Protocol not installed — running in discovery-only mode (no P2P messaging)");
       }
 
-      // Mark channel as successfully started — registry connection is the minimum requirement
+      // Mark channel as successfully started
       setStatus({ connected: true, running: true });
 
-      // Store registry client for reuse and deregister on stop (#5, #18)
+      // Store registry client for reuse and deregister on stop
       registryClients.set(accountId, { client: registryClient, agentId: regResult.agentId });
       heartbeatFailures.set(accountId, 0);
 
-      // Start heartbeat interval (every 60s) with re-registration on repeated failure (#7)
+      // Start heartbeat interval (every 60s) with re-registration on repeated failure
       if (regResult.ok && regResult.agentId) {
         let agentId = regResult.agentId;
         const interval = setInterval(async () => {
@@ -200,7 +200,16 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
         heartbeatIntervals.set(accountId, interval);
       }
 
-      return { monitor, registryClient, agentId: regResult.agentId };
+      // Keep the channel alive — gateway restarts if startAccount resolves.
+      // Block until the abort signal fires (stopAccount triggers this).
+      await new Promise<void>((resolve) => {
+        if (abortSignal?.aborted) return resolve();
+        if (abortSignal) {
+          abortSignal.addEventListener("abort", () => resolve(), { once: true });
+        }
+        // If no abortSignal, this promise never resolves — channel stays alive until process exits
+      });
+      log?.info?.("Agent Registry channel stopped (abort signal received)");
     },
 
     stopAccount: async (ctx) => {
