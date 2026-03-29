@@ -189,6 +189,7 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
   gatewayMethods: [
     "agent-registry/status",
     "agent-registry/peers",
+    "agent-registry/search",
     "agent-registry/send",
   ],
 
@@ -254,6 +255,23 @@ const plugin = {
         const result = await client.listAgents();
         respond(result.ok, {
           peers: result.peers,
+          error: result.error,
+        });
+      });
+
+      // GET /api/agent-registry/search — search for agents by query or capabilities
+      api.registerGatewayMethod("agent-registry/search", async ({ params, respond }) => {
+        const registryUrl = (params?.registryUrl as string) ?? "http://localhost:8001";
+        const query = params?.query as string | undefined;
+        const capabilities = params?.capabilities as string[] | undefined;
+        const limit = params?.limit as number | undefined;
+
+        const client = new AgentRegistryClient(registryUrl);
+        const result = await client.search({ query, capabilities, limit });
+        respond(result.ok, {
+          peers: result.peers,
+          total: result.total,
+          query,
           error: result.error,
         });
       });
