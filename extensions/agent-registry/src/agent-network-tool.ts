@@ -144,11 +144,15 @@ Send a message to another assistant. The response may be async.
             const url = new URL(`${config.registryUrl}/api/v1/agents/search/`);
             if (query) url.searchParams.set("query", query);
             if (capabilities?.length) {
-              for (const cap of capabilities) {
+              // Cap capabilities to prevent excessive filtering
+              const cappedCaps = capabilities.slice(0, 20);
+              for (const cap of cappedCaps) {
                 url.searchParams.append("capabilities", cap);
               }
             }
-            url.searchParams.set("limit", String(limit ?? 10));
+            // Clamp limit to reasonable range (1-50)
+            const clampedLimit = Math.min(50, Math.max(1, limit ?? 10));
+            url.searchParams.set("limit", String(clampedLimit));
 
             const res = await fetch(url.toString(), { headers });
             const data = await res.json();
@@ -173,10 +177,10 @@ Send a message to another assistant. The response may be async.
           }
 
           case "get_agent": {
-            // First search by hostname to get the agent
+            // Search by hostname with higher limit to avoid missing exact match
             const url = new URL(`${config.registryUrl}/api/v1/agents/search/`);
             url.searchParams.set("query", hostname!);
-            url.searchParams.set("limit", "1");
+            url.searchParams.set("limit", "25");
 
             const res = await fetch(url.toString(), { headers });
             const data = await res.json();
