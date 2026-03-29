@@ -17,6 +17,7 @@ import { getDaemonStatus, isPilotInstalled } from "./src/daemon.js";
 import { AgentRegistryClient } from "./src/discovery.js";
 import { fetchNetworkMetadata, getConvexEnv } from "./src/convex-client.js";
 import type { NetworkMetadata } from "./src/convex-client.js";
+import { createAgentNetworkTool } from "./src/agent-network-tool.js";
 
 /* ------------------------------------------------------------------ */
 /*  State                                                              */
@@ -339,6 +340,12 @@ const plugin = {
   configSchema: emptyPluginConfigSchema(),
   register(api: OpenClawPluginApi) {
     api.registerChannel({ plugin: agentRegistryPlugin });
+
+    // Register agent_network tool for LLM to search/contact other agents
+    const tool = createAgentNetworkTool(api);
+    if (tool && api.registerTool) {
+      api.registerTool(tool);
+    }
 
     // Register gateway HTTP method handlers
     if (api.registerGatewayMethod) {
