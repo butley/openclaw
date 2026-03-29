@@ -108,16 +108,16 @@ export async function startMonitor(options: MonitorOptions): Promise<MonitorHand
 
     // Handle spawn-level errors (e.g. binary not found)
     spawned.on("error", (err: NodeJS.ErrnoException) => {
-      onError?.(err);
       child = null;
       
-      // ENOENT means pilotctl not found - don't retry, throw immediately
+      // ENOENT means pilotctl not found - don't retry, don't call onError (will throw via Promise)
       if (err.code === "ENOENT") {
         initialSpawnFailed = true;
         stopped = true; // Stop reconnect attempts
         return;
       }
       
+      onError?.(err);
       scheduleReconnect();
     });
 
