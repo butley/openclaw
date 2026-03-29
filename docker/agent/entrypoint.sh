@@ -22,49 +22,86 @@ with open(config_path, "r") as f:
 plugins = config.setdefault("plugins", {})
 entries = plugins.setdefault("entries", {})
 
+# Resolve registry URL: env var > existing config > Docker bridge default
+def resolve_registry_url(existing_url=""):
+    url = os.environ.get("AGENT_REGISTRY_URL", "").strip()
+    if url:
+        # Replace localhost/127.0.0.1 with Docker bridge gateway (containers can't reach host localhost)
+        import re
+        url = re.sub(r'(https?://)(?:localhost|127\.0\.0\.1)', r'\1172.17.0.1', url)
+        return url
+    if existing_url:
+        return existing_url
+    return ""
+
+registry_url = resolve_registry_url()
+
 # Enable agent-registry plugin if not already configured
 if "agent-registry" not in entries:
-    entries["agent-registry"] = {
-        "enabled": True,
-        "config": {
-            "registryUrl": os.environ.get("AGENT_REGISTRY_URL", "")
+    if registry_url:
+        entries["agent-registry"] = {
+            "enabled": True,
+            "config": {
+                "registryUrl": registry_url
+            }
         }
-    }
-    changed = True
-    print("[entrypoint] Enabled agent-registry plugin")
+        changed = True
+        print(f"[entrypoint] Enabled agent-registry plugin (url={registry_url})")
+    else:
+        changed = False
+        print("[entrypoint] Skipping agent-registry plugin — no AGENT_REGISTRY_URL configured")
 else:
-    changed = False
-    print("[entrypoint] agent-registry plugin already configured")
+    # Update registryUrl if env var provides one and existing is empty
+    existing_cfg = entries["agent-registry"].get("config", {})
+    existing_url = existing_cfg.get("registryUrl", "")
+    if registry_url and not existing_url:
+        existing_cfg["registryUrl"] = registry_url
+        entries["agent-registry"]["config"] = existing_cfg
+        changed = True
+        print(f"[entrypoint] Updated agent-registry plugin registryUrl to {registry_url}")
+    else:
+        changed = False
+        print("[entrypoint] agent-registry plugin already configured")
 
 # Enable agent-registry channel with default account
 # Channels config is channels.<channel-id>, not channels.entries.<channel-id>
 channels = config.setdefault("channels", {})
+api_key = os.environ.get("AGENT_REGISTRY_API_KEY", "").strip()
+
 if "agent-registry" not in channels:
-    # Use INSTALLATION_ID env var as hostname, fallback to container hostname
-    import socket
-    hostname = os.environ.get("INSTALLATION_ID", socket.gethostname())
-    
-    account = {
-        "id": "default",
-        "hostname": hostname,
-        "registryUrl": os.environ.get("AGENT_REGISTRY_URL", "")
-    }
-    api_key = os.environ.get("AGENT_REGISTRY_API_KEY", "")
-    if api_key:
-        account["registryApiKey"] = api_key
-    channels["agent-registry"] = {"accounts": [account]}
-    changed = True
-    print(f"[entrypoint] Added agent-registry channel account (hostname={hostname})")
+    if registry_url:
+        # Use INSTALLATION_ID env var as hostname, fallback to container hostname
+        import socket
+        hostname = os.environ.get("INSTALLATION_ID", socket.gethostname())
+        
+        account = {
+            "id": "default",
+            "hostname": hostname,
+            "registryUrl": registry_url
+        }
+        if api_key:
+            account["registryApiKey"] = api_key
+        channels["agent-registry"] = {"accounts": [account]}
+        changed = True
+        print(f"[entrypoint] Added agent-registry channel (hostname={hostname}, url={registry_url})")
+    else:
+        print("[entrypoint] Skipping agent-registry channel — no registry URL")
 else:
-    # Ensure registryApiKey is injected even if channel already configured
+    # Fix existing config: inject missing fields
     ar_ch = channels["agent-registry"]
-    api_key = os.environ.get("AGENT_REGISTRY_API_KEY", "")
-    if api_key and "accounts" in ar_ch:
+    if "accounts" in ar_ch:
         for acc in ar_ch["accounts"]:
-            if "registryApiKey" not in acc:
+            # Inject API key if missing
+            if api_key and "registryApiKey" not in acc:
                 acc["registryApiKey"] = api_key
                 changed = True
                 print("[entrypoint] Injected registryApiKey into agent-registry channel")
+            # Fix registryUrl if empty or pointing to localhost
+            acc_url = acc.get("registryUrl", "")
+            if registry_url and (not acc_url or "localhost" in acc_url or "127.0.0.1" in acc_url):
+                acc["registryUrl"] = registry_url
+                changed = True
+                print(f"[entrypoint] Fixed agent-registry registryUrl to {registry_url}")
     if not changed:
         print("[entrypoint] agent-registry channel already configured")
 
