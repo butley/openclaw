@@ -22,19 +22,38 @@ with open(config_path, "r") as f:
 plugins = config.setdefault("plugins", {})
 entries = plugins.setdefault("entries", {})
 
-# Enable agent-registry channel if not already configured
+# Enable agent-registry plugin if not already configured
 if "agent-registry" not in entries:
     entries["agent-registry"] = {
         "enabled": True,
         "config": {
-            "registryUrl": os.environ.get("AGENT_REGISTRY_URL", "http://host.docker.internal:8001")
+            "registryUrl": os.environ.get("AGENT_REGISTRY_URL", "")
         }
     }
-    with open(config_path, "w") as f:
-        json.dump(config, f, indent=2)
+    changed = True
     print("[entrypoint] Enabled agent-registry plugin")
 else:
-    print("[entrypoint] agent-registry already configured")
+    changed = False
+    print("[entrypoint] agent-registry plugin already configured")
+
+# Enable agent-registry channel with default account
+channels = config.setdefault("channels", {})
+channel_entries = channels.setdefault("entries", {})
+if "agent-registry" not in channel_entries:
+    channel_entries["agent-registry"] = {
+        "accounts": [{
+            "id": "default",
+            "registryUrl": os.environ.get("AGENT_REGISTRY_URL", "")
+        }]
+    }
+    changed = True
+    print("[entrypoint] Added agent-registry channel account")
+else:
+    print("[entrypoint] agent-registry channel already configured")
+
+if changed:
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
 PYEOF
 fi
 
