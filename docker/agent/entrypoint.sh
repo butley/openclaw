@@ -37,10 +37,10 @@ else:
     print("[entrypoint] agent-registry plugin already configured")
 
 # Enable agent-registry channel with default account
+# Channels config is channels.<channel-id>, not channels.entries.<channel-id>
 channels = config.setdefault("channels", {})
-channel_entries = channels.setdefault("entries", {})
-if "agent-registry" not in channel_entries:
-    channel_entries["agent-registry"] = {
+if "agent-registry" not in channels:
+    channels["agent-registry"] = {
         "accounts": [{
             "id": "default",
             "registryUrl": os.environ.get("AGENT_REGISTRY_URL", "")
