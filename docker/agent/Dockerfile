@@ -43,8 +43,9 @@ RUN OPENCLAW_A2UI_SKIP_MISSING=1 pnpm build || \
     (test -f dist/entry.js && echo "Build partially succeeded, continuing...")
 
 # Copy custom fork extensions to dist (not built by tsdown)
-RUN cp -r extensions/butley-api dist/extensions/butley-api && \
-    cp -r extensions/agent-registry dist/extensions/agent-registry
+# Use cp -rT to copy contents into existing directory without nesting
+RUN cp -rT extensions/butley-api dist/extensions/butley-api && \
+    cp -rT extensions/agent-registry dist/extensions/agent-registry
 
 # Build the Control UI
 ENV OPENCLAW_PREFER_PNPM=1
