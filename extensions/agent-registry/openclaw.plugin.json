@@ -4,6 +4,11 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "registryUrl": {
+        "type": "string",
+        "description": "URL of the Agent Registry API"
+      }
+    }
   }
 }
