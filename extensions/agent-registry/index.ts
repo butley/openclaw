@@ -90,58 +90,64 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
         log?.warn?.(`Failed to register in Agent Registry: ${regResult.error}`);
       }
 
-      // Start inbound message monitor
-      const monitor = await startMonitor({
-        pilotPort: config.pilotPort,
-        onMessage: async (msg) => {
-          log?.info?.(`Inbound message from ${msg.from}: ${msg.body.slice(0, 100)}`);
+      // Start inbound message monitor (optional - requires pilotctl)
+      let monitor: MonitorHandle | undefined;
+      try {
+        monitor = await startMonitor({
+          pilotPort: config.pilotPort,
+          onMessage: async (msg) => {
+            log?.info?.(`Inbound message from ${msg.from}: ${msg.body.slice(0, 100)}`);
 
-          // Dispatch via channelRuntime if available
-          if (channelRuntime) {
-            try {
-              const msgCtx = {
-                Body: msg.body,
-                From: msg.fromAddress,
-                To: config.hostname,
-                SessionKey: `agent-registry:${accountId}:${msg.from}`,
-                AccountId: accountId,
-                MessageSid: msg.messageId,
-              };
+            // Dispatch via channelRuntime if available
+            if (channelRuntime) {
+              try {
+                const msgCtx = {
+                  Body: msg.body,
+                  From: msg.fromAddress,
+                  To: config.hostname,
+                  SessionKey: `agent-registry:${accountId}:${msg.from}`,
+                  AccountId: accountId,
+                  MessageSid: msg.messageId,
+                };
 
-              await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
-                ctx: msgCtx,
-                cfg: ctx.cfg,
-                dispatcherOptions: {
-                  deliver: async (payload: any) => {
-                    const text = typeof payload === "string" ? payload : payload.text ?? "";
-                    await sendMessage(
-                      { to: msg.fromAddress, body: text },
-                      { pilotPort: config.pilotPort },
-                    );
+                await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
+                  ctx: msgCtx,
+                  cfg: ctx.cfg,
+                  dispatcherOptions: {
+                    deliver: async (payload: any) => {
+                      const text = typeof payload === "string" ? payload : payload.text ?? "";
+                      await sendMessage(
+                        { to: msg.fromAddress, body: text },
+                        { pilotPort: config.pilotPort },
+                      );
+                    },
                   },
-                },
-              });
-            } catch (err) {
-              log?.warn?.(`Failed to dispatch inbound message: ${err}`);
+                });
+              } catch (err) {
+                log?.warn?.(`Failed to dispatch inbound message: ${err}`);
+              }
             }
-          }
-        },
-        onError: (err) => {
-          log?.warn?.(`Monitor error: ${err.message}`);
-        },
-        onConnected: () => {
-          log?.info?.("Pilot monitor connected");
-          const snap = getStatus();
-          setStatus({ ...snap, connected: true, running: true });
-        },
-        onDisconnected: () => {
-          log?.info?.("Pilot monitor disconnected");
-          const snap = getStatus();
-          setStatus({ ...snap, connected: false, running: false });
-        },
-      });
-
-      activeMonitors.set(accountId, monitor);
+          },
+          onError: (err) => {
+            log?.warn?.(`Monitor error: ${err.message}`);
+          },
+          onConnected: () => {
+            log?.info?.("Pilot monitor connected");
+            const snap = getStatus();
+            setStatus({ ...snap, connected: true, running: true });
+          },
+          onDisconnected: () => {
+            log?.info?.("Pilot monitor disconnected");
+            const snap = getStatus();
+            setStatus({ ...snap, connected: false, running: false });
+          },
+        });
+        activeMonitors.set(accountId, monitor);
+      } catch (err: any) {
+        // pilotctl not available - P2P messaging disabled but registry still works
+        log?.info?.(`Pilot Protocol unavailable (${err.code ?? err.message}) — P2P messaging disabled, discovery-only mode`);
+        setStatus({ connected: false, running: true }); // Running but not connected to Pilot
+      }
 
       // Start heartbeat interval (every 60s)
       if (regResult.ok && regResult.agentId) {

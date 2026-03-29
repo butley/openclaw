@@ -87,6 +87,8 @@ export async function startMonitor(options: MonitorOptions): Promise<MonitorHand
     }
   }
 
+  let initialSpawnFailed = false;
+
   function connect(): void {
     if (stopped) return;
 
@@ -105,9 +107,17 @@ export async function startMonitor(options: MonitorOptions): Promise<MonitorHand
     child = spawned;
 
     // Handle spawn-level errors (e.g. binary not found)
-    spawned.on("error", (err) => {
+    spawned.on("error", (err: NodeJS.ErrnoException) => {
       onError?.(err);
       child = null;
+      
+      // ENOENT means pilotctl not found - don't retry, throw immediately
+      if (err.code === "ENOENT") {
+        initialSpawnFailed = true;
+        stopped = true; // Stop reconnect attempts
+        return;
+      }
+      
       scheduleReconnect();
     });
 
@@ -235,6 +245,24 @@ export async function startMonitor(options: MonitorOptions): Promise<MonitorHand
 
   // Start the initial connection
   connect();
+
+  // Wait briefly for spawn error (ENOENT happens synchronously-ish)
+  await new Promise<void>((resolve, reject) => {
+    // Check immediately in case spawn failed synchronously
+    if (initialSpawnFailed) {
+      reject(Object.assign(new Error("pilotctl not found"), { code: "ENOENT" }));
+      return;
+    }
+    
+    // Check again after a short delay to catch async spawn errors
+    setTimeout(() => {
+      if (initialSpawnFailed) {
+        reject(Object.assign(new Error("pilotctl not found"), { code: "ENOENT" }));
+      } else {
+        resolve();
+      }
+    }, 100);
+  });
 
   return { stop };
 }
