@@ -146,7 +146,8 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
       } catch (err: any) {
         // pilotctl not available - P2P messaging disabled but registry still works
         log?.info?.(`Pilot Protocol unavailable (${err.code ?? err.message}) — P2P messaging disabled, discovery-only mode`);
-        setStatus({ connected: false, running: true }); // Running but not connected to Pilot
+        // Set connected: true to prevent gateway auto-restart — we're "connected" to the registry, just not to Pilot
+        setStatus({ connected: true, running: true });
       }
 
       // Start heartbeat interval (every 60s)
