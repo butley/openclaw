@@ -67,7 +67,7 @@ export class AgentRegistryClient {
 
   /**
    * Register this agent in the registry.
-   * POST /api/agents/
+   * POST /api/v1/agents/
    */
   async register(config: AgentRegistryConfig): Promise<{ ok: boolean; agentId?: string; error?: string }> {
     const payload: RegisterPayload = {
@@ -79,7 +79,7 @@ export class AgentRegistryClient {
     };
 
     try {
-      const res = await fetch(`${this.baseUrl}/api/agents/`, {
+      const res = await fetch(`${this.baseUrl}/api/v1/agents/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -99,11 +99,11 @@ export class AgentRegistryClient {
 
   /**
    * Deregister an agent from the registry.
-   * DELETE /api/agents/{agentId}
+   * DELETE /api/v1/agents/{agentId}
    */
   async deregister(agentId: string): Promise<{ ok: boolean; error?: string }> {
     try {
-      const res = await fetch(`${this.baseUrl}/api/agents/${encodeURIComponent(agentId)}`, {
+      const res = await fetch(`${this.baseUrl}/api/v1/agents/${encodeURIComponent(agentId)}`, {
         method: "DELETE",
       });
 
@@ -120,10 +120,10 @@ export class AgentRegistryClient {
 
   /**
    * Search for agents matching criteria.
-   * GET /api/agents/search/?q=query&capabilities=cap1,cap2&limit=N
+   * GET /api/v1/agents/search/?q=query&capabilities=cap1,cap2&limit=N
    */
   async search(params: SearchParams): Promise<SearchResult> {
-    const url = new URL(`${this.baseUrl}/api/agents/search/`);
+    const url = new URL(`${this.baseUrl}/api/v1/agents/search/`);
     if (params.query) url.searchParams.set("q", params.query);
     if (params.capabilities?.length) url.searchParams.set("capabilities", params.capabilities.join(","));
     if (params.limit != null) url.searchParams.set("limit", String(params.limit));
@@ -150,12 +150,12 @@ export class AgentRegistryClient {
 
   /**
    * Send a heartbeat for the given agent.
-   * POST /api/agents/{agentId}/heartbeat
+   * POST /api/v1/agents/{agentId}/heartbeat
    */
   async heartbeat(agentId: string): Promise<{ ok: boolean; error?: string }> {
     try {
       const res = await fetch(
-        `${this.baseUrl}/api/agents/${encodeURIComponent(agentId)}/heartbeat`,
+        `${this.baseUrl}/api/v1/agents/${encodeURIComponent(agentId)}/heartbeat`,
         { method: "POST" },
       );
 
@@ -172,12 +172,12 @@ export class AgentRegistryClient {
 
   /**
    * Get a single agent by ID.
-   * GET /api/agents/{agentId}
+   * GET /api/v1/agents/{agentId}
    */
   async getAgent(agentId: string): Promise<{ ok: boolean; agent?: PilotPeer; error?: string }> {
     try {
       const res = await fetch(
-        `${this.baseUrl}/api/agents/${encodeURIComponent(agentId)}`,
+        `${this.baseUrl}/api/v1/agents/${encodeURIComponent(agentId)}`,
       );
 
       if (!res.ok) {
@@ -194,11 +194,11 @@ export class AgentRegistryClient {
 
   /**
    * List all registered agents.
-   * GET /api/agents/
+   * GET /api/v1/agents/
    */
   async listAgents(): Promise<{ ok: boolean; peers: PilotPeer[]; error?: string }> {
     try {
-      const res = await fetch(`${this.baseUrl}/api/agents/`);
+      const res = await fetch(`${this.baseUrl}/api/v1/agents/`);
 
       if (!res.ok) {
         const body = await safeReadBody(res);
