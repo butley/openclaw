@@ -42,8 +42,9 @@ RUN OPENCLAW_A2UI_SKIP_MISSING=1 pnpm build || \
      node --import tsx scripts/write-cli-compat.ts) || \
     (test -f dist/entry.js && echo "Build partially succeeded, continuing...")
 
-# Copy butley-api extension to dist (custom fork extension, not built by tsdown)
-RUN cp -r extensions/butley-api dist/extensions/butley-api
+# Copy custom fork extensions to dist (not built by tsdown)
+RUN cp -r extensions/butley-api dist/extensions/butley-api && \
+    cp -r extensions/agent-registry dist/extensions/agent-registry
 
 # Build the Control UI
 ENV OPENCLAW_PREFER_PNPM=1
