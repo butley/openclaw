@@ -39,7 +39,9 @@ export function resolveAgentRegistryAccount(params: {
     displayName: accountData.displayName,
     description: accountData.description,
     capabilities: accountData.capabilities,
+    pilotPort: accountData.pilotPort,
     registryUrl: accountData.registryUrl,
+    registryApiKey: accountData.registryApiKey,
     autoTrust: accountData.autoTrust ?? false,
     allowFrom: accountData.allowFrom,
   };
@@ -67,7 +69,7 @@ export const agentRegistryConfigAdapter: ChannelConfigAdapter<ResolvedAgentRegis
   isEnabled: (account) => account.config.enabled,
 
   isConfigured: (account) => {
-    return account.config.enabled && !!account.config.registryUrl;
+    return account.config.enabled && !!account.config.hostname;
   },
 
   resolveAllowFrom: ({ cfg, accountId }) => {

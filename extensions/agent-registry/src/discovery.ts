@@ -18,8 +18,10 @@ export type SearchParams = {
 };
 
 export type SearchResult = {
+  ok: boolean;
   peers: PilotPeer[];
   total: number;
+  error?: string;
 };
 
 export type RegisterPayload = {
@@ -59,10 +61,19 @@ export type HeartbeatResult = {
  */
 export class AgentRegistryClient {
   private readonly baseUrl: string;
+  private readonly apiKey?: string;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, apiKey?: string) {
     // Strip trailing slash for consistent URL building
     this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.apiKey = apiKey;
+  }
+
+  /** Build common headers including API key if configured. */
+  private headers(extra?: Record<string, string>): Record<string, string> {
+    const h: Record<string, string> = { ...extra };
+    if (this.apiKey) h["X-Registry-Key"] = this.apiKey;
+    return h;
   }
 
   /**
@@ -81,7 +92,7 @@ export class AgentRegistryClient {
     try {
       const res = await fetch(`${this.baseUrl}/api/v1/agents/`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: this.headers({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
 
@@ -105,6 +116,7 @@ export class AgentRegistryClient {
     try {
       const res = await fetch(`${this.baseUrl}/api/v1/agents/${encodeURIComponent(agentId)}`, {
         method: "DELETE",
+        headers: this.headers(),
       });
 
       if (!res.ok) {
@@ -125,14 +137,18 @@ export class AgentRegistryClient {
   async search(params: SearchParams): Promise<SearchResult> {
     const url = new URL(`${this.baseUrl}/api/v1/agents/search/`);
     if (params.query) url.searchParams.set("q", params.query);
-    if (params.capabilities?.length) url.searchParams.set("capabilities", params.capabilities.join(","));
+    if (params.capabilities?.length) {
+      for (const cap of params.capabilities) {
+        url.searchParams.append("capabilities", cap);
+      }
+    }
     if (params.limit != null) url.searchParams.set("limit", String(params.limit));
 
     try {
-      const res = await fetch(url.toString());
+      const res = await fetch(url.toString(), { headers: this.headers() });
 
       if (!res.ok) {
-        return { peers: [], total: 0 };
+        return { ok: false, peers: [], total: 0, error: `Search failed (${res.status})` };
       }
 
       const data = await res.json() as { agents?: AgentRecord[]; total?: number } | AgentRecord[];
@@ -140,11 +156,12 @@ export class AgentRegistryClient {
       const total = Array.isArray(data) ? agents.length : (data.total ?? agents.length);
 
       return {
+        ok: true,
         peers: agents.map(agentToPeer),
         total,
       };
-    } catch {
-      return { peers: [], total: 0 };
+    } catch (err) {
+      return { ok: false, peers: [], total: 0, error: errorMessage(err) };
     }
   }
 
@@ -156,7 +173,7 @@ export class AgentRegistryClient {
     try {
       const res = await fetch(
         `${this.baseUrl}/api/v1/agents/${encodeURIComponent(agentId)}/heartbeat`,
-        { method: "POST" },
+        { method: "POST", headers: this.headers() },
       );
 
       if (!res.ok) {
@@ -178,6 +195,7 @@ export class AgentRegistryClient {
     try {
       const res = await fetch(
         `${this.baseUrl}/api/v1/agents/${encodeURIComponent(agentId)}`,
+        { headers: this.headers() },
       );
 
       if (!res.ok) {
@@ -198,7 +216,7 @@ export class AgentRegistryClient {
    */
   async listAgents(): Promise<{ ok: boolean; peers: PilotPeer[]; error?: string }> {
     try {
-      const res = await fetch(`${this.baseUrl}/api/v1/agents/`);
+      const res = await fetch(`${this.baseUrl}/api/v1/agents/`, { headers: this.headers() });
 
       if (!res.ok) {
         const body = await safeReadBody(res);

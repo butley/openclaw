@@ -87,8 +87,6 @@ export async function startMonitor(options: MonitorOptions): Promise<MonitorHand
     }
   }
 
-  let initialSpawnFailed = false;
-
   function connect(): void {
     if (stopped) return;
 
@@ -109,15 +107,11 @@ export async function startMonitor(options: MonitorOptions): Promise<MonitorHand
     // Handle spawn-level errors (e.g. binary not found)
     spawned.on("error", (err: NodeJS.ErrnoException) => {
       child = null;
-      
-      // ENOENT means pilotctl not found - don't retry, don't call onError (will throw via Promise)
+      onError?.(err);
       if (err.code === "ENOENT") {
-        initialSpawnFailed = true;
-        stopped = true; // Stop reconnect attempts
+        stopped = true; // pilotctl not found — stop reconnect attempts
         return;
       }
-      
-      onError?.(err);
       scheduleReconnect();
     });
 
@@ -243,26 +237,109 @@ export async function startMonitor(options: MonitorOptions): Promise<MonitorHand
     child = null;
   }
 
-  // Start the initial connection
-  connect();
-
-  // Wait briefly for spawn error (ENOENT happens synchronously-ish)
+  // Start the initial connection, waiting for spawn to succeed or fail
   await new Promise<void>((resolve, reject) => {
-    // Check immediately in case spawn failed synchronously
-    if (initialSpawnFailed) {
-      reject(Object.assign(new Error("pilotctl not found"), { code: "ENOENT" }));
+    // Override connect to detect ENOENT via event-driven approach
+    const args = buildArgs();
+    let spawned: ChildProcess;
+    try {
+      spawned = spawn("pilotctl", args, {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)));
       return;
     }
-    
-    // Check again after a short delay to catch async spawn errors
-    // Note: spawn "error" event fires asynchronously, give it time
-    setTimeout(() => {
-      if (initialSpawnFailed) {
-        reject(Object.assign(new Error("pilotctl not found"), { code: "ENOENT" }));
-      } else {
+
+    child = spawned;
+    let settled = false;
+
+    // Handle spawn-level errors (e.g. binary not found)
+    spawned.on("error", (err: NodeJS.ErrnoException) => {
+      child = null;
+      if (!settled) {
+        settled = true;
+        if (err.code === "ENOENT") {
+          stopped = true;
+          reject(Object.assign(new Error("pilotctl not found"), { code: "ENOENT" }));
+        } else {
+          // Non-fatal spawn error — resolve but schedule reconnect
+          onError?.(err);
+          scheduleReconnect();
+          resolve();
+        }
+      }
+    });
+
+    // If we get a spawned PID, the binary exists — resolve immediately
+    spawned.on("spawn", () => {
+      if (!settled) {
+        settled = true;
         resolve();
       }
-    }, 500);
+    });
+
+    // Parse stdout as newline-delimited JSON
+    if (spawned.stdout) {
+      const rl = createInterface({ input: spawned.stdout });
+      let connected = false;
+
+      rl.on("line", (line) => {
+        if (!connected) {
+          connected = true;
+          reconnectAttempts = 0;
+          onConnected?.();
+        }
+
+        const trimmed = line.trim();
+        if (!trimmed) return;
+
+        const msg = parseMessage(trimmed);
+        if (msg) {
+          try {
+            const result = onMessage(msg);
+            if (result && typeof (result as Promise<void>).catch === "function") {
+              (result as Promise<void>).catch((err) => {
+                onError?.(err instanceof Error ? err : new Error(String(err)));
+              });
+            }
+          } catch (err) {
+            onError?.(err instanceof Error ? err : new Error(String(err)));
+          }
+        } else {
+          onError?.(new Error(`Failed to parse Pilot message: ${trimmed.slice(0, 200)}`));
+        }
+      });
+    }
+
+    // Collect stderr
+    let stderr = "";
+    if (spawned.stderr) {
+      spawned.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+        if (stderr.length > 4096) {
+          stderr = stderr.slice(-2048);
+        }
+      });
+    }
+
+    spawned.on("exit", (code, signal) => {
+      child = null;
+      if (stopped) return;
+
+      onDisconnected?.();
+
+      if (code !== 0 && code !== null) {
+        const errMsg = stderr.trim()
+          ? `pilotctl subscribe exited (code ${code}): ${stderr.trim().slice(0, 500)}`
+          : `pilotctl subscribe exited with code ${code}`;
+        onError?.(new Error(errMsg));
+      } else if (signal) {
+        onError?.(new Error(`pilotctl subscribe killed by signal ${signal}`));
+      }
+
+      scheduleReconnect();
+    });
   });
 
   return { stop };

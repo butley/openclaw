@@ -26,6 +26,14 @@ const activeMonitors = new Map<string, MonitorHandle>();
 /** Heartbeat intervals per account. */
 const heartbeatIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
+/** Registry client + agentId per account, for deregister on stop and client reuse. */
+const registryClients = new Map<string, { client: AgentRegistryClient; agentId?: string }>();
+
+/** Heartbeat failure counter per account, for re-registration logic. */
+const heartbeatFailures = new Map<string, number>();
+
+const MAX_HEARTBEAT_FAILURES = 3;
+
 /* ------------------------------------------------------------------ */
 /*  Channel plugin definition                                          */
 /* ------------------------------------------------------------------ */
@@ -80,7 +88,7 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
       }
 
       const registryUrl = config.registryUrl ?? "http://localhost:8001";
-      const registryClient = new AgentRegistryClient(registryUrl);
+      const registryClient = new AgentRegistryClient(registryUrl, config.registryApiKey);
 
       // Register in the Agent Registry
       const regResult = await registryClient.register(config);
@@ -150,13 +158,37 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
         setStatus({ connected: true, running: true });
       }
 
-      // Start heartbeat interval (every 60s)
+      // Store registry client for reuse and deregister on stop (#5, #18)
+      registryClients.set(accountId, { client: registryClient, agentId: regResult.agentId });
+      heartbeatFailures.set(accountId, 0);
+
+      // Start heartbeat interval (every 60s) with re-registration on repeated failure (#7)
       if (regResult.ok && regResult.agentId) {
-        const agentId = regResult.agentId;
+        let agentId = regResult.agentId;
         const interval = setInterval(async () => {
           const hb = await registryClient.heartbeat(agentId);
           if (!hb.ok) {
-            log?.warn?.(`Heartbeat failed: ${hb.error}`);
+            const failures = (heartbeatFailures.get(accountId) ?? 0) + 1;
+            heartbeatFailures.set(accountId, failures);
+            log?.warn?.(`Heartbeat failed (${failures}/${MAX_HEARTBEAT_FAILURES}): ${hb.error}`);
+
+            if (failures >= MAX_HEARTBEAT_FAILURES) {
+              log?.info?.("Max heartbeat failures reached — re-registering agent");
+              heartbeatFailures.set(accountId, 0);
+              try {
+                await registryClient.deregister(agentId);
+              } catch { /* ignore deregister errors */ }
+              const reReg = await registryClient.register(config);
+              if (reReg.ok && reReg.agentId) {
+                agentId = reReg.agentId;
+                registryClients.set(accountId, { client: registryClient, agentId });
+                log?.info?.(`Re-registered as ${config.hostname} (new id: ${agentId})`);
+              } else {
+                log?.warn?.(`Re-registration failed: ${reReg.error}`);
+              }
+            }
+          } else {
+            heartbeatFailures.set(accountId, 0);
           }
         }, 60_000);
         if (interval.unref) interval.unref();
@@ -183,6 +215,19 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
         clearInterval(interval);
         heartbeatIntervals.delete(accountId);
       }
+
+      // Deregister from registry (#5)
+      const entry = registryClients.get(accountId);
+      if (entry?.agentId) {
+        const result = await entry.client.deregister(entry.agentId);
+        if (result.ok) {
+          log?.info?.(`Deregistered agent ${entry.agentId} from registry`);
+        } else {
+          log?.warn?.(`Failed to deregister: ${result.error}`);
+        }
+      }
+      registryClients.delete(accountId);
+      heartbeatFailures.delete(accountId);
     },
   },
 
@@ -216,9 +261,12 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
       if (!account.config.hostname) {
         return { ok: false, reason: "Agent Registry hostname not configured" };
       }
-      const daemonStatus = await getDaemonStatus();
-      if (!daemonStatus.running) {
-        return { ok: false, reason: "Pilot daemon is not running" };
+      // Only require Pilot daemon if P2P messaging is enabled (pilotPort configured)
+      if (account.config.pilotPort) {
+        const daemonStatus = await getDaemonStatus();
+        if (!daemonStatus.running) {
+          return { ok: false, reason: "Pilot daemon is not running" };
+        }
       }
       return { ok: true, reason: "Agent Registry is ready" };
     },
@@ -251,7 +299,11 @@ const plugin = {
       // GET /api/agent-registry/peers — list known peers from registry
       api.registerGatewayMethod("agent-registry/peers", async ({ params, respond }) => {
         const registryUrl = (params?.registryUrl as string) ?? "http://localhost:8001";
-        const client = new AgentRegistryClient(registryUrl);
+        // Reuse stored client if available, otherwise create ad-hoc
+        const storedEntry = Array.from(registryClients.values()).find(
+          (e) => e.client["baseUrl"] === registryUrl.replace(/\/+$/, ""),
+        );
+        const client = storedEntry?.client ?? new AgentRegistryClient(registryUrl);
         const result = await client.listAgents();
         respond(result.ok, {
           peers: result.peers,
@@ -266,7 +318,10 @@ const plugin = {
         const capabilities = params?.capabilities as string[] | undefined;
         const limit = params?.limit as number | undefined;
 
-        const client = new AgentRegistryClient(registryUrl);
+        const storedEntry = Array.from(registryClients.values()).find(
+          (e) => e.client["baseUrl"] === registryUrl.replace(/\/+$/, ""),
+        );
+        const client = storedEntry?.client ?? new AgentRegistryClient(registryUrl);
         const result = await client.search({ query, capabilities, limit });
         respond(result.ok, {
           peers: result.peers,

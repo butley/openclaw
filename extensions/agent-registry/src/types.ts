@@ -18,6 +18,7 @@ export type AgentRegistryConfig = {
   capabilities?: string[];
   pilotPort?: number;
   registryUrl?: string;
+  registryApiKey?: string;
   autoTrust?: boolean;
   allowFrom?: string[];
 };

@@ -5,7 +5,6 @@
  * Supports single-target, address-based, and broadcast sends.
  */
 
-import { execFile } from "node:child_process";
 import { spawn } from "node:child_process";
 import type { AgentRegistryOutboundMessage } from "./types.js";
 
