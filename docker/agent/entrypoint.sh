@@ -44,17 +44,29 @@ if "agent-registry" not in channels:
     import socket
     hostname = os.environ.get("INSTALLATION_ID", socket.gethostname())
     
-    channels["agent-registry"] = {
-        "accounts": [{
-            "id": "default",
-            "hostname": hostname,
-            "registryUrl": os.environ.get("AGENT_REGISTRY_URL", "")
-        }]
+    account = {
+        "id": "default",
+        "hostname": hostname,
+        "registryUrl": os.environ.get("AGENT_REGISTRY_URL", "")
     }
+    api_key = os.environ.get("AGENT_REGISTRY_API_KEY", "")
+    if api_key:
+        account["registryApiKey"] = api_key
+    channels["agent-registry"] = {"accounts": [account]}
     changed = True
     print(f"[entrypoint] Added agent-registry channel account (hostname={hostname})")
 else:
-    print("[entrypoint] agent-registry channel already configured")
+    # Ensure registryApiKey is injected even if channel already configured
+    ar_ch = channels["agent-registry"]
+    api_key = os.environ.get("AGENT_REGISTRY_API_KEY", "")
+    if api_key and "accounts" in ar_ch:
+        for acc in ar_ch["accounts"]:
+            if "registryApiKey" not in acc:
+                acc["registryApiKey"] = api_key
+                changed = True
+                print("[entrypoint] Injected registryApiKey into agent-registry channel")
+    if not changed:
+        print("[entrypoint] agent-registry channel already configured")
 
 if changed:
     with open(config_path, "w") as f:
