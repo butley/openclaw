@@ -1,0 +1,4 @@
+{
+  "plugins.entries.agent-registry.enabled": true,
+  "plugins.entries.agent-registry.config.channel": "agent-registry"
+}
