@@ -40,14 +40,19 @@ else:
 # Channels config is channels.<channel-id>, not channels.entries.<channel-id>
 channels = config.setdefault("channels", {})
 if "agent-registry" not in channels:
+    # Use INSTALLATION_ID env var as hostname, fallback to container hostname
+    import socket
+    hostname = os.environ.get("INSTALLATION_ID", socket.gethostname())
+    
     channels["agent-registry"] = {
         "accounts": [{
             "id": "default",
+            "hostname": hostname,
             "registryUrl": os.environ.get("AGENT_REGISTRY_URL", "")
         }]
     }
     changed = True
-    print("[entrypoint] Added agent-registry channel account")
+    print(f"[entrypoint] Added agent-registry channel account (hostname={hostname})")
 else:
     print("[entrypoint] agent-registry channel already configured")
 
