@@ -16,8 +16,8 @@ export function resolveAgentRegistryAccount(params: {
 }): ResolvedAgentRegistryAccount {
   const accountId = params.accountId ?? DEFAULT_ACCOUNT_ID;
   
-  // Read from cfg.channels.entries["agent-registry"].accounts
-  const channelConfig = (params.cfg as any)?.channels?.entries?.["agent-registry"];
+  // Read from cfg.channels["agent-registry"].accounts (NOT cfg.channels.entries)
+  const channelConfig = (params.cfg as any)?.channels?.["agent-registry"];
   const accounts = channelConfig?.accounts ?? [];
   
   // Find matching account or use first
@@ -49,7 +49,7 @@ export function resolveAgentRegistryAccount(params: {
 
 export const agentRegistryConfigAdapter: ChannelConfigAdapter<ResolvedAgentRegistryAccount> = {
   listAccountIds: (cfg) => {
-    const channelConfig = (cfg as any)?.channels?.entries?.["agent-registry"];
+    const channelConfig = (cfg as any)?.channels?.["agent-registry"];
     const accounts = channelConfig?.accounts ?? [];
     if (accounts.length === 0) return [];
     return accounts.map((a: any) => a.id ?? DEFAULT_ACCOUNT_ID);
