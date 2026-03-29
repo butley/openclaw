@@ -72,6 +72,10 @@ echo "── Auth / Scope ──"
 check "P23b. Control UI Scope Bypass"  "grep -q 'dangerouslyDisableDeviceAuth' src/gateway/server/ws-connection/message-handler.ts"
 
 echo ""
+echo "── Config Fixes ──"
+check "P33. Model Input Default"       "grep -q '\"image\"' src/config/defaults.ts"
+
+echo ""
 echo "── Optional / Pending ──"
 check "P21. Chat Audio Inbound"        "test -f src/gateway/chat-attachments.ts"
 # P24 (Silent Reply Filter) — intentionally skipped, not a bug

@@ -1,8 +1,8 @@
 # Custom Patches — butley/openclaw
 
-23 active patches on `feat/rebase-3.22` (base: upstream v2026.3.22).
+24 active patches on `feat/rebase-3.22` (base: upstream v2026.3.22).
 
-Last updated: 2026-03-25.
+Last updated: 2026-03-29.
 
 ---
 
@@ -76,6 +76,12 @@ Last updated: 2026-03-25.
 | P27 | Media Inbound Path | Additive route | `server-http.ts` | `grep -q 'inbound' src/gateway/server-http.ts` |
 | P29 | Chat Sender Meta | Pre-sanitization extract | `server-methods/chat.ts` | `grep -q 'senderMeta' src/gateway/server-methods/chat.ts` |
 | P30 | Chat Group Context | Pre-sanitization extract | `server-methods/chat.ts` | `grep -q 'chatHistory' src/gateway/server-methods/chat.ts` |
+
+### Config Fixes
+
+| # | Name | Type | Files | Verify |
+|---|------|------|-------|--------|
+| P33 | [Model Input Default](model-input-default/README.md) | 1-line fix | `defaults.ts` | `grep -q '"image"' src/config/defaults.ts` |
 
 ### Auth / Scope
 

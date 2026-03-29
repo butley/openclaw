@@ -66,6 +66,7 @@ Last updated: 2026-03-24.
 | P27 | Media Inbound Path | Additive route | `server-http.ts` |
 | P29 | Chat Sender Meta | Pre-sanitization extract | `server-methods/chat.ts` |
 | P30 | Chat Group Context | Pre-sanitization extract | `server-methods/chat.ts` |
+| P33 | Model Input Default | 1-line config fix | `defaults.ts` |
 
 ### Absorbed by Upstream
 
@@ -90,7 +91,7 @@ Last updated: 2026-03-24.
 ## Merge Resilience
 
 **Zero conflict (own files):** P2, P4, P5, P8, P10, P11, P18
-**Minimal conflict (additive):** P7, P9, P13, P25, P26, P29, P30, P31, P32
+**Minimal conflict (additive):** P7, P9, P13, P25, P26, P29, P30, P31, P32, P33
 **Watch closely (inline mods):** P15, P16, P17, P22, P23, P23b
 
 ---

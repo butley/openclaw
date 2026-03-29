@@ -39,7 +39,7 @@ const DEFAULT_MODEL_COST: ModelDefinitionConfig["cost"] = {
   cacheRead: 0,
   cacheWrite: 0,
 };
-const DEFAULT_MODEL_INPUT: ModelDefinitionConfig["input"] = ["text"];
+const DEFAULT_MODEL_INPUT: ModelDefinitionConfig["input"] = ["text", "image"];
 const DEFAULT_MODEL_MAX_TOKENS = 8192;
 
 type ModelDefinitionLike = Partial<ModelDefinitionConfig> &
