@@ -105,3 +105,43 @@ bash patches/verify-patches.sh .
 4. Add check to `verify-patches.sh`
 5. Prefix WA-only patches with `wa-`
 6. Commit everything together
+
+---
+
+## Platform Extensions
+
+These live in `extensions/` and are **not patches** — they don't modify upstream code.
+They are delivered to containers via the platform extensions system
+(see `backend/info/platform-extensions.md` for full docs).
+
+### Delivery Methods
+
+| Method | Used by | How it works |
+|--------|---------|-------------|
+| **Baked into image** | butley-api, agent-registry | Copied into `dist/extensions/` during Docker build. Always matches image version. |
+| **Host-mounted (platform sync)** | lossless-claw | Installed on host at `/var/data/<env>/storage/platform/extensions/`. Mounted read-only into container, copied to `~/.openclaw/extensions/` on startup by `sync-platform.sh`. Can be updated without rebuilding the image. |
+
+### Extension Registry
+
+| Extension | Dir | Delivery | Purpose |
+|-----------|-----|----------|---------|
+| **butley-api** | `extensions/butley-api/` | Baked | Convex API tool (tasks, projects, docs, contacts) + token usage tracking |
+| **agent-registry** | `extensions/agent-registry/` | Baked | P2P agent communication via Pilot Protocol + Agent Registry discovery |
+| **lossless-claw** | *(host-mounted)* | Platform sync | LCM context engine (third-party, `@martian-engineering/lossless-claw`) |
+
+### When to use which delivery method
+
+- **Baked (our code):** Extensions we maintain in the fork. Code changes require image rebuild,
+  which is the normal release flow anyway. Version always matches the image.
+- **Platform sync (third-party):** External packages from npm. Can be updated on the host
+  without rebuilding the image — `generate-manifest.sh` bumps the version, containers
+  pick it up on next restart via `sync-platform.sh`.
+
+### Relevant files
+
+| File | Purpose |
+|------|---------|
+| `docker/agent/Dockerfile` | Copies baked extensions to `dist/extensions/` |
+| `docker/agent/scripts/sync-platform.sh` | Syncs host-mounted extensions + applies config patches |
+| `docker/agent/scripts/generate-manifest.sh` | Generates `platform-manifest.json` from host extensions dir |
+| `docker/agent/entrypoint.sh` | Calls `sync-platform.sh` before gateway start |
