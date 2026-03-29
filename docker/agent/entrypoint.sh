@@ -9,6 +9,35 @@ if [ -f /opt/openclaw/scripts/sync-platform.sh ]; then
     bash /opt/openclaw/scripts/sync-platform.sh
 fi
 
+# Apply baked extension configs (agent-registry, butley-api)
+if [ -f /root/.openclaw/openclaw.json ]; then
+    python3 - <<'PYEOF'
+import json
+import os
+
+config_path = "/root/.openclaw/openclaw.json"
+with open(config_path, "r") as f:
+    config = json.load(f)
+
+plugins = config.setdefault("plugins", {})
+entries = plugins.setdefault("entries", {})
+
+# Enable agent-registry channel if not already configured
+if "agent-registry" not in entries:
+    entries["agent-registry"] = {
+        "enabled": True,
+        "config": {
+            "registryUrl": os.environ.get("AGENT_REGISTRY_URL", "http://host.docker.internal:8001")
+        }
+    }
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+    print("[entrypoint] Enabled agent-registry plugin")
+else:
+    print("[entrypoint] agent-registry already configured")
+PYEOF
+fi
+
 # Export gateway token — must happen before exec so the gateway process inherits it.
 if [ -f /root/.openclaw/gateway-credentials.json ]; then
     export OPENCLAW_GATEWAY_TOKEN=$(python3 -c \
