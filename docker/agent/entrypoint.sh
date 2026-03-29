@@ -22,19 +22,7 @@ with open(config_path, "r") as f:
 plugins = config.setdefault("plugins", {})
 entries = plugins.setdefault("entries", {})
 
-# Resolve registry URL: env var > existing config > Docker bridge default
-def resolve_registry_url(existing_url=""):
-    url = os.environ.get("AGENT_REGISTRY_URL", "").strip()
-    if url:
-        # Replace localhost/127.0.0.1 with Docker bridge gateway (containers can't reach host localhost)
-        import re
-        url = re.sub(r'(https?://)(?:localhost|127\.0\.0\.1)', r'\1172.17.0.1', url)
-        return url
-    if existing_url:
-        return existing_url
-    return ""
-
-registry_url = resolve_registry_url()
+registry_url = os.environ.get("AGENT_REGISTRY_URL", "").strip()
 
 # Enable agent-registry plugin if not already configured
 if "agent-registry" not in entries:
@@ -87,21 +75,18 @@ if "agent-registry" not in channels:
     else:
         print("[entrypoint] Skipping agent-registry channel — no registry URL")
 else:
-    # Fix existing config: inject missing fields
+    # Inject missing fields into existing config
     ar_ch = channels["agent-registry"]
     if "accounts" in ar_ch:
         for acc in ar_ch["accounts"]:
-            # Inject API key if missing
             if api_key and "registryApiKey" not in acc:
                 acc["registryApiKey"] = api_key
                 changed = True
                 print("[entrypoint] Injected registryApiKey into agent-registry channel")
-            # Fix registryUrl if empty or pointing to localhost
-            acc_url = acc.get("registryUrl", "")
-            if registry_url and (not acc_url or "localhost" in acc_url or "127.0.0.1" in acc_url):
+            if registry_url and not acc.get("registryUrl", ""):
                 acc["registryUrl"] = registry_url
                 changed = True
-                print(f"[entrypoint] Fixed agent-registry registryUrl to {registry_url}")
+                print(f"[entrypoint] Set agent-registry registryUrl to {registry_url}")
     if not changed:
         print("[entrypoint] agent-registry channel already configured")
 
