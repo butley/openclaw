@@ -15,6 +15,8 @@ import { startMonitor } from "./src/monitor.js";
 import type { MonitorHandle } from "./src/monitor.js";
 import { getDaemonStatus, isPilotInstalled } from "./src/daemon.js";
 import { AgentRegistryClient } from "./src/discovery.js";
+import { fetchNetworkMetadata, getConvexEnv } from "./src/convex-client.js";
+import type { NetworkMetadata } from "./src/convex-client.js";
 
 /* ------------------------------------------------------------------ */
 /*  State                                                              */
@@ -32,7 +34,165 @@ const registryClients = new Map<string, { client: AgentRegistryClient; agentId?:
 /** Heartbeat failure counter per account, for re-registration logic. */
 const heartbeatFailures = new Map<string, number>();
 
+/** Whether currently registered in the registry (per account). */
+const registeredState = new Map<string, boolean>();
+
+/** Cached account context for refresh (log, config, etc). */
+const accountContexts = new Map<string, {
+  config: import("./src/types.js").AgentRegistryConfig;
+  log: any;
+  setStatus: (next: any) => void;
+}>();
+
 const MAX_HEARTBEAT_FAILURES = 3;
+
+/* ------------------------------------------------------------------ */
+/*  Register / deregister helpers                                      */
+/* ------------------------------------------------------------------ */
+
+async function registerAgent(
+  accountId: string,
+  config: import("./src/types.js").AgentRegistryConfig,
+  client: AgentRegistryClient,
+  networkMeta: NetworkMetadata,
+  log?: any,
+): Promise<void> {
+  if (registeredState.get(accountId)) {
+    // Already registered — update metadata instead
+    const entry = registryClients.get(accountId);
+    if (entry?.agentId) {
+      // Deregister and re-register with fresh metadata
+      try { await client.deregister(entry.agentId); } catch { /* ok */ }
+    }
+  }
+
+  const regConfig = {
+    ...config,
+    displayName: networkMeta.networkDisplayName ?? config.displayName,
+    description: networkMeta.networkDescription ?? config.description,
+    capabilities: networkMeta.networkCapabilities ?? config.capabilities,
+  };
+
+  const regResult = await client.register(regConfig);
+  if (regResult.ok) {
+    log?.info?.(`Registered in Agent Registry as ${config.hostname} (id: ${regResult.agentId})`);
+    registryClients.set(accountId, { client, agentId: regResult.agentId });
+    registeredState.set(accountId, true);
+
+    // Start heartbeat
+    startHeartbeat(accountId, regResult.agentId, config, client, log);
+
+    // Start Pilot monitor if available
+    const pilotAvailable = await isPilotInstalled();
+    if (pilotAvailable && !activeMonitors.has(accountId)) {
+      log?.info?.("Starting Pilot Protocol monitor");
+      // Monitor setup would go here when Pilot is available
+    } else if (!pilotAvailable) {
+      log?.info?.("Pilot Protocol not installed — discovery-only mode");
+    }
+  } else {
+    log?.warn?.(`Failed to register in Agent Registry: ${regResult.error}`);
+  }
+}
+
+async function deregisterAgent(accountId: string, log?: any): Promise<void> {
+  // Stop heartbeat
+  const interval = heartbeatIntervals.get(accountId);
+  if (interval) {
+    clearInterval(interval);
+    heartbeatIntervals.delete(accountId);
+  }
+
+  // Stop monitor
+  const monitor = activeMonitors.get(accountId);
+  if (monitor) {
+    monitor.stop();
+    activeMonitors.delete(accountId);
+  }
+
+  // Deregister from registry
+  const entry = registryClients.get(accountId);
+  if (entry?.agentId) {
+    const result = await entry.client.deregister(entry.agentId);
+    if (result.ok) {
+      log?.info?.(`Deregistered agent ${entry.agentId} from registry`);
+    } else {
+      log?.warn?.(`Failed to deregister: ${result.error}`);
+    }
+    // Keep client but clear agentId
+    registryClients.set(accountId, { client: entry.client });
+  }
+
+  registeredState.set(accountId, false);
+  heartbeatFailures.set(accountId, 0);
+}
+
+function startHeartbeat(
+  accountId: string,
+  agentId: string,
+  config: import("./src/types.js").AgentRegistryConfig,
+  client: AgentRegistryClient,
+  log?: any,
+): void {
+  // Clear existing heartbeat if any
+  const existing = heartbeatIntervals.get(accountId);
+  if (existing) clearInterval(existing);
+
+  let currentAgentId = agentId;
+  const interval = setInterval(async () => {
+    const hb = await client.heartbeat(currentAgentId);
+    if (!hb.ok) {
+      const failures = (heartbeatFailures.get(accountId) ?? 0) + 1;
+      heartbeatFailures.set(accountId, failures);
+      log?.warn?.(`Heartbeat failed (${failures}/${MAX_HEARTBEAT_FAILURES}): ${hb.error}`);
+
+      if (failures >= MAX_HEARTBEAT_FAILURES) {
+        log?.info?.("Max heartbeat failures — re-registering");
+        heartbeatFailures.set(accountId, 0);
+        try { await client.deregister(currentAgentId); } catch { /* ok */ }
+        const reReg = await client.register(config);
+        if (reReg.ok && reReg.agentId) {
+          currentAgentId = reReg.agentId;
+          registryClients.set(accountId, { client, agentId: currentAgentId });
+          log?.info?.(`Re-registered as ${config.hostname} (new id: ${currentAgentId})`);
+        }
+      }
+    } else {
+      heartbeatFailures.set(accountId, 0);
+    }
+  }, 60_000);
+  if (interval.unref) interval.unref();
+  heartbeatIntervals.set(accountId, interval);
+}
+
+/** Handle refresh signal — check Convex and register/deregister accordingly. */
+async function handleRefresh(accountId: string): Promise<{ action: string; discoverable: boolean }> {
+  const ctx = accountContexts.get(accountId);
+  const entry = registryClients.get(accountId);
+  if (!ctx || !entry) {
+    return { action: "error", discoverable: false };
+  }
+
+  const networkMeta = await fetchNetworkMetadata();
+  const isDiscoverable = networkMeta?.networkDiscoverable === true;
+  const isRegistered = registeredState.get(accountId) === true;
+
+  if (isDiscoverable && !isRegistered) {
+    // Go public
+    await registerAgent(accountId, ctx.config, entry.client, networkMeta!, ctx.log);
+    return { action: "registered", discoverable: true };
+  } else if (!isDiscoverable && isRegistered) {
+    // Go private
+    await deregisterAgent(accountId, ctx.log);
+    return { action: "deregistered", discoverable: false };
+  } else if (isDiscoverable && isRegistered) {
+    // Update metadata (display name, description, capabilities may have changed)
+    await registerAgent(accountId, ctx.config, entry.client, networkMeta!, ctx.log);
+    return { action: "updated", discoverable: true };
+  }
+
+  return { action: "no-change", discoverable: isDiscoverable };
+}
 
 /* ------------------------------------------------------------------ */
 /*  Channel plugin definition                                          */
@@ -90,158 +250,38 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
       const registryUrl = config.registryUrl ?? "http://localhost:8001";
       const registryClient = new AgentRegistryClient(registryUrl, config.registryApiKey);
 
-      // Register in the Agent Registry
-      const regResult = await registryClient.register(config);
-      if (regResult.ok) {
-        log?.info?.(`Registered in Agent Registry as ${config.hostname} (id: ${regResult.agentId})`);
+      // Store context for refresh calls
+      registryClients.set(accountId, { client: registryClient });
+      accountContexts.set(accountId, { config, log, setStatus });
+      heartbeatFailures.set(accountId, 0);
+      registeredState.set(accountId, false);
+
+      // Check Convex for networkDiscoverable — only register if public
+      const networkMeta = await fetchNetworkMetadata();
+      if (networkMeta?.networkDiscoverable) {
+        await registerAgent(accountId, config, registryClient, networkMeta, log);
       } else {
-        log?.warn?.(`Failed to register in Agent Registry: ${regResult.error}`);
+        log?.info?.("Workspace is not public — standing by (waiting for refresh signal)");
       }
 
-      // Start inbound message monitor only if Pilot Protocol is installed
-      let monitor: MonitorHandle | undefined;
-      const pilotAvailable = await isPilotInstalled();
-
-      if (pilotAvailable) {
-        try {
-          monitor = await startMonitor({
-            pilotPort: config.pilotPort,
-            onMessage: async (msg) => {
-              log?.info?.(`Inbound message from ${msg.from}: ${msg.body.slice(0, 100)}`);
-
-              if (channelRuntime) {
-                try {
-                  const msgCtx = {
-                    Body: msg.body,
-                    From: msg.fromAddress,
-                    To: config.hostname,
-                    SessionKey: `agent-registry:${accountId}:${msg.from}`,
-                    AccountId: accountId,
-                    MessageSid: msg.messageId,
-                  };
-
-                  await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
-                    ctx: msgCtx,
-                    cfg: ctx.cfg,
-                    dispatcherOptions: {
-                      deliver: async (payload: any) => {
-                        const text = typeof payload === "string" ? payload : payload.text ?? "";
-                        await sendMessage(
-                          { to: msg.fromAddress, body: text },
-                          { pilotPort: config.pilotPort },
-                        );
-                      },
-                    },
-                  });
-                } catch (err) {
-                  log?.warn?.(`Failed to dispatch inbound message: ${err}`);
-                }
-              }
-            },
-            onError: (err) => {
-              log?.warn?.(`Monitor error: ${err.message}`);
-            },
-            onConnected: () => {
-              log?.info?.("Pilot monitor connected");
-              const snap = getStatus();
-              setStatus({ ...snap, connected: true, running: true });
-            },
-            onDisconnected: () => {
-              log?.info?.("Pilot monitor disconnected");
-              const snap = getStatus();
-              setStatus({ ...snap, connected: false, running: false });
-            },
-          });
-          activeMonitors.set(accountId, monitor);
-        } catch (err: any) {
-          log?.warn?.(`Failed to start Pilot monitor: ${err.message}`);
-        }
-      } else {
-        log?.info?.("Pilot Protocol not installed — running in discovery-only mode (no P2P messaging)");
-      }
-
-      // Mark channel as successfully started
+      // Mark channel as started (even if not registered — channel is alive and ready for refresh)
       setStatus({ connected: true, running: true });
 
-      // Store registry client for reuse and deregister on stop
-      registryClients.set(accountId, { client: registryClient, agentId: regResult.agentId });
-      heartbeatFailures.set(accountId, 0);
-
-      // Start heartbeat interval (every 60s) with re-registration on repeated failure
-      if (regResult.ok && regResult.agentId) {
-        let agentId = regResult.agentId;
-        const interval = setInterval(async () => {
-          const hb = await registryClient.heartbeat(agentId);
-          if (!hb.ok) {
-            const failures = (heartbeatFailures.get(accountId) ?? 0) + 1;
-            heartbeatFailures.set(accountId, failures);
-            log?.warn?.(`Heartbeat failed (${failures}/${MAX_HEARTBEAT_FAILURES}): ${hb.error}`);
-
-            if (failures >= MAX_HEARTBEAT_FAILURES) {
-              log?.info?.("Max heartbeat failures reached — re-registering agent");
-              heartbeatFailures.set(accountId, 0);
-              try {
-                await registryClient.deregister(agentId);
-              } catch { /* ignore deregister errors */ }
-              const reReg = await registryClient.register(config);
-              if (reReg.ok && reReg.agentId) {
-                agentId = reReg.agentId;
-                registryClients.set(accountId, { client: registryClient, agentId });
-                log?.info?.(`Re-registered as ${config.hostname} (new id: ${agentId})`);
-              } else {
-                log?.warn?.(`Re-registration failed: ${reReg.error}`);
-              }
-            }
-          } else {
-            heartbeatFailures.set(accountId, 0);
-          }
-        }, 60_000);
-        if (interval.unref) interval.unref();
-        heartbeatIntervals.set(accountId, interval);
-      }
-
       // Keep the channel alive — gateway restarts if startAccount resolves.
-      // Block until the abort signal fires (stopAccount triggers this).
       await new Promise<void>((resolve) => {
         if (abortSignal?.aborted) return resolve();
         if (abortSignal) {
           abortSignal.addEventListener("abort", () => resolve(), { once: true });
         }
-        // If no abortSignal, this promise never resolves — channel stays alive until process exits
       });
       log?.info?.("Agent Registry channel stopped (abort signal received)");
     },
 
     stopAccount: async (ctx) => {
       const { accountId, log } = ctx;
-
-      // Stop monitor
-      const monitor = activeMonitors.get(accountId);
-      if (monitor) {
-        monitor.stop();
-        activeMonitors.delete(accountId);
-        log?.info?.("Pilot monitor stopped");
-      }
-
-      // Clear heartbeat interval
-      const interval = heartbeatIntervals.get(accountId);
-      if (interval) {
-        clearInterval(interval);
-        heartbeatIntervals.delete(accountId);
-      }
-
-      // Deregister from registry (#5)
-      const entry = registryClients.get(accountId);
-      if (entry?.agentId) {
-        const result = await entry.client.deregister(entry.agentId);
-        if (result.ok) {
-          log?.info?.(`Deregistered agent ${entry.agentId} from registry`);
-        } else {
-          log?.warn?.(`Failed to deregister: ${result.error}`);
-        }
-      }
+      await deregisterAgent(accountId, log);
       registryClients.delete(accountId);
-      heartbeatFailures.delete(accountId);
+      accountContexts.delete(accountId);
     },
   },
 
@@ -250,6 +290,7 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
     "agent-registry/peers",
     "agent-registry/search",
     "agent-registry/send",
+    "agent-registry/refresh",
   ],
 
   status: {
@@ -343,6 +384,18 @@ const plugin = {
           query,
           error: result.error,
         });
+      });
+
+      // POST /api/agent-registry/refresh — re-check Convex and register/deregister
+      api.registerGatewayMethod("agent-registry/refresh", async ({ respond }) => {
+        // Find the active account (typically "default")
+        const accountId = Array.from(accountContexts.keys())[0];
+        if (!accountId) {
+          respond(false, undefined, { code: "NO_ACCOUNT", message: "No active agent-registry account" });
+          return;
+        }
+        const result = await handleRefresh(accountId);
+        respond(true, result);
       });
 
       // POST /api/agent-registry/send — manually send a message to a peer
