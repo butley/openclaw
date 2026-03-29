@@ -255,13 +255,14 @@ export async function startMonitor(options: MonitorOptions): Promise<MonitorHand
     }
     
     // Check again after a short delay to catch async spawn errors
+    // Note: spawn "error" event fires asynchronously, give it time
     setTimeout(() => {
       if (initialSpawnFailed) {
         reject(Object.assign(new Error("pilotctl not found"), { code: "ENOENT" }));
       } else {
         resolve();
       }
-    }, 100);
+    }, 500);
   });
 
   return { stop };
