@@ -68,3 +68,151 @@ export async function fetchNetworkMetadata(env?: ConvexEnv | null): Promise<Netw
     return null;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Agent Network Handshakes — Convex CRUD                             */
+/* ------------------------------------------------------------------ */
+
+export interface HandshakeRecord {
+  _id: string;
+  installationId: string;
+  fromNodeId: number;
+  fromHostname?: string;
+  fromPublicKey: string;
+  introduction: string;
+  status: "pending" | "approved" | "rejected";
+  receivedAt: number;
+  processedAt?: number;
+  firstMessageSent: boolean;
+  notificationSent: boolean;
+}
+
+/** Helper to call a Convex mutation via HTTP API. */
+async function callConvexMutation(
+  path: string,
+  args: Record<string, unknown>,
+  env?: ConvexEnv | null,
+): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+  const e = env ?? getConvexEnv();
+  if (!e) return { ok: false, error: "Convex env not configured" };
+
+  try {
+    const res = await fetch(`${e.convexUrl}/api/mutation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path,
+        args: { ...args, installationId: e.installationId, gatewayToken: e.gatewayToken },
+        format: "json",
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || data.status === "error") {
+      return { ok: false, error: data.errorMessage ?? data.error ?? `HTTP ${res.status}` };
+    }
+    return { ok: true, value: data.value };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Helper to call a Convex query via HTTP API. */
+async function callConvexQuery(
+  path: string,
+  args: Record<string, unknown>,
+  env?: ConvexEnv | null,
+): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+  const e = env ?? getConvexEnv();
+  if (!e) return { ok: false, error: "Convex env not configured" };
+
+  try {
+    const res = await fetch(`${e.convexUrl}/api/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path,
+        args: { ...args, installationId: e.installationId, gatewayToken: e.gatewayToken },
+        format: "json",
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || data.status === "error") {
+      return { ok: false, error: data.errorMessage ?? data.error ?? `HTTP ${res.status}` };
+    }
+    return { ok: true, value: data.value };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Upsert a handshake record (insert or update existing by nodeId). */
+export async function upsertHandshake(params: {
+  fromNodeId: number;
+  fromHostname?: string;
+  fromPublicKey: string;
+  introduction: string;
+  status?: "pending" | "approved" | "rejected";
+}): Promise<{ ok: boolean; error?: string }> {
+  const result = await callConvexMutation("agentNetworkHandshakes:upsert", {
+    fromNodeId: params.fromNodeId,
+    fromHostname: params.fromHostname,
+    fromPublicKey: params.fromPublicKey ?? "",
+    introduction: params.introduction ?? "",
+    status: params.status ?? "pending",
+    receivedAt: Date.now(),
+  });
+  return { ok: result.ok, error: result.error };
+}
+
+/** Update handshake status (approved/rejected). */
+export async function updateHandshakeStatus(params: {
+  fromNodeId: number;
+  status: "approved" | "rejected";
+}): Promise<{ ok: boolean; error?: string }> {
+  const result = await callConvexMutation("agentNetworkHandshakes:updateStatus", {
+    fromNodeId: params.fromNodeId,
+    status: params.status,
+    processedAt: Date.now(),
+  });
+  return { ok: result.ok, error: result.error };
+}
+
+/** List pending handshakes for this installation. */
+export async function listPendingHandshakes(): Promise<{ ok: boolean; handshakes?: HandshakeRecord[]; error?: string }> {
+  const result = await callConvexQuery("agentNetworkHandshakes:listPending", {});
+  if (!result.ok) return { ok: false, error: result.error };
+  return { ok: true, handshakes: (result.value as HandshakeRecord[]) ?? [] };
+}
+
+/** Mark first message as sent for a peer. */
+export async function markFirstMessageSent(params: {
+  fromNodeId: number;
+}): Promise<{ ok: boolean; error?: string }> {
+  const result = await callConvexMutation("agentNetworkHandshakes:markFirstMessageSent", {
+    fromNodeId: params.fromNodeId,
+  });
+  return { ok: result.ok, error: result.error };
+}
+
+/** Mark notification as sent for a handshake (prevents re-notification on next poll). */
+export async function markNotificationSent(params: {
+  fromNodeId: number;
+}): Promise<{ ok: boolean; error?: string }> {
+  const result = await callConvexMutation("agentNetworkHandshakes:markNotificationSent", {
+    fromNodeId: params.fromNodeId,
+  });
+  return { ok: result.ok, error: result.error };
+}
+
+/** Get handshake record by node ID. */
+export async function getHandshakeByNodeId(params: {
+  fromNodeId: number;
+}): Promise<{ ok: boolean; handshake?: HandshakeRecord | null; error?: string }> {
+  const result = await callConvexQuery("agentNetworkHandshakes:getByNodeId", {
+    fromNodeId: params.fromNodeId,
+  });
+  if (!result.ok) return { ok: false, error: result.error };
+  return { ok: true, handshake: (result.value as HandshakeRecord | null) ?? null };
+}

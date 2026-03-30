@@ -1,6 +1,6 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { isPilotInstalled } from "./daemon.js";
-import { getConvexEnv } from "./convex-client.js";
+import { getConvexEnv, updateHandshakeStatus } from "./convex-client.js";
 
 interface AgentNetworkConfig {
   registryUrl: string;
@@ -32,8 +32,8 @@ const ACTIONS = {
   },
   handshake: {
     description: "Establish trust with another assistant (required before contact)",
-    requiredArgs: ["installation_id"],
-    optionalArgs: ["introduction"],
+    requiredArgs: ["installation_id", "introduction"],
+    optionalArgs: [] as string[],
   },
   pending: {
     description: "List pending handshake requests from other assistants",
@@ -42,6 +42,16 @@ const ACTIONS = {
   },
   approve: {
     description: "Approve a pending handshake request",
+    requiredArgs: ["node_id"],
+    optionalArgs: [] as string[],
+  },
+  reject: {
+    description: "Reject a pending handshake request",
+    requiredArgs: ["node_id"],
+    optionalArgs: [] as string[],
+  },
+  untrust: {
+    description: "Remove trust from a previously approved agent (block them)",
     requiredArgs: ["node_id"],
     optionalArgs: [] as string[],
   },
@@ -60,8 +70,10 @@ const ACTIONS = {
 export function createAgentNetworkTool(api: OpenClawPluginApi) {
   const config = (api.pluginConfig ?? {}) as AgentNetworkConfig;
 
+  const log = api.logger;
+
   if (!config.registryUrl) {
-    api.logger?.warn?.("agent-network: missing registryUrl. Tool disabled.");
+    log?.warn?.("agent-network: missing registryUrl. Tool disabled.");
     return null;
   }
 
@@ -90,7 +102,7 @@ Get full details about a specific assistant.
 ### handshake
 Request to establish trust with another assistant. Must be done before contact.
 - installation_id (string, required): The assistant's installation_id (from search results)
-- introduction (string, optional): A message introducing yourself (e.g., "Hi, I'm Junin, Guilherme's assistant")
+- introduction (string, required): A message introducing yourself (e.g., "Hi, I'm Junin, Guilherme's assistant")
 
 Think of this like sending a friend request — you introduce yourself and wait for approval.
 
@@ -100,6 +112,14 @@ List incoming handshake requests waiting for your approval. Use this to see who 
 ### approve
 Approve a pending handshake request.
 - node_id (string, required): The node ID from the pending list
+
+### reject
+Reject a pending handshake request.
+- node_id (string, required): The node ID from the pending list
+
+### untrust
+Remove trust from a previously approved agent (block them).
+- node_id (string, required): The node ID to untrust
 
 ### contact
 Send a message to another assistant. Requires completed handshake (both sides approved).
@@ -449,6 +469,10 @@ Check for messages from other assistants.
           }
 
           case "approve": {
+            if (!node_id) {
+              return { content: [{ type: "text", text: "node_id is required for approve action" }] };
+            }
+
             const pilotUp = await isPilotInstalled();
             if (!pilotUp) {
               return {
@@ -458,7 +482,7 @@ Check for messages from other assistants.
 
             const { spawn } = await import("child_process");
             const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
-              const proc = spawn("pilotctl", ["approve", node_id!], { timeout: 10000 });
+              const proc = spawn("pilotctl", ["approve", node_id], { timeout: 10000 });
 
               let stdout = "";
               let stderr = "";
@@ -485,11 +509,119 @@ Check for messages from other assistants.
               };
             }
 
+            // Update Convex status
+            await updateHandshakeStatus({ fromNodeId: Number(node_id), status: "approved" }).catch((err) => log?.warn?.("Convex sync failed (approve):", err));
+
             return {
               content: [
                 {
                   type: "text",
                   text: `Approved handshake from node ${node_id}.\n\n${result.output}\n\nYou can now exchange messages with this assistant.`,
+                },
+              ],
+            };
+          }
+
+          case "reject": {
+            if (!node_id) {
+              return { content: [{ type: "text", text: "node_id is required for reject action" }] };
+            }
+
+            const pilotUp2 = await isPilotInstalled();
+            if (!pilotUp2) {
+              return {
+                content: [{ type: "text", text: `Pilot Protocol daemon is not running.` }],
+              };
+            }
+
+            const { spawn } = await import("child_process");
+            const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
+              const proc = spawn("pilotctl", ["reject", node_id], { timeout: 10000 });
+
+              let stdout = "";
+              let stderr = "";
+
+              proc.stdout?.on("data", (d) => (stdout += d.toString()));
+              proc.stderr?.on("data", (d) => (stderr += d.toString()));
+
+              proc.on("close", (code) => {
+                if (code === 0) {
+                  resolve({ ok: true, output: stdout.trim() || "Rejected" });
+                } else {
+                  resolve({ ok: false, output: stderr.trim() || stdout.trim() || `Exit code ${code}` });
+                }
+              });
+
+              proc.on("error", (err) => {
+                resolve({ ok: false, output: `Spawn error: ${err.message}` });
+              });
+            });
+
+            if (!result.ok) {
+              return {
+                content: [{ type: "text", text: `Failed to reject: ${result.output}` }],
+              };
+            }
+
+            // Update Convex status
+            await updateHandshakeStatus({ fromNodeId: Number(node_id), status: "rejected" }).catch((err) => log?.warn?.("Convex sync failed (reject):", err));
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Rejected handshake from node ${node_id}.\n\n${result.output}`,
+                },
+              ],
+            };
+          }
+
+          case "untrust": {
+            if (!node_id) {
+              return { content: [{ type: "text", text: "node_id is required for untrust action" }] };
+            }
+
+            const pilotUp3 = await isPilotInstalled();
+            if (!pilotUp3) {
+              return {
+                content: [{ type: "text", text: `Pilot Protocol daemon is not running.` }],
+              };
+            }
+
+            const { spawn } = await import("child_process");
+            const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
+              const proc = spawn("pilotctl", ["untrust", node_id], { timeout: 10000 });
+
+              let stdout = "";
+              let stderr = "";
+
+              proc.stdout?.on("data", (d) => (stdout += d.toString()));
+              proc.stderr?.on("data", (d) => (stderr += d.toString()));
+
+              proc.on("close", (code) => {
+                if (code === 0) {
+                  resolve({ ok: true, output: stdout.trim() || "Untrusted" });
+                } else {
+                  resolve({ ok: false, output: stderr.trim() || stdout.trim() || `Exit code ${code}` });
+                }
+              });
+
+              proc.on("error", (err) => {
+                resolve({ ok: false, output: `Spawn error: ${err.message}` });
+              });
+            });
+
+            if (!result.ok) {
+              return {
+                content: [{ type: "text", text: `Failed to untrust: ${result.output}` }],
+              };
+            }
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Removed trust for node ${node_id}.\n\n${result.output}\n\nThis agent can no longer send you messages.`,
                 },
               ],
             };

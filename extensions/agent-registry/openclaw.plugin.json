@@ -8,6 +8,11 @@
       "registryUrl": {
         "type": "string",
         "description": "URL of the Agent Registry API"
+      },
+      "pollIntervalSeconds": {
+        "type": "number",
+        "default": 300,
+        "description": "Interval between inbox/pending checks (seconds)"
       }
     }
   }

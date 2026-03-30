@@ -15,9 +15,10 @@ import { startMonitor } from "./src/monitor.js";
 import type { MonitorHandle } from "./src/monitor.js";
 import { getDaemonStatus, isPilotInstalled } from "./src/daemon.js";
 import { AgentRegistryClient } from "./src/discovery.js";
-import { fetchNetworkMetadata, getConvexEnv } from "./src/convex-client.js";
+import { fetchNetworkMetadata, getConvexEnv, upsertHandshake, getHandshakeByNodeId, markFirstMessageSent, markNotificationSent } from "./src/convex-client.js";
 import type { NetworkMetadata } from "./src/convex-client.js";
 import { createAgentNetworkTool } from "./src/agent-network-tool.js";
+import { spawn } from "node:child_process";
 
 /* ------------------------------------------------------------------ */
 /*  State                                                              */
@@ -37,6 +38,9 @@ const heartbeatFailures = new Map<string, number>();
 
 /** Whether currently registered in the registry (per account). */
 const registeredState = new Map<string, boolean>();
+
+/** Poll intervals per account (for inbox/pending polling). */
+const pollIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
 /** Cached account context for refresh (log, config, etc). */
 const accountContexts = new Map<string, {
@@ -211,6 +215,305 @@ async function handleRefresh(accountId: string): Promise<{ action: string; disco
 }
 
 /* ------------------------------------------------------------------ */
+/*  Poll loop — pending handshakes + inbox messages                    */
+/* ------------------------------------------------------------------ */
+
+/** Run a pilotctl command and return parsed JSON output. */
+function runPilotctl(args: string[], timeoutMs = 10000): Promise<{ ok: boolean; output: string }> {
+  return new Promise((resolve) => {
+    const proc = spawn("pilotctl", args, { timeout: timeoutMs });
+    let stdout = "";
+    let stderr = "";
+
+    proc.stdout?.on("data", (d: Buffer) => (stdout += d.toString()));
+    proc.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
+
+    proc.on("close", (code) => {
+      if (code === 0) {
+        resolve({ ok: true, output: stdout.trim() });
+      } else {
+        resolve({ ok: false, output: stderr.trim() || stdout.trim() || `Exit code ${code}` });
+      }
+    });
+
+    proc.on("error", (err) => {
+      resolve({ ok: false, output: `Spawn error: ${err.message}` });
+    });
+  });
+}
+
+/** Parsed pending handshake entry from pilotctl. */
+interface PendingEntry {
+  node_id: number;
+  hostname?: string;
+  public_key?: string;
+  justification?: string;
+  received_at?: number;
+}
+
+/** Parsed inbox message from pilotctl. */
+interface InboxMessage {
+  from: number; // node_id
+  from_hostname?: string;
+  data: string;
+  received_at?: string;
+  type?: string;
+}
+
+/**
+ * Execute one poll cycle: check for pending handshakes and inbox messages.
+ * Injects them as inbound messages via channelRuntime.
+ */
+async function executePollCycle(params: {
+  accountId: string;
+  config: import("./src/types.js").AgentRegistryConfig;
+  channelRuntime: any; // PluginRuntime["channel"]
+  cfg: any; // OpenClawConfig
+  log?: any;
+}): Promise<void> {
+  const { accountId, config, channelRuntime, cfg, log } = params;
+
+  const pilotAvailable = await isPilotInstalled();
+  if (!pilotAvailable) return;
+
+  // A) Check pending handshakes
+  try {
+    const pendingResult = await runPilotctl(["pending", "--json"]);
+    if (pendingResult.ok && pendingResult.output) {
+      const data = JSON.parse(pendingResult.output);
+      const pending: PendingEntry[] = data.data?.pending ?? data.pending ?? [];
+
+      for (const entry of pending) {
+        const introduction = entry.justification || "(no introduction)";
+
+        // Save to Convex — upsert returns existing record or creates new
+        await upsertHandshake({
+          fromNodeId: entry.node_id,
+          fromHostname: entry.hostname,
+          fromPublicKey: entry.public_key ?? "",
+          introduction,
+          status: "pending",
+        }).catch((err) => {
+          log?.warn?.(`Failed to save handshake to Convex: ${err}`);
+        });
+
+        // Check if we already notified about this handshake
+        let alreadyNotified = false;
+        try {
+          const hsResult = await getHandshakeByNodeId({ fromNodeId: entry.node_id });
+          if (hsResult.ok && hsResult.handshake?.notificationSent) {
+            alreadyNotified = true;
+          }
+        } catch {
+          // If lookup fails, skip notification to be safe (avoid duplicates)
+          alreadyNotified = true;
+        }
+
+        if (alreadyNotified) continue;
+
+        // Build session key for handshake notifications (use main session)
+        const route = channelRuntime.routing.resolveAgentRoute({
+          cfg,
+          channel: "agent-registry",
+          accountId,
+          peer: {
+            kind: "direct",
+            id: entry.hostname || `node-${entry.node_id}`,
+          },
+        });
+
+        const handshakeBody = `🤝 Pedido de conexão de ${entry.hostname || `node ${entry.node_id}`}\n\nIntrodução: "${introduction}"\n\nPara aprovar: agent_network({ action: "approve", node_id: "${entry.node_id}" })\nPara rejeitar: agent_network({ action: "reject", node_id: "${entry.node_id}" })`;
+
+        const msgCtx = channelRuntime.reply.finalizeInboundContext({
+          Body: handshakeBody,
+          BodyForAgent: handshakeBody,
+          RawBody: handshakeBody,
+          CommandBody: handshakeBody,
+          From: `agent-registry:${entry.hostname || entry.node_id}`,
+          To: config.hostname,
+          SessionKey: route.sessionKey,
+          AccountId: accountId,
+          OriginatingChannel: "agent-registry",
+          OriginatingTo: config.hostname,
+          ChatType: "direct",
+          SenderName: entry.hostname || `Agent ${entry.node_id}`,
+          SenderId: String(entry.node_id),
+          Provider: "agent-registry",
+          Surface: "agent-registry",
+          ConversationLabel: entry.hostname || `Agent ${entry.node_id}`,
+          Timestamp: Date.now(),
+          CommandAuthorized: true,
+        });
+
+        await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
+          ctx: msgCtx,
+          cfg,
+          dispatcherOptions: {
+            deliver: async (_payload: { text?: string; body?: string }) => {
+              // No-op: handshake notifications are informational only.
+              // Cannot send messages to unapproved peers via Pilot Protocol.
+              log?.debug?.(`Handshake notification reply suppressed for unapproved node ${entry.node_id}`);
+            },
+          },
+        });
+
+        // Mark notification as sent to prevent re-notification on next poll cycle
+        await markNotificationSent({ fromNodeId: entry.node_id }).catch((err) => {
+          log?.warn?.(`Failed to mark notification sent: ${err}`);
+        });
+
+        log?.info?.(`Injected pending handshake from ${entry.hostname || entry.node_id} (node ${entry.node_id})`);
+      }
+    }
+  } catch (err) {
+    // Tolerate parse/network errors — will retry next cycle
+    if (err instanceof SyntaxError) {
+      // No pending or non-JSON output — OK
+    } else {
+      log?.warn?.(`Poll pending error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // B) Check inbox messages
+  try {
+    // Fetch without --clear first; only clear after successful processing
+    const inboxResult = await runPilotctl(["inbox", "--json"]);
+    if (inboxResult.ok && inboxResult.output) {
+      const data = JSON.parse(inboxResult.output);
+      const messages: InboxMessage[] = data.data?.messages ?? data.messages ?? [];
+
+      for (const msg of messages) {
+        const senderNodeId = msg.from;
+        const senderLabel = msg.from_hostname || `node-${senderNodeId}`;
+        const messageBody = msg.data || "";
+
+        // Single Convex lookup for handshake data (reused for first-message check and intro text)
+        let isFirstMessage = false;
+        let introText = "(no introduction)";
+        try {
+          const hsResult = await getHandshakeByNodeId({ fromNodeId: senderNodeId });
+          if (hsResult.ok && hsResult.handshake) {
+            isFirstMessage = !hsResult.handshake.firstMessageSent;
+            if (hsResult.handshake.introduction) {
+              introText = hsResult.handshake.introduction;
+            }
+          }
+        } catch {
+          // If Convex lookup fails, skip intro logic
+        }
+
+        // Resolve route with per-channel-peer scope for DM sessions
+        const route = channelRuntime.routing.resolveAgentRoute({
+          cfg,
+          channel: "agent-registry",
+          accountId,
+          peer: {
+            kind: "direct",
+            id: senderLabel,
+          },
+        });
+
+        // If first message, inject system event with introduction
+        if (isFirstMessage) {
+
+          const systemBody = `[Sessão com agente via Agent Network]\nHostname: ${senderLabel}\nIntrodução: "${introText}"`;
+
+          const systemCtx = channelRuntime.reply.finalizeInboundContext({
+            Body: systemBody,
+            BodyForAgent: systemBody,
+            RawBody: systemBody,
+            CommandBody: systemBody,
+            From: `agent-registry:${senderLabel}`,
+            To: config.hostname,
+            SessionKey: route.sessionKey,
+            AccountId: accountId,
+            OriginatingChannel: "agent-registry",
+            OriginatingTo: config.hostname,
+            ChatType: "direct",
+            SenderName: senderLabel,
+            SenderId: String(senderNodeId),
+            Provider: "agent-registry",
+            Surface: "agent-registry",
+            ConversationLabel: senderLabel,
+            Timestamp: Date.now(),
+            CommandAuthorized: true,
+            SystemEvent: true,
+          });
+
+          await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
+            ctx: systemCtx,
+            cfg,
+            dispatcherOptions: {
+              deliver: async () => {
+                // System event — no reply needed
+              },
+            },
+          });
+
+          // Mark first message as sent
+          await markFirstMessageSent({ fromNodeId: senderNodeId }).catch((err) => {
+            log?.warn?.(`Failed to mark first message sent: ${err}`);
+          });
+
+          log?.info?.(`Injected introduction system event for ${senderLabel}`);
+        }
+
+        // Inject the actual message
+        const msgCtx = channelRuntime.reply.finalizeInboundContext({
+          Body: messageBody,
+          BodyForAgent: messageBody,
+          RawBody: messageBody,
+          CommandBody: messageBody,
+          From: `agent-registry:${senderLabel}`,
+          To: config.hostname,
+          SessionKey: route.sessionKey,
+          AccountId: accountId,
+          OriginatingChannel: "agent-registry",
+          OriginatingTo: config.hostname,
+          ChatType: "direct",
+          SenderName: senderLabel,
+          SenderId: String(senderNodeId),
+          Provider: "agent-registry",
+          Surface: "agent-registry",
+          ConversationLabel: senderLabel,
+          Timestamp: Date.now(),
+          CommandAuthorized: true,
+        });
+
+        await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
+          ctx: msgCtx,
+          cfg,
+          dispatcherOptions: {
+            deliver: async (payload: { text?: string; body?: string }) => {
+              const text = payload?.text ?? payload?.body;
+              if (text) {
+                // Send reply back via Pilot Protocol
+                await runPilotctl(["send-message", String(senderNodeId), "--data", text], 15000);
+              }
+            },
+          },
+        });
+
+        log?.info?.(`Injected inbox message from ${senderLabel} (node ${senderNodeId})`);
+      }
+
+      // All messages processed successfully — now clear the inbox
+      if (messages.length > 0) {
+        await runPilotctl(["inbox", "--clear"]).catch((err) => {
+          log?.warn?.(`Failed to clear inbox after processing: ${err}`);
+        });
+      }
+    }
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      // Empty inbox or non-JSON — OK
+    } else {
+      log?.warn?.(`Poll inbox error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Channel plugin definition                                          */
 /* ------------------------------------------------------------------ */
 
@@ -283,6 +586,47 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
       // Mark channel as started (even if not registered — channel is alive and ready for refresh)
       setStatus({ connected: true, running: true });
 
+      // Start poll loop for pending handshakes and inbox messages
+      const pollIntervalMs = (config.pollIntervalSeconds ?? 300) * 1000;
+      const pilotAvailable = await isPilotInstalled();
+      if (pilotAvailable && channelRuntime) {
+        // Use initial config — poll interval is static and doesn't need dynamic reload
+        const getCfg = () => ctx.cfg;
+
+        // Run first poll immediately
+        executePollCycle({
+          accountId,
+          config,
+          channelRuntime,
+          cfg: getCfg(),
+          log,
+        }).catch((err) => {
+          log?.warn?.(`Initial poll cycle error: ${err instanceof Error ? err.message : String(err)}`);
+        });
+
+        // Schedule recurring polls
+        const interval = setInterval(async () => {
+          try {
+            await executePollCycle({
+              accountId,
+              config,
+              channelRuntime,
+              cfg: getCfg(),
+              log,
+            });
+          } catch (err) {
+            log?.warn?.(`Poll cycle error: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }, pollIntervalMs);
+        if (interval.unref) interval.unref();
+        pollIntervals.set(accountId, interval);
+
+        log?.info?.(`Poll loop started (interval: ${config.pollIntervalSeconds ?? 300}s)`);
+      } else {
+        if (!pilotAvailable) log?.info?.("Pilot Protocol not available — poll loop disabled");
+        if (!channelRuntime) log?.info?.("channelRuntime not available — poll loop disabled");
+      }
+
       // Keep the channel alive — gateway restarts if startAccount resolves.
       await new Promise<void>((resolve) => {
         if (abortSignal?.aborted) return resolve();
@@ -295,6 +639,15 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
 
     stopAccount: async (ctx) => {
       const { accountId, log } = ctx;
+
+      // Stop poll loop
+      const pollInterval = pollIntervals.get(accountId);
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollIntervals.delete(accountId);
+        log?.info?.("Poll loop stopped");
+      }
+
       await deregisterAgent(accountId, log);
       registryClients.delete(accountId);
       accountContexts.delete(accountId);

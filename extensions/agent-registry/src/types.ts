@@ -21,6 +21,7 @@ export type AgentRegistryConfig = {
   registryApiKey?: string;
   autoTrust?: boolean;
   allowFrom?: string[];
+  pollIntervalSeconds?: number;
 };
 
 export type AgentRegistryInboundMessage = {

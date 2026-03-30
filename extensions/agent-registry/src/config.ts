@@ -44,6 +44,7 @@ export function resolveAgentRegistryAccount(params: {
     registryApiKey: accountData.registryApiKey,
     autoTrust: accountData.autoTrust ?? false,
     allowFrom: accountData.allowFrom,
+    pollIntervalSeconds: accountData.pollIntervalSeconds ?? 300,
   };
 
   return { accountId, config };
