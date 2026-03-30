@@ -1,6 +1,16 @@
 #!/bin/bash
 set -e
 
+# Cleanup function for graceful shutdown
+cleanup() {
+    echo "[entrypoint] Shutting down..."
+    # Stop Pilot daemon if running
+    if command -v pilotctl &> /dev/null; then
+        pilotctl daemon stop 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT TERM INT
+
 # Add bun to PATH (for QMD memory search)
 export PATH="/root/.bun/bin:$PATH"
 
@@ -100,6 +110,22 @@ fi
 if [ -f /root/.openclaw/gateway-credentials.json ]; then
     export OPENCLAW_GATEWAY_TOKEN=$(python3 -c \
         "import json; print(json.load(open('/root/.openclaw/gateway-credentials.json'))['gatewayToken'])")
+fi
+
+# Start Pilot Protocol daemon for P2P agent communication
+if command -v pilotctl &> /dev/null; then
+    # Use INSTALLATION_ID as hostname if available, otherwise use workspace name
+    PILOT_HOSTNAME="${INSTALLATION_ID:-agent-$(hostname | cut -c1-8)}"
+    
+    # Init config if first run
+    if [ ! -f /root/.pilot/config.json ]; then
+        pilotctl init --non-interactive 2>/dev/null || true
+    fi
+    
+    # Start daemon in background (will be stopped when container stops)
+    pilotctl daemon start --hostname "$PILOT_HOSTNAME" --background 2>/dev/null && \
+        echo "[entrypoint] Pilot Protocol daemon started (hostname=$PILOT_HOSTNAME)" || \
+        echo "[entrypoint] Pilot Protocol daemon failed to start (optional, continuing...)"
 fi
 
 # Bootstrap runs in parallel — credentials, QMD indexing, gateway readiness, onboarding.

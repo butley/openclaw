@@ -149,6 +149,11 @@ RUN curl -L "https://github.com/steipete/gogcli/releases/download/v${GOGCLI_VERS
 # Install Poetry (for agent skills that need Python)
 RUN pip3 install --break-system-packages poetry==1.8.4 || true
 
+# Install Pilot Protocol for P2P agent-to-agent communication
+# pilotctl is the CLI for sending/receiving messages between agents
+RUN curl -fsSL https://pilotprotocol.network/install.sh | PILOT_NONINTERACTIVE=1 sh && \
+    ln -sf /root/.pilot/bin/pilotctl /usr/local/bin/pilotctl || true
+
 # Enable corepack for pnpm (needed if any pnpm commands are used at runtime)
 RUN npm install -g --force corepack@latest && corepack enable
 
