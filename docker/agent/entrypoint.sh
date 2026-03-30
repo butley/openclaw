@@ -117,18 +117,17 @@ if command -v pilotctl &> /dev/null; then
     # Use INSTALLATION_ID as hostname if available
     PILOT_HOSTNAME="${INSTALLATION_ID:-agent-$(hostname | cut -c1-8)}"
     # Email must be unique per agent to get unique Node ID from registry
-    PILOT_EMAIL="${PILOT_EMAIL:-${INSTALLATION_ID:-agent}@butley.ai}"
+    PILOT_EMAIL="agent-${INSTALLATION_ID:-$(hostname)}@butley.ai"
     
     # Remove old config to force fresh identity on each container
-    # This ensures unique Node ID from the Pilot registry
     rm -rf /root/.pilot/config.json /root/.pilot/*.key 2>/dev/null || true
     
     # Init config
     pilotctl init --non-interactive 2>/dev/null || true
     
-    # Start daemon in background (will be stopped when container stops)
+    # Start daemon in background
     pilotctl daemon start --hostname "$PILOT_HOSTNAME" --email "$PILOT_EMAIL" --background 2>/dev/null && \
-        echo "[entrypoint] Pilot Protocol daemon started (hostname=$PILOT_HOSTNAME, email=$PILOT_EMAIL)" || \
+        echo "[entrypoint] Pilot Protocol daemon started (hostname=$PILOT_HOSTNAME)" || \
         echo "[entrypoint] Pilot Protocol daemon failed to start (optional, continuing...)"
 fi
 
