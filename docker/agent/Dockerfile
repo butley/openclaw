@@ -150,9 +150,13 @@ RUN curl -L "https://github.com/steipete/gogcli/releases/download/v${GOGCLI_VERS
 RUN pip3 install --break-system-packages poetry==1.8.4 || true
 
 # Install Pilot Protocol for P2P agent-to-agent communication
-# pilotctl is the CLI for sending/receiving messages between agents
-RUN curl -fsSL https://pilotprotocol.network/install.sh | PILOT_NONINTERACTIVE=1 sh && \
-    ln -sf /root/.pilot/bin/pilotctl /usr/local/bin/pilotctl || true
+# Download pre-built binary directly (faster and more reliable than installer script)
+ARG PILOT_VERSION=v1.4.1
+RUN mkdir -p /root/.pilot/bin && \
+    curl -fsSL "https://github.com/TeoSlayer/pilotprotocol/releases/download/${PILOT_VERSION}/pilot-linux-amd64.tar.gz" \
+    | tar -xz -C /root/.pilot/bin && \
+    chmod +x /root/.pilot/bin/* && \
+    ln -sf /root/.pilot/bin/pilotctl /usr/local/bin/pilotctl
 
 # Enable corepack for pnpm (needed if any pnpm commands are used at runtime)
 RUN npm install -g --force corepack@latest && corepack enable
