@@ -131,23 +131,16 @@ if command -v pilot-daemon &> /dev/null; then
     
     # Start daemon directly with fixed endpoint (skips STUN)
     if [ -n "$PUBLIC_IP" ]; then
-        # Verify identity file exists (created by pilotctl init)
-        if [ ! -f /root/.pilot/identity.json ]; then
-            echo "[entrypoint] WARNING: Pilot identity file missing, attempting to create..."
-            pilotctl init --hostname "$PILOT_HOSTNAME" 2>/dev/null || true
-        fi
+        # Create identity directory (daemon will create identity.json on first run)
+        mkdir -p /root/.pilot
         
-        if [ -f /root/.pilot/identity.json ]; then
-            # Use fixed endpoint mode - listen on PILOT_PORT to match Docker mapping
-            pilot-daemon -hostname "$PILOT_HOSTNAME" -email "$PILOT_EMAIL" \
-                -listen ":${PILOT_PORT}" \
-                -endpoint "${PUBLIC_IP}:${PILOT_PORT}" \
-                -identity /root/.pilot/identity.json \
-                >> /root/.pilot/pilot.log 2>&1 &
-            echo "[entrypoint] Pilot daemon started with fixed endpoint ${PUBLIC_IP}:${PILOT_PORT} (hostname=$PILOT_HOSTNAME)"
-        else
-            echo "[entrypoint] WARNING: Could not create Pilot identity, skipping P2P daemon"
-        fi
+        # Use fixed endpoint mode - listen on PILOT_PORT to match Docker mapping
+        # The daemon creates identity.json automatically if it doesn't exist
+        pilot-daemon -hostname "$PILOT_HOSTNAME" -email "$PILOT_EMAIL" \
+            -listen ":${PILOT_PORT}" \
+            -endpoint "${PUBLIC_IP}:${PILOT_PORT}" \
+            >> /root/.pilot/pilot.log 2>&1 &
+        echo "[entrypoint] Pilot daemon started with fixed endpoint ${PUBLIC_IP}:${PILOT_PORT} (hostname=$PILOT_HOSTNAME)"
     else
         # Fallback to pilotctl daemon start (STUN mode)
         pilotctl daemon start --hostname "$PILOT_HOSTNAME" --email "$PILOT_EMAIL" --background 2>/dev/null && \
