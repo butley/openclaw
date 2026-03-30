@@ -49,6 +49,11 @@ const ACTIONS = {
     requiredArgs: ["installation_id", "message"],
     optionalArgs: [] as string[],
   },
+  inbox: {
+    description: "Check your inbox for messages from other assistants",
+    requiredArgs: [] as string[],
+    optionalArgs: ["clear"],
+  },
 };
 
 export function createAgentNetworkTool(api: OpenClawPluginApi) {
@@ -100,7 +105,13 @@ Send a message to another assistant. Requires completed handshake (both sides ap
 - installation_id (string, required): Target assistant's installation_id
 - message (string, required): Message to send
 
-⚠️ Contact requires Pilot Protocol and mutual trust. If unavailable, you'll get an error.`,
+⚠️ Contact requires Pilot Protocol and mutual trust. If unavailable, you'll get an error.
+
+### inbox
+Check for messages from other assistants.
+- clear (boolean, optional): If true, clears messages after reading
+
+📬 Check your inbox regularly to see responses from other assistants.`,
     parameters: {
       type: "object" as const,
       properties: {
@@ -141,6 +152,10 @@ Send a message to another assistant. Requires completed handshake (both sides ap
         message: {
           type: "string" as const,
           description: "Message to send (for contact action)",
+        },
+        clear: {
+          type: "boolean" as const,
+          description: "Clear inbox after reading (for inbox action)",
         },
       },
       required: ["action"] as const,
@@ -606,6 +621,82 @@ Send a message to another assistant. Requires completed handshake (both sides ap
                     text: `Failed to send message: ${err instanceof Error ? err.message : String(err)}`,
                   },
                 ],
+              };
+            }
+          }
+
+          case "inbox": {
+            // Check if Pilot Protocol is available
+            const pilotUp = await isPilotInstalled();
+            if (!pilotUp) {
+              return {
+                content: [{ type: "text", text: `Pilot Protocol daemon is not running.` }],
+              };
+            }
+
+            const { spawn } = await import("child_process");
+            const clearArg = args.clear === true || args.clear === "true";
+            const inboxArgs = clearArg ? ["inbox", "--json", "--clear"] : ["inbox", "--json"];
+            
+            const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
+              const proc = spawn("pilotctl", inboxArgs, { timeout: 10000 });
+
+              let stdout = "";
+              let stderr = "";
+
+              proc.stdout?.on("data", (d: Buffer) => (stdout += d.toString()));
+              proc.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
+
+              proc.on("close", (code) => {
+                if (code === 0) {
+                  resolve({ ok: true, output: stdout.trim() });
+                } else {
+                  resolve({ ok: false, output: stderr.trim() || stdout.trim() || `Exit code ${code}` });
+                }
+              });
+
+              proc.on("error", (err) => {
+                resolve({ ok: false, output: `Spawn error: ${err.message}` });
+              });
+            });
+
+            if (!result.ok) {
+              return {
+                content: [{ type: "text", text: `Failed to read inbox: ${result.output}` }],
+              };
+            }
+
+            // Parse inbox response
+            try {
+              const data = JSON.parse(result.output);
+              const messages = data.data?.messages ?? [];
+              
+              if (messages.length === 0) {
+                return {
+                  content: [{ type: "text", text: "📭 No messages in inbox." }],
+                };
+              }
+
+              // Format messages nicely
+              const formatted = messages.map((m: { from: string; data: string; received_at: string; type: string }) => ({
+                from: m.from,
+                message: m.data,
+                received: m.received_at,
+                type: m.type,
+              }));
+
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `📬 You have ${messages.length} message(s):\n\n${JSON.stringify(formatted, null, 2)}${clearArg ? "\n\n(Inbox cleared after reading)" : ""}`,
+                  },
+                ],
+              };
+            } catch {
+              // Raw output if JSON parsing fails
+              return {
+                content: [{ type: "text", text: result.output || "📭 No messages in inbox." }],
               };
             }
           }
