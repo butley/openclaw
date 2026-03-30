@@ -23,49 +23,43 @@ export type SendOptions = {
 /**
  * Send a message to another agent via Pilot Protocol.
  *
- * Uses `pilotctl send --to <hostname> --json` with the message body piped via stdin.
+ * Uses `pilotctl send <hostname> <port> --data <msg>`.
  * The `to` field on the message can be either a hostname or a Pilot address.
  */
 export async function sendMessage(
   message: AgentRegistryOutboundMessage,
   options?: SendOptions,
 ): Promise<SendResult> {
-  const { pilotPort, timeoutMs = 15000 } = options ?? {};
+  const { pilotPort = 1000, timeoutMs = 15000 } = options ?? {};
 
   const payload = JSON.stringify({
     body: message.body,
     metadata: message.metadata ?? {},
   });
 
-  const args = ["send", "--to", message.to, "--json"];
-  if (pilotPort != null) {
-    args.push("--port", String(pilotPort));
-  }
+  const args = ["send", message.to, String(pilotPort), "--data", payload];
 
-  return executePilotSend(args, payload, timeoutMs);
+  return executePilotSend(args, timeoutMs);
 }
 
 /**
- * Send a message directly to a Pilot address (e.g. "1:0001.A3F2:1001").
+ * Send a message directly to a Pilot address (e.g. "0:0000.0000.37D7").
  */
 export async function sendMessageToAddress(
   address: string,
   body: string,
   options?: SendOptions & { metadata?: Record<string, unknown> },
 ): Promise<SendResult> {
-  const { pilotPort, timeoutMs = 15000, metadata } = options ?? {};
+  const { pilotPort = 1000, timeoutMs = 15000, metadata } = options ?? {};
 
   const payload = JSON.stringify({
     body,
     metadata: metadata ?? {},
   });
 
-  const args = ["send", "--to", address, "--json"];
-  if (pilotPort != null) {
-    args.push("--port", String(pilotPort));
-  }
+  const args = ["send", address, String(pilotPort), "--data", payload];
 
-  return executePilotSend(args, payload, timeoutMs);
+  return executePilotSend(args, timeoutMs);
 }
 
 /**
@@ -110,12 +104,11 @@ export async function broadcastMessage(
 /* ------------------------------------------------------------------ */
 
 /**
- * Execute a pilotctl send command, piping the JSON payload via stdin.
+ * Execute a pilotctl send command.
  * Parses stdout for a delivery confirmation containing a messageId.
  */
 function executePilotSend(
   args: string[],
-  stdinPayload: string,
   timeoutMs: number,
 ): Promise<SendResult> {
   return new Promise((resolve) => {
@@ -123,7 +116,7 @@ function executePilotSend(
 
     try {
       const child = spawn("pilotctl", args, {
-        stdio: ["pipe", "pipe", "pipe"],
+        stdio: ["ignore", "pipe", "pipe"],
       });
 
       let stdout = "";
@@ -156,11 +149,6 @@ function executePilotSend(
         // Try to parse messageId from JSON response
         const result = parseSendResponse(stdout);
         resolve(result);
-      });
-
-      // Write payload to stdin and close
-      child.stdin?.write(stdinPayload, () => {
-        child.stdin?.end();
       });
 
       // Timeout guard

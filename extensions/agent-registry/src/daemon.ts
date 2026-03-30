@@ -163,11 +163,20 @@ export async function getDaemonAddress(): Promise<string | undefined> {
   return status.address;
 }
 
-/** Check if the pilot-daemon binary is available in PATH. */
+/** Check if Pilot Protocol is available (pilotctl exists and daemon is running). */
 export async function isPilotInstalled(): Promise<boolean> {
   return new Promise((resolve) => {
-    execFile("which", ["pilot-daemon"], (err) => {
-      resolve(!err);
+    // First check if pilotctl exists
+    execFile("which", ["pilotctl"], (err) => {
+      if (err) {
+        resolve(false);
+        return;
+      }
+      // Then check if daemon is running via pilotctl info
+      execFile("pilotctl", ["info"], (infoErr) => {
+        // If info succeeds, daemon is running and ready
+        resolve(!infoErr);
+      });
     });
   });
 }

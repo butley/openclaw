@@ -1,4 +1,6 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { sendMessage } from "./send.js";
+import { isPilotInstalled } from "./daemon.js";
 
 interface AgentNetworkConfig {
   registryUrl: string;
@@ -217,12 +219,41 @@ Send a message to another assistant. The response may be async.
           }
 
           case "contact": {
-            // This requires Pilot Protocol which may not be available
+            // Check if Pilot Protocol is available
+            const pilotReady = await isPilotInstalled();
+            if (!pilotReady) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Cannot send message: Pilot Protocol daemon is not running.\n\nTarget: ${hostname}\nMessage: "${message}"`,
+                  },
+                ],
+              };
+            }
+
+            // Send the message via Pilot Protocol
+            const result = await sendMessage(
+              { to: hostname!, body: message! },
+              { pilotPort: 1000, timeoutMs: 15000 },
+            );
+
+            if (!result.ok) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Failed to send message to '${hostname}': ${result.error}`,
+                  },
+                ],
+              };
+            }
+
             return {
               content: [
                 {
                   type: "text",
-                  text: `Contact action not yet available. Pilot Protocol is required for direct agent-to-agent messaging.\n\nTo contact '${hostname}', you found their info via search. In the future, this will send: "${message}"`,
+                  text: `Message sent to '${hostname}'${result.messageId ? ` (id: ${result.messageId})` : ""}.\n\nNote: The recipient may process this message asynchronously. They need to have Pilot Protocol running and trust established with this agent.`,
                 },
               ],
             };
