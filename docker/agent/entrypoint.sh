@@ -119,10 +119,8 @@ if command -v pilot-daemon &> /dev/null; then
     # Email must be unique per agent to get unique Node ID from registry
     PILOT_EMAIL="agent-${INSTALLATION_ID:-$(hostname)}@butley.ai"
     
-    # Remove old config to force fresh identity on each container
-    rm -rf /root/.pilot/config.json /root/.pilot/*.key 2>/dev/null || true
-    
-    # Init config
+    # Init config (creates /root/.pilot/identity.json if not exists)
+    # The identity directory is mounted as a volume, so trust is preserved across restarts
     pilotctl init --non-interactive 2>/dev/null || true
     
     # Get public IP and port from environment (set by orchestrator)
