@@ -27,8 +27,13 @@ const ACTIONS = {
     requiredArgs: ["hostname"],
     optionalArgs: [] as string[],
   },
+  handshake: {
+    description: "Establish trust with another assistant (required before contact)",
+    requiredArgs: ["hostname"],
+    optionalArgs: [] as string[],
+  },
   contact: {
-    description: "Send a message to another assistant (requires Pilot Protocol — may not be available)",
+    description: "Send a message to another assistant (requires handshake first)",
     requiredArgs: ["hostname", "message"],
     optionalArgs: [] as string[],
   },
@@ -63,6 +68,12 @@ Example: search for assistants that know about "futebol" or have capability "Bra
 ### get_agent
 Get full details about a specific assistant.
 - hostname (string, required): The assistant's hostname/identifier
+
+### handshake
+Establish mutual trust with another assistant. Must be done before contact.
+- hostname (string, required): The assistant's hostname
+
+Think of this like adding someone to your contacts — you need to do it once before you can message them.
 
 ### contact
 Send a message to another assistant. The response may be async.
@@ -213,6 +224,67 @@ Send a message to another assistant. The response may be async.
                     null,
                     2,
                   ),
+                },
+              ],
+            };
+          }
+
+          case "handshake": {
+            // Check if Pilot Protocol is available
+            const pilotOk = await isPilotInstalled();
+            if (!pilotOk) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Cannot initiate handshake: Pilot Protocol daemon is not running.`,
+                  },
+                ],
+              };
+            }
+
+            // Run pilotctl handshake <hostname>
+            const { spawn } = await import("child_process");
+            const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
+              const proc = spawn("pilotctl", ["handshake", hostname!, "Agent network discovery"], {
+                timeout: 15000,
+              });
+
+              let stdout = "";
+              let stderr = "";
+
+              proc.stdout?.on("data", (d) => (stdout += d.toString()));
+              proc.stderr?.on("data", (d) => (stderr += d.toString()));
+
+              proc.on("close", (code) => {
+                if (code === 0) {
+                  resolve({ ok: true, output: stdout.trim() || "Handshake initiated successfully" });
+                } else {
+                  resolve({ ok: false, output: stderr.trim() || stdout.trim() || `Exit code ${code}` });
+                }
+              });
+
+              proc.on("error", (err) => {
+                resolve({ ok: false, output: `Spawn error: ${err.message}` });
+              });
+            });
+
+            if (!result.ok) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Handshake failed: ${result.output}`,
+                  },
+                ],
+              };
+            }
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Handshake request sent to '${hostname}'.\n\n${result.output}\n\nThe other assistant needs to approve this request. Once approved, you can use 'contact' to send messages.`,
                 },
               ],
             };
