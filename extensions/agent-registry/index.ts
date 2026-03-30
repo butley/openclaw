@@ -276,6 +276,8 @@ async function executePollCycle(params: {
   const pilotAvailable = await isPilotInstalled();
   if (!pilotAvailable) return;
 
+  log?.debug?.(`Poll cycle started for account ${accountId}`);
+
   // A) Check pending handshakes
   try {
     const pendingResult = await runPilotctl(["pending", "--json"]);
