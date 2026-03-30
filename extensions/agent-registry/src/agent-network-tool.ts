@@ -5,6 +5,7 @@ import { getConvexEnv } from "./convex-client.js";
 interface AgentNetworkConfig {
   registryUrl: string;
   registryApiKey?: string;
+  hostname?: string;
 }
 
 interface SearchResult {
@@ -525,19 +526,20 @@ Check for messages from other assistants.
                 const lookupUrl = new URL(`${config.registryUrl}/api/v1/agents/search`);
                 lookupUrl.searchParams.set("query", installation_id);
                 lookupUrl.searchParams.set("limit", "10");
-              try {
-                const lookupRes = await fetch(lookupUrl.toString(), { headers });
-                if (lookupRes.ok) {
-                  const lookupData = await lookupRes.json();
-                  const match = (lookupData.agents ?? []).find(
-                    (a: SearchResult) => a.installation_id === installation_id || a.hostname === installation_id
-                  );
-                  if (match?.pilot_node_id) {
-                    targetNodeId = match.pilot_node_id;
+                try {
+                  const lookupRes = await fetch(lookupUrl.toString(), { headers });
+                  if (lookupRes.ok) {
+                    const lookupData = await lookupRes.json();
+                    const match = (lookupData.agents ?? []).find(
+                      (a: SearchResult) => a.installation_id === installation_id || a.hostname === installation_id
+                    );
+                    if (match?.pilot_node_id) {
+                      targetNodeId = match.pilot_node_id;
+                    }
                   }
+                } catch {
+                  // Lookup failed, will try with installation_id as fallback
                 }
-              } catch {
-                // Lookup failed, will try with installation_id as fallback
               }
 
               // If not found in registry, check local peer list (for non-public agents with trust)
