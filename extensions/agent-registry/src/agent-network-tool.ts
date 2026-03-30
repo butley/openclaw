@@ -10,6 +10,8 @@ interface AgentNetworkConfig {
 interface SearchResult {
   id: string;
   hostname: string;
+  installation_id?: string;
+  pilot_node_id?: number;
   display_name?: string;
   description?: string;
   capabilities?: string[];
@@ -29,12 +31,22 @@ const ACTIONS = {
   },
   handshake: {
     description: "Establish trust with another assistant (required before contact)",
-    requiredArgs: ["hostname"],
+    requiredArgs: ["installation_id"],
+    optionalArgs: ["introduction"],
+  },
+  pending: {
+    description: "List pending handshake requests from other assistants",
+    requiredArgs: [] as string[],
+    optionalArgs: [] as string[],
+  },
+  approve: {
+    description: "Approve a pending handshake request",
+    requiredArgs: ["node_id"],
     optionalArgs: [] as string[],
   },
   contact: {
     description: "Send a message to another assistant (requires handshake first)",
-    requiredArgs: ["hostname", "message"],
+    requiredArgs: ["installation_id", "message"],
     optionalArgs: [] as string[],
   },
 };
@@ -70,17 +82,25 @@ Get full details about a specific assistant.
 - hostname (string, required): The assistant's hostname/identifier
 
 ### handshake
-Establish mutual trust with another assistant. Must be done before contact.
-- hostname (string, required): The assistant's hostname
+Request to establish trust with another assistant. Must be done before contact.
+- installation_id (string, required): The assistant's installation_id (from search results)
+- introduction (string, optional): A message introducing yourself (e.g., "Hi, I'm Junin, Guilherme's assistant")
 
-Think of this like adding someone to your contacts — you need to do it once before you can message them.
+Think of this like sending a friend request — you introduce yourself and wait for approval.
+
+### pending
+List incoming handshake requests waiting for your approval. Use this to see who wants to connect.
+
+### approve
+Approve a pending handshake request.
+- node_id (string, required): The node ID from the pending list
 
 ### contact
-Send a message to another assistant. The response may be async.
-- hostname (string, required): Target assistant's hostname
+Send a message to another assistant. Requires completed handshake (both sides approved).
+- installation_id (string, required): Target assistant's installation_id
 - message (string, required): Message to send
 
-⚠️ Contact requires Pilot Protocol. If unavailable, you'll get an error.`,
+⚠️ Contact requires Pilot Protocol and mutual trust. If unavailable, you'll get an error.`,
     parameters: {
       type: "object" as const,
       properties: {
@@ -104,7 +124,19 @@ Send a message to another assistant. The response may be async.
         },
         hostname: {
           type: "string" as const,
-          description: "Target assistant hostname (for get_agent/contact)",
+          description: "Target assistant hostname (for get_agent)",
+        },
+        installation_id: {
+          type: "string" as const,
+          description: "Target assistant's installation_id (for handshake/contact — from search results)",
+        },
+        introduction: {
+          type: "string" as const,
+          description: "Introduction message for handshake (e.g., 'Hi, I'm X, assistant of Y')",
+        },
+        node_id: {
+          type: "string" as const,
+          description: "Node ID to approve (from pending list)",
         },
         message: {
           type: "string" as const,
@@ -121,10 +153,13 @@ Send a message to another assistant. The response may be async.
         capabilities?: string[];
         limit?: number;
         hostname?: string;
+        installation_id?: string;
+        introduction?: string;
+        node_id?: string;
         message?: string;
       },
     ) {
-      const { action, query, capabilities, limit, hostname, message } = params;
+      const { action, query, capabilities, limit, hostname, installation_id, introduction, node_id, message } = params;
 
       const actionDef = ACTIONS[action as keyof typeof ACTIONS];
       if (!actionDef) {
@@ -181,6 +216,7 @@ Send a message to another assistant. The response may be async.
 
             const formatted = agents.map((a) => ({
               hostname: a.hostname,
+              installation_id: a.installation_id || a.hostname,
               name: a.display_name || a.hostname,
               description: a.description || "(no description)",
               capabilities: a.capabilities || [],
@@ -216,6 +252,7 @@ Send a message to another assistant. The response may be async.
                   text: JSON.stringify(
                     {
                       hostname: match.hostname,
+                      installation_id: match.installation_id || match.hostname,
                       name: match.display_name || match.hostname,
                       description: match.description || "(no description)",
                       capabilities: match.capabilities || [],
@@ -243,10 +280,32 @@ Send a message to another assistant. The response may be async.
               };
             }
 
-            // Run pilotctl handshake <hostname>
+            // First, look up the target in our registry to get their pilot_node_id
+            const lookupUrl = new URL(`${config.registryUrl}/api/v1/agents/search/`);
+            lookupUrl.searchParams.set("query", installation_id!);
+            lookupUrl.searchParams.set("limit", "10");
+
+            const lookupRes = await fetch(lookupUrl.toString(), { headers });
+            const lookupData = await lookupRes.json();
+
+            let targetNodeId: string | undefined;
+            if (lookupRes.ok && lookupData.agents?.length > 0) {
+              const match = lookupData.agents.find(
+                (a: SearchResult) => a.installation_id === installation_id || a.hostname === installation_id
+              );
+              if (match?.pilot_node_id) {
+                targetNodeId = String(match.pilot_node_id);
+              }
+            }
+
+            // Use node_id if available, otherwise try installation_id as hostname
+            const target = targetNodeId || installation_id!;
+            const intro = introduction || "Agent network connection request";
+
+            // Run pilotctl handshake <target> <introduction>
             const { spawn } = await import("child_process");
             const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
-              const proc = spawn("pilotctl", ["handshake", hostname!, "Agent network discovery"], {
+              const proc = spawn("pilotctl", ["handshake", target, intro], {
                 timeout: 15000,
               });
 
@@ -284,7 +343,129 @@ Send a message to another assistant. The response may be async.
               content: [
                 {
                   type: "text",
-                  text: `Handshake request sent to '${hostname}'.\n\n${result.output}\n\nThe other assistant needs to approve this request. Once approved, you can use 'contact' to send messages.`,
+                  text: `Handshake request sent to '${installation_id}'.\n\n${result.output}\n\nThe other assistant needs to approve this request (they can use 'pending' to see it and 'approve' to accept). Once approved, you can use 'contact' to send messages.`,
+                },
+              ],
+            };
+          }
+
+          case "pending": {
+            // Check if Pilot Protocol is available
+            const pilotAvail = await isPilotInstalled();
+            if (!pilotAvail) {
+              return {
+                content: [{ type: "text", text: `Pilot Protocol daemon is not running.` }],
+              };
+            }
+
+            const { spawn } = await import("child_process");
+            const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
+              const proc = spawn("pilotctl", ["pending", "--json"], { timeout: 10000 });
+
+              let stdout = "";
+              let stderr = "";
+
+              proc.stdout?.on("data", (d) => (stdout += d.toString()));
+              proc.stderr?.on("data", (d) => (stderr += d.toString()));
+
+              proc.on("close", (code) => {
+                if (code === 0) {
+                  resolve({ ok: true, output: stdout.trim() });
+                } else {
+                  resolve({ ok: false, output: stderr.trim() || stdout.trim() || `Exit code ${code}` });
+                }
+              });
+
+              proc.on("error", (err) => {
+                resolve({ ok: false, output: `Spawn error: ${err.message}` });
+              });
+            });
+
+            if (!result.ok) {
+              // "no pending" is often returned as non-zero, check for that
+              if (result.output.includes("no pending")) {
+                return {
+                  content: [{ type: "text", text: "No pending handshake requests." }],
+                };
+              }
+              return {
+                content: [{ type: "text", text: `Failed to get pending requests: ${result.output}` }],
+              };
+            }
+
+            // Try to parse JSON output
+            try {
+              const data = JSON.parse(result.output);
+              if (!data.pending || data.pending.length === 0) {
+                return {
+                  content: [{ type: "text", text: "No pending handshake requests." }],
+                };
+              }
+
+              const formatted = data.pending.map((p: { node_id: number; justification?: string; timestamp?: string }) => ({
+                node_id: p.node_id,
+                introduction: p.justification || "(no introduction)",
+                received_at: p.timestamp,
+              }));
+
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Pending handshake requests:\n\n${JSON.stringify(formatted, null, 2)}\n\nUse 'approve' with the node_id to accept a request.`,
+                  },
+                ],
+              };
+            } catch {
+              // Plain text output
+              return {
+                content: [{ type: "text", text: result.output || "No pending handshake requests." }],
+              };
+            }
+          }
+
+          case "approve": {
+            const pilotUp = await isPilotInstalled();
+            if (!pilotUp) {
+              return {
+                content: [{ type: "text", text: `Pilot Protocol daemon is not running.` }],
+              };
+            }
+
+            const { spawn } = await import("child_process");
+            const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
+              const proc = spawn("pilotctl", ["approve", node_id!], { timeout: 10000 });
+
+              let stdout = "";
+              let stderr = "";
+
+              proc.stdout?.on("data", (d) => (stdout += d.toString()));
+              proc.stderr?.on("data", (d) => (stderr += d.toString()));
+
+              proc.on("close", (code) => {
+                if (code === 0) {
+                  resolve({ ok: true, output: stdout.trim() || "Approved" });
+                } else {
+                  resolve({ ok: false, output: stderr.trim() || stdout.trim() || `Exit code ${code}` });
+                }
+              });
+
+              proc.on("error", (err) => {
+                resolve({ ok: false, output: `Spawn error: ${err.message}` });
+              });
+            });
+
+            if (!result.ok) {
+              return {
+                content: [{ type: "text", text: `Failed to approve: ${result.output}` }],
+              };
+            }
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Approved handshake from node ${node_id}.\n\n${result.output}\n\nYou can now exchange messages with this assistant.`,
                 },
               ],
             };
@@ -298,15 +479,15 @@ Send a message to another assistant. The response may be async.
                 content: [
                   {
                     type: "text",
-                    text: `Cannot send message: Pilot Protocol daemon is not running.\n\nTarget: ${hostname}\nMessage: "${message}"`,
+                    text: `Cannot send message: Pilot Protocol daemon is not running.\n\nTarget: ${installation_id}\nMessage: "${message}"`,
                   },
                 ],
               };
             }
 
-            // Send the message via Pilot Protocol
+            // Send the message via Pilot Protocol (installation_id is the Pilot hostname)
             const result = await sendMessage(
-              { to: hostname!, body: message! },
+              { to: installation_id!, body: message! },
               { pilotPort: 1000, timeoutMs: 15000 },
             );
 
@@ -315,7 +496,7 @@ Send a message to another assistant. The response may be async.
                 content: [
                   {
                     type: "text",
-                    text: `Failed to send message to '${hostname}': ${result.error}`,
+                    text: `Failed to send message to '${installation_id}': ${result.error}`,
                   },
                 ],
               };
@@ -325,7 +506,7 @@ Send a message to another assistant. The response may be async.
               content: [
                 {
                   type: "text",
-                  text: `Message sent to '${hostname}'${result.messageId ? ` (id: ${result.messageId})` : ""}.\n\nNote: The recipient may process this message asynchronously. They need to have Pilot Protocol running and trust established with this agent.`,
+                  text: `Message sent to '${installation_id}'${result.messageId ? ` (id: ${result.messageId})` : ""}.\n\nNote: The recipient may process this message asynchronously.`,
                 },
               ],
             };

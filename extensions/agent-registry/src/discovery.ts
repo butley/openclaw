@@ -26,6 +26,8 @@ export type SearchResult = {
 
 export type RegisterPayload = {
   hostname: string;
+  installation_id?: string;
+  pilot_node_id?: number;
   display_name?: string;
   description?: string;
   capabilities?: string[];
@@ -35,6 +37,8 @@ export type RegisterPayload = {
 export type AgentRecord = {
   id: string;
   hostname: string;
+  installation_id?: string;
+  pilot_node_id?: number;
   display_name?: string;
   description?: string;
   capabilities?: string[];
@@ -80,9 +84,11 @@ export class AgentRegistryClient {
    * Register this agent in the registry.
    * POST /api/v1/agents/
    */
-  async register(config: AgentRegistryConfig): Promise<{ ok: boolean; agentId?: string; error?: string }> {
+  async register(config: AgentRegistryConfig & { installationId?: string; pilotNodeId?: number }): Promise<{ ok: boolean; agentId?: string; error?: string }> {
     const payload: RegisterPayload = {
       hostname: config.hostname,
+      installation_id: config.installationId,
+      pilot_node_id: config.pilotNodeId,
       display_name: config.displayName,
       description: config.description,
       capabilities: config.capabilities,

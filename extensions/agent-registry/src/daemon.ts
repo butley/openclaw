@@ -14,6 +14,7 @@ export type DaemonStatus = {
   running: boolean;
   address?: string;
   hostname?: string;
+  node_id?: number;
   port?: number;
   uptime?: number;
 };
@@ -143,12 +144,15 @@ export async function getDaemonStatus(): Promise<DaemonStatus> {
 
       try {
         const info = JSON.parse(stdout);
+        // pilotctl info --json returns { data: { ... }, status: "ok" }
+        const data = info.data ?? info;
         resolve({
           running: true,
-          address: info.address,
-          hostname: info.hostname,
-          port: info.port,
-          uptime: info.uptime,
+          address: data.address,
+          hostname: data.hostname,
+          node_id: data.node_id,
+          port: data.port,
+          uptime: data.uptime_secs ?? data.uptime,
         });
       } catch {
         resolve({ running: false });

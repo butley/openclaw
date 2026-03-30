@@ -67,8 +67,23 @@ async function registerAgent(
     }
   }
 
+  // Get installation_id from env
+  const convexEnv = getConvexEnv();
+  const installationId = convexEnv?.installationId;
+
+  // Get pilot_node_id from daemon if running
+  let pilotNodeId: number | undefined;
+  try {
+    const pilotStatus = await getDaemonStatus();
+    if (pilotStatus?.node_id) {
+      pilotNodeId = pilotStatus.node_id;
+    }
+  } catch { /* pilot not running, ok */ }
+
   const regConfig = {
     ...config,
+    installationId,
+    pilotNodeId,
     displayName: networkMeta.networkDisplayName ?? config.displayName,
     description: networkMeta.networkDescription ?? config.description,
     capabilities: networkMeta.networkCapabilities ?? config.capabilities,
