@@ -521,24 +521,32 @@ Check for messages from other assistants.
 
               // Only look up if target_node_id not provided
               if (!targetNodeId && installation_id) {
-                // First, look up the target's pilot_node_id from registry
-                // Pilot Protocol requires node_id for send-message, not hostname
-                const lookupUrl = new URL(`${config.registryUrl}/api/v1/agents/search`);
-                lookupUrl.searchParams.set("query", installation_id);
-                lookupUrl.searchParams.set("limit", "10");
-                try {
-                  const lookupRes = await fetch(lookupUrl.toString(), { headers });
-                  if (lookupRes.ok) {
-                    const lookupData = await lookupRes.json();
-                    const match = (lookupData.agents ?? []).find(
-                      (a: SearchResult) => a.installation_id === installation_id || a.hostname === installation_id
-                    );
-                    if (match?.pilot_node_id) {
-                      targetNodeId = match.pilot_node_id;
+                // Check if it looks like a Pilot address (N:NNNN.NNNN.NNNN format)
+                const pilotAddressMatch = installation_id.match(/^(\d+):([0-9A-Fa-f]{4})\.([0-9A-Fa-f]{4})\.([0-9A-Fa-f]{4})$/);
+                if (pilotAddressMatch) {
+                  // Parse Pilot address to extract node_id from the low 16 bits (last segment in hex)
+                  const lowHex = pilotAddressMatch[4];
+                  targetNodeId = parseInt(lowHex, 16);
+                } else {
+                  // First, look up the target's pilot_node_id from registry
+                  // Pilot Protocol requires node_id for send-message, not hostname
+                  const lookupUrl = new URL(`${config.registryUrl}/api/v1/agents/search`);
+                  lookupUrl.searchParams.set("query", installation_id);
+                  lookupUrl.searchParams.set("limit", "10");
+                  try {
+                    const lookupRes = await fetch(lookupUrl.toString(), { headers });
+                    if (lookupRes.ok) {
+                      const lookupData = await lookupRes.json();
+                      const match = (lookupData.agents ?? []).find(
+                        (a: SearchResult) => a.installation_id === installation_id || a.hostname === installation_id
+                      );
+                      if (match?.pilot_node_id) {
+                        targetNodeId = match.pilot_node_id;
+                      }
                     }
+                  } catch {
+                    // Lookup failed, will try with installation_id as fallback
                   }
-                } catch {
-                  // Lookup failed, will try with installation_id as fallback
                 }
               }
 
