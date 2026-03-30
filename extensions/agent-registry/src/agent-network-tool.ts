@@ -188,7 +188,7 @@ Send a message to another assistant. Requires completed handshake (both sides ap
       try {
         switch (action) {
           case "search": {
-            const url = new URL(`${config.registryUrl}/api/v1/agents/search/`);
+            const url = new URL(`${config.registryUrl}/api/v1/agents/search`);
             if (query) url.searchParams.set("query", query);
             if (capabilities?.length) {
               // Cap capabilities to prevent excessive filtering
@@ -226,7 +226,7 @@ Send a message to another assistant. Requires completed handshake (both sides ap
 
           case "get_agent": {
             // Search by hostname with higher limit to avoid missing exact match
-            const url = new URL(`${config.registryUrl}/api/v1/agents/search/`);
+            const url = new URL(`${config.registryUrl}/api/v1/agents/search`);
             url.searchParams.set("query", hostname!);
             url.searchParams.set("limit", "25");
 
@@ -280,7 +280,7 @@ Send a message to another assistant. Requires completed handshake (both sides ap
             }
 
             // First, look up the target in our registry to get their pilot_node_id
-            const lookupUrl = new URL(`${config.registryUrl}/api/v1/agents/search/`);
+            const lookupUrl = new URL(`${config.registryUrl}/api/v1/agents/search`);
             lookupUrl.searchParams.set("query", installation_id!);
             lookupUrl.searchParams.set("limit", "10");
 
@@ -482,7 +482,7 @@ Send a message to another assistant. Requires completed handshake (both sides ap
             if (pilotReady) {
               // First, look up the target's pilot_node_id from registry
               // Pilot Protocol requires node_id for send-message, not hostname
-              const lookupUrl = new URL(`${config.registryUrl}/api/v1/agents/search/`);
+              const lookupUrl = new URL(`${config.registryUrl}/api/v1/agents/search`);
               lookupUrl.searchParams.set("query", installation_id!);
               lookupUrl.searchParams.set("limit", "10");
 
