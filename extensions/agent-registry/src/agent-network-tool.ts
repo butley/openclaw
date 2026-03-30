@@ -1,5 +1,4 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { sendMessage } from "./send.js";
 import { isPilotInstalled } from "./daemon.js";
 
 interface AgentNetworkConfig {
@@ -474,44 +473,140 @@ Send a message to another assistant. Requires completed handshake (both sides ap
           }
 
           case "contact": {
-            // Check if Pilot Protocol is available
+            // Get our installation_id to identify ourselves
+            const convexEnv = getConvexEnv();
+            const myInstallationId = convexEnv?.installationId || "unknown";
+            
+            // Try Pilot Protocol first if available
             const pilotReady = await isPilotInstalled();
-            if (!pilotReady) {
+            if (pilotReady) {
+              // First, look up the target's pilot_node_id from registry
+              // Pilot Protocol requires node_id for send-message, not hostname
+              const lookupUrl = new URL(`${config.registryUrl}/api/v1/agents/search/`);
+              lookupUrl.searchParams.set("query", installation_id!);
+              lookupUrl.searchParams.set("limit", "10");
+
+              let targetNodeId: number | undefined;
+              try {
+                const lookupRes = await fetch(lookupUrl.toString(), { headers });
+                if (lookupRes.ok) {
+                  const lookupData = await lookupRes.json();
+                  const match = (lookupData.agents ?? []).find(
+                    (a: SearchResult) => a.installation_id === installation_id || a.hostname === installation_id
+                  );
+                  if (match?.pilot_node_id) {
+                    targetNodeId = match.pilot_node_id;
+                  }
+                }
+              } catch {
+                // Lookup failed, will try with installation_id as fallback
+              }
+
+              if (!targetNodeId) {
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Failed to send message to '${installation_id}': Could not find their Pilot node ID in the registry. Are they online and discoverable?`,
+                    },
+                  ],
+                };
+              }
+
+              // Use pilotctl send-message <node_id> --data <message>
+              // NOT pilotctl send <hostname> <port> --data <payload>
+              const { spawn } = await import("child_process");
+              const sendResult = await new Promise<{ ok: boolean; output: string }>((resolve) => {
+                const proc = spawn("pilotctl", ["send-message", String(targetNodeId), "--data", message!], {
+                  timeout: 15000,
+                });
+
+                let stdout = "";
+                let stderr = "";
+
+                proc.stdout?.on("data", (d: Buffer) => (stdout += d.toString()));
+                proc.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
+
+                proc.on("close", (code) => {
+                  if (code === 0) {
+                    resolve({ ok: true, output: stdout.trim() });
+                  } else {
+                    resolve({ ok: false, output: stderr.trim() || stdout.trim() || `Exit code ${code}` });
+                  }
+                });
+
+                proc.on("error", (err) => {
+                  resolve({ ok: false, output: `Spawn error: ${err.message}` });
+                });
+              });
+
+              if (sendResult.ok) {
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Message sent to '${installation_id}' (node ${targetNodeId}) via P2P.\n\n${sendResult.output}\n\nNote: The recipient may process this message asynchronously.`,
+                    },
+                  ],
+                };
+              }
+              
+              // P2P failed — include error details
               return {
                 content: [
                   {
                     type: "text",
-                    text: `Cannot send message: Pilot Protocol daemon is not running.\n\nTarget: ${installation_id}\nMessage: "${message}"`,
+                    text: `Failed to send message to '${installation_id}': ${sendResult.output}`,
                   },
                 ],
               };
+              // No HTTP relay fallback for now — P2P should work if handshake was completed
             }
 
-            // Send the message via Pilot Protocol (installation_id is the Pilot hostname)
-            const result = await sendMessage(
-              { to: installation_id!, body: message! },
-              { pilotPort: 1000, timeoutMs: 15000 },
-            );
+            // Use HTTP relay via Agent Registry
+            try {
+              const relayRes = await fetch(`${config.registryUrl}/api/v1/agents/messages/send`, {
+                method: "POST",
+                headers: { ...headers, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  from_installation_id: myInstallationId,
+                  from_hostname: config.hostname,
+                  to_installation_id: installation_id,
+                  body: message,
+                }),
+              });
 
-            if (!result.ok) {
+              const relayData = await relayRes.json();
+              
+              if (!relayRes.ok || !relayData.ok) {
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Failed to send message to '${installation_id}': ${relayData.detail || relayData.error || "HTTP relay failed"}`,
+                    },
+                  ],
+                };
+              }
+
               return {
                 content: [
                   {
                     type: "text",
-                    text: `Failed to send message to '${installation_id}': ${result.error}`,
+                    text: `Message sent to '${installation_id}' via relay (id: ${relayData.message_id}).\n\nThe message is in their inbox. They'll receive it when they check for new messages.`,
+                  },
+                ],
+              };
+            } catch (err) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Failed to send message: ${err instanceof Error ? err.message : String(err)}`,
                   },
                 ],
               };
             }
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Message sent to '${installation_id}'${result.messageId ? ` (id: ${result.messageId})` : ""}.\n\nNote: The recipient may process this message asynchronously.`,
-                },
-              ],
-            };
           }
 
           default:
