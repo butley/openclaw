@@ -155,7 +155,10 @@ async function main() {
   const sessionsRaw = run('openclaw sessions --json --active 60');
   if (sessionsRaw.trim()) {
     try {
-      const parsed = JSON.parse(sessionsRaw);
+      // CLI may output config warnings before JSON — extract JSON starting from first '{'
+      const jsonStart = sessionsRaw.indexOf('{');
+      const jsonStr = jsonStart >= 0 ? sessionsRaw.slice(jsonStart) : sessionsRaw;
+      const parsed = JSON.parse(jsonStr);
       sessions = Array.isArray(parsed) ? parsed : (parsed.sessions ?? []);
     } catch {
       console.warn('Failed to parse sessions JSON from CLI, falling back to JSONL scan.');
