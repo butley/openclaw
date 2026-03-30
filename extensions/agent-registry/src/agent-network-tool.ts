@@ -45,9 +45,9 @@ const ACTIONS = {
     optionalArgs: [] as string[],
   },
   contact: {
-    description: "Send a message to another assistant (requires handshake first)",
-    requiredArgs: ["installation_id", "message"],
-    optionalArgs: [] as string[],
+    description: "Send a message to another assistant (requires handshake first). Use installation_id OR node_id (if known)",
+    requiredArgs: ["message"],
+    optionalArgs: ["installation_id", "target_node_id"],
   },
   inbox: {
     description: "Check your inbox for messages from other assistants",
@@ -153,6 +153,10 @@ Check for messages from other assistants.
           type: "string" as const,
           description: "Message to send (for contact action)",
         },
+        target_node_id: {
+          type: "number" as const,
+          description: "Direct Pilot node ID of recipient (for contact action, alternative to installation_id)",
+        },
         clear: {
           type: "boolean" as const,
           description: "Clear inbox after reading (for inbox action)",
@@ -171,11 +175,12 @@ Check for messages from other assistants.
         installation_id?: string;
         introduction?: string;
         node_id?: string;
+        target_node_id?: number;
         message?: string;
         clear?: boolean;
       },
     ) {
-      const { action, query, capabilities, limit, hostname, installation_id, introduction, node_id, message, clear } = params;
+      const { action, query, capabilities, limit, hostname, installation_id, introduction, node_id, target_node_id, message, clear } = params;
 
       const actionDef = ACTIONS[action as keyof typeof ACTIONS];
       if (!actionDef) {
@@ -490,6 +495,18 @@ Check for messages from other assistants.
           }
 
           case "contact": {
+            // Validate: need message and either installation_id or target_node_id
+            if (!message) {
+              return {
+                content: [{ type: "text", text: "Error: 'message' is required for contact action." }],
+              };
+            }
+            if (!installation_id && !target_node_id) {
+              return {
+                content: [{ type: "text", text: "Error: Either 'installation_id' or 'target_node_id' is required for contact action." }],
+              };
+            }
+
             // Get our installation_id to identify ourselves
             const convexEnv = getConvexEnv();
             const myInstallationId = convexEnv?.installationId || "unknown";
@@ -497,13 +514,17 @@ Check for messages from other assistants.
             // Try Pilot Protocol first if available
             const pilotReady = await isPilotInstalled();
             if (pilotReady) {
-              // First, look up the target's pilot_node_id from registry
-              // Pilot Protocol requires node_id for send-message, not hostname
-              const lookupUrl = new URL(`${config.registryUrl}/api/v1/agents/search`);
-              lookupUrl.searchParams.set("query", installation_id!);
-              lookupUrl.searchParams.set("limit", "10");
+              // If target_node_id provided directly, use it
+              let targetNodeId: number | undefined = target_node_id;
+              const targetLabel = installation_id || `node ${target_node_id}`;
 
-              let targetNodeId: number | undefined;
+              // Only look up if target_node_id not provided
+              if (!targetNodeId && installation_id) {
+                // First, look up the target's pilot_node_id from registry
+                // Pilot Protocol requires node_id for send-message, not hostname
+                const lookupUrl = new URL(`${config.registryUrl}/api/v1/agents/search`);
+                lookupUrl.searchParams.set("query", installation_id);
+                lookupUrl.searchParams.set("limit", "10");
               try {
                 const lookupRes = await fetch(lookupUrl.toString(), { headers });
                 if (lookupRes.ok) {
@@ -559,7 +580,7 @@ Check for messages from other assistants.
                   content: [
                     {
                       type: "text",
-                      text: `Failed to send message to '${installation_id}': Could not find their Pilot node ID. They may not be discoverable, or you may need to establish trust first with: agent_network({ action: "handshake", installation_id: "${installation_id}" })`,
+                      text: `Failed to send message to '${targetLabel}': Could not find their Pilot node ID. They may not be discoverable, or you may need to establish trust first with: agent_network({ action: "handshake", installation_id: "${installation_id}" })`,
                     },
                   ],
                 };
@@ -597,7 +618,7 @@ Check for messages from other assistants.
                   content: [
                     {
                       type: "text",
-                      text: `Message sent to '${installation_id}' (node ${targetNodeId}) via P2P.\n\n${sendResult.output}\n\nNote: The recipient may process this message asynchronously.`,
+                      text: `Message sent to '${targetLabel}' (node ${targetNodeId}) via P2P.\n\n${sendResult.output}\n\nNote: The recipient may process this message asynchronously.`,
                     },
                   ],
                 };
@@ -608,7 +629,7 @@ Check for messages from other assistants.
                 content: [
                   {
                     type: "text",
-                    text: `Failed to send message to '${installation_id}': ${sendResult.output}`,
+                    text: `Failed to send message to '${targetLabel}': ${sendResult.output}`,
                   },
                 ],
               };
