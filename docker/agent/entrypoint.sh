@@ -113,7 +113,7 @@ if [ -f /root/.openclaw/gateway-credentials.json ]; then
 fi
 
 # Start Pilot Protocol daemon for P2P agent communication
-if command -v pilotctl &> /dev/null; then
+if command -v pilot-daemon &> /dev/null; then
     # Use INSTALLATION_ID as hostname if available
     PILOT_HOSTNAME="${INSTALLATION_ID:-agent-$(hostname | cut -c1-8)}"
     # Email must be unique per agent to get unique Node ID from registry
@@ -125,10 +125,35 @@ if command -v pilotctl &> /dev/null; then
     # Init config
     pilotctl init --non-interactive 2>/dev/null || true
     
-    # Start daemon in background
-    pilotctl daemon start --hostname "$PILOT_HOSTNAME" --email "$PILOT_EMAIL" --background 2>/dev/null && \
-        echo "[entrypoint] Pilot Protocol daemon started (hostname=$PILOT_HOSTNAME)" || \
-        echo "[entrypoint] Pilot Protocol daemon failed to start (optional, continuing...)"
+    # Get public IP and port from environment (set by orchestrator)
+    PUBLIC_IP="${PILOT_PUBLIC_IP:-}"
+    PILOT_PORT="${PILOT_PORT:-30000}"
+    
+    # Start daemon directly with fixed endpoint (skips STUN)
+    if [ -n "$PUBLIC_IP" ]; then
+        # Verify identity file exists (created by pilotctl init)
+        if [ ! -f /root/.pilot/identity.json ]; then
+            echo "[entrypoint] WARNING: Pilot identity file missing, attempting to create..."
+            pilotctl init --hostname "$PILOT_HOSTNAME" 2>/dev/null || true
+        fi
+        
+        if [ -f /root/.pilot/identity.json ]; then
+            # Use fixed endpoint mode - listen on PILOT_PORT to match Docker mapping
+            pilot-daemon -hostname "$PILOT_HOSTNAME" -email "$PILOT_EMAIL" \
+                -listen ":${PILOT_PORT}" \
+                -endpoint "${PUBLIC_IP}:${PILOT_PORT}" \
+                -identity /root/.pilot/identity.json \
+                >> /root/.pilot/pilot.log 2>&1 &
+            echo "[entrypoint] Pilot daemon started with fixed endpoint ${PUBLIC_IP}:${PILOT_PORT} (hostname=$PILOT_HOSTNAME)"
+        else
+            echo "[entrypoint] WARNING: Could not create Pilot identity, skipping P2P daemon"
+        fi
+    else
+        # Fallback to pilotctl daemon start (STUN mode)
+        pilotctl daemon start --hostname "$PILOT_HOSTNAME" --email "$PILOT_EMAIL" --background 2>/dev/null && \
+            echo "[entrypoint] Pilot Protocol daemon started in STUN mode (hostname=$PILOT_HOSTNAME)" || \
+            echo "[entrypoint] Pilot Protocol daemon failed to start (optional, continuing...)"
+    fi
 fi
 
 # Bootstrap runs in parallel — credentials, QMD indexing, gateway readiness, onboarding.

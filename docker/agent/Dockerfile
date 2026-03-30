@@ -156,7 +156,8 @@ RUN mkdir -p /root/.pilot/bin && \
     curl -fsSL "https://github.com/TeoSlayer/pilotprotocol/releases/download/${PILOT_VERSION}/pilot-linux-amd64.tar.gz" \
     | tar -xz -C /root/.pilot/bin && \
     chmod +x /root/.pilot/bin/* && \
-    ln -sf /root/.pilot/bin/pilotctl /usr/local/bin/pilotctl
+    ln -sf /root/.pilot/bin/pilotctl /usr/local/bin/pilotctl && \
+    ln -sf /root/.pilot/bin/daemon /usr/local/bin/pilot-daemon
 
 # Enable corepack for pnpm (needed if any pnpm commands are used at runtime)
 RUN npm install -g --force corepack@latest && corepack enable
