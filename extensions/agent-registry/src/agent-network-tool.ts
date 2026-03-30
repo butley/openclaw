@@ -396,16 +396,18 @@ Send a message to another assistant. Requires completed handshake (both sides ap
             // Try to parse JSON output
             try {
               const data = JSON.parse(result.output);
-              if (!data.pending || data.pending.length === 0) {
+              // pilotctl outputs { "data": { "pending": [...] }, "status": "ok" }
+              const pending = data.data?.pending || data.pending || [];
+              if (pending.length === 0) {
                 return {
                   content: [{ type: "text", text: "No pending handshake requests." }],
                 };
               }
 
-              const formatted = data.pending.map((p: { node_id: number; justification?: string; timestamp?: string }) => ({
+              const formatted = pending.map((p: { node_id: number; justification?: string; received_at?: number }) => ({
                 node_id: p.node_id,
                 introduction: p.justification || "(no introduction)",
-                received_at: p.timestamp,
+                received_at: p.received_at ? new Date(p.received_at * 1000).toISOString() : undefined,
               }));
 
               return {
