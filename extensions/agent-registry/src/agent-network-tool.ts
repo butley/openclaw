@@ -519,12 +519,47 @@ Check for messages from other assistants.
                 // Lookup failed, will try with installation_id as fallback
               }
 
+              // If not found in registry, check local peer list (for non-public agents with trust)
+              if (!targetNodeId) {
+                try {
+                  const { spawn } = await import("child_process");
+                  const peerInfo = await new Promise<string>((resolve) => {
+                    const proc = spawn("pilotctl", ["info", "--json"], { timeout: 5000 });
+                    let out = "";
+                    proc.stdout?.on("data", (d: Buffer) => (out += d.toString()));
+                    proc.on("close", () => resolve(out.trim()));
+                    proc.on("error", () => resolve(""));
+                  });
+                  if (peerInfo) {
+                    const infoData = JSON.parse(peerInfo);
+                    // Check if target is in our peer list by looking at hostname registration
+                    // The peer_list has node_id but not hostname, so we need a different approach
+                    // For now, we'll try to use the installation_id as hostname in pilotctl find
+                    const findResult = await new Promise<string>((resolve) => {
+                      const proc = spawn("pilotctl", ["find", installation_id!, "--json"], { timeout: 5000 });
+                      let out = "";
+                      proc.stdout?.on("data", (d: Buffer) => (out += d.toString()));
+                      proc.on("close", () => resolve(out.trim()));
+                      proc.on("error", () => resolve(""));
+                    });
+                    if (findResult) {
+                      try {
+                        const findData = JSON.parse(findResult);
+                        if (findData.status === "ok" && findData.data?.node_id) {
+                          targetNodeId = findData.data.node_id;
+                        }
+                      } catch { /* ignore parse errors */ }
+                    }
+                  }
+                } catch { /* ignore errors, continue with null targetNodeId */ }
+              }
+
               if (!targetNodeId) {
                 return {
                   content: [
                     {
                       type: "text",
-                      text: `Failed to send message to '${installation_id}': Could not find their Pilot node ID in the registry. Are they online and discoverable?`,
+                      text: `Failed to send message to '${installation_id}': Could not find their Pilot node ID. They may not be discoverable, or you may need to establish trust first with: agent_network({ action: "handshake", installation_id: "${installation_id}" })`,
                     },
                   ],
                 };
