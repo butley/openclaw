@@ -114,8 +114,10 @@ fi
 
 # Start Pilot Protocol daemon for P2P agent communication
 if command -v pilotctl &> /dev/null; then
-    # Use INSTALLATION_ID as hostname if available, otherwise use workspace name
+    # Use INSTALLATION_ID as hostname if available
     PILOT_HOSTNAME="${INSTALLATION_ID:-agent-$(hostname | cut -c1-8)}"
+    # Email required by pilot daemon (use a system email)
+    PILOT_EMAIL="${PILOT_EMAIL:-agent@butley.ai}"
     
     # Init config if first run
     if [ ! -f /root/.pilot/config.json ]; then
@@ -123,7 +125,7 @@ if command -v pilotctl &> /dev/null; then
     fi
     
     # Start daemon in background (will be stopped when container stops)
-    pilotctl daemon start --hostname "$PILOT_HOSTNAME" --background 2>/dev/null && \
+    pilotctl daemon start --hostname "$PILOT_HOSTNAME" --email "$PILOT_EMAIL" --background 2>/dev/null && \
         echo "[entrypoint] Pilot Protocol daemon started (hostname=$PILOT_HOSTNAME)" || \
         echo "[entrypoint] Pilot Protocol daemon failed to start (optional, continuing...)"
 fi
