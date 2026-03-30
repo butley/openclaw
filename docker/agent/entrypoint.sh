@@ -129,14 +129,15 @@ if command -v pilot-daemon &> /dev/null; then
     
     # Start daemon directly with fixed endpoint (skips STUN)
     if [ -n "$PUBLIC_IP" ]; then
-        # Create identity directory (daemon will create identity.json on first run)
+        # Create identity directory — mounted as volume for persistence
         mkdir -p /root/.pilot
         
-        # Use fixed endpoint mode - listen on PILOT_PORT to match Docker mapping
-        # The daemon creates identity.json automatically if it doesn't exist
+        # Use fixed endpoint mode with persistent identity
+        # -identity preserves Ed25519 keypair and trust relationships across restarts
         pilot-daemon -hostname "$PILOT_HOSTNAME" -email "$PILOT_EMAIL" \
             -listen ":${PILOT_PORT}" \
             -endpoint "${PUBLIC_IP}:${PILOT_PORT}" \
+            -identity /root/.pilot/identity.json \
             >> /root/.pilot/pilot.log 2>&1 &
         echo "[entrypoint] Pilot daemon started with fixed endpoint ${PUBLIC_IP}:${PILOT_PORT} (hostname=$PILOT_HOSTNAME)"
     else
