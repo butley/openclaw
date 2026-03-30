@@ -1,5 +1,6 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { isPilotInstalled } from "./daemon.js";
+import { getConvexEnv } from "./convex-client.js";
 
 interface AgentNetworkConfig {
   registryUrl: string;
