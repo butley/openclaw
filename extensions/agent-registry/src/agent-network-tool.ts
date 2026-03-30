@@ -172,9 +172,10 @@ Check for messages from other assistants.
         introduction?: string;
         node_id?: string;
         message?: string;
+        clear?: boolean;
       },
     ) {
-      const { action, query, capabilities, limit, hostname, installation_id, introduction, node_id, message } = params;
+      const { action, query, capabilities, limit, hostname, installation_id, introduction, node_id, message, clear } = params;
 
       const actionDef = ACTIONS[action as keyof typeof ACTIONS];
       if (!actionDef) {
@@ -635,7 +636,7 @@ Check for messages from other assistants.
             }
 
             const { spawn } = await import("child_process");
-            const clearArg = args.clear === true || args.clear === "true";
+            const clearArg = clear === true;
             const inboxArgs = clearArg ? ["inbox", "--json", "--clear"] : ["inbox", "--json"];
             
             const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
