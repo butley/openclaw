@@ -44,7 +44,7 @@ export async function fetchNetworkMetadata(env?: ConvexEnv | null): Promise<Netw
         path: "installations:get",
         args: {
           id: e.installationId,
-          gatewayToken: e.gatewayToken,
+          // Note: installations:get is a public query that doesn't require gatewayToken
         },
         format: "json",
       }),
