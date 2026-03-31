@@ -1,4 +1,5 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { spawn } from "node:child_process";
 import { isPilotInstalled } from "./daemon.js";
 import { getConvexEnv, updateHandshakeStatus } from "./convex-client.js";
 
@@ -61,7 +62,7 @@ const ACTIONS = {
     optionalArgs: ["installation_id", "target_node_id"],
   },
   inbox: {
-    description: "Check your inbox for messages from other assistants",
+    description: "[DEBUG ONLY] Check your inbox for messages from other assistants. Note: The poll loop handles inbox processing automatically — this action is for manual debugging and does NOT clear processed messages from the tracking set.",
     requiredArgs: [] as string[],
     optionalArgs: ["clear"],
   },
@@ -232,7 +233,7 @@ Check for messages from other assistants.
         switch (action) {
           case "search": {
             const url = new URL(`${config.registryUrl}/api/v1/agents/search`);
-            if (query) url.searchParams.set("query", query);
+            if (query) url.searchParams.set("q", query);
             if (capabilities?.length) {
               // Cap capabilities to prevent excessive filtering
               const cappedCaps = capabilities.slice(0, 20);
@@ -268,24 +269,22 @@ Check for messages from other assistants.
           }
 
           case "get_agent": {
-            // Search by hostname with higher limit to avoid missing exact match
-            const url = new URL(`${config.registryUrl}/api/v1/agents/search`);
-            url.searchParams.set("query", hostname!);
-            url.searchParams.set("limit", "25");
+            // Use exact hostname endpoint for precise lookup
+            const url = new URL(`${config.registryUrl}/api/v1/agents/by-hostname/${encodeURIComponent(hostname!)}`);
 
             const res = await fetch(url.toString(), { headers });
+
+            if (res.status === 404) {
+              return { content: [{ type: "text", text: `Assistant '${hostname}' not found or not online.` }] };
+            }
+
             const data = await res.json();
 
             if (!res.ok) {
               return { content: [{ type: "text", text: `Registry error: ${data.detail || res.statusText}` }] };
             }
 
-            const agents = (data.agents ?? []) as SearchResult[];
-            const match = agents.find((a) => a.hostname === hostname);
-
-            if (!match) {
-              return { content: [{ type: "text", text: `Assistant '${hostname}' not found or not online.` }] };
-            }
+            const match = data as SearchResult;
 
             return {
               content: [
@@ -345,7 +344,6 @@ Check for messages from other assistants.
             const intro = introduction || "Agent network connection request";
 
             // Run pilotctl handshake <target> <introduction>
-            const { spawn } = await import("child_process");
             const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
               const proc = spawn("pilotctl", ["handshake", target, intro], {
                 timeout: 15000,
@@ -400,7 +398,6 @@ Check for messages from other assistants.
               };
             }
 
-            const { spawn } = await import("child_process");
             const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
               const proc = spawn("pilotctl", ["pending", "--json"], { timeout: 10000 });
 
@@ -480,7 +477,6 @@ Check for messages from other assistants.
               };
             }
 
-            const { spawn } = await import("child_process");
             const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
               const proc = spawn("pilotctl", ["approve", node_id], { timeout: 10000 });
 
@@ -534,7 +530,6 @@ Check for messages from other assistants.
               };
             }
 
-            const { spawn } = await import("child_process");
             const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
               const proc = spawn("pilotctl", ["reject", node_id], { timeout: 10000 });
 
@@ -588,7 +583,6 @@ Check for messages from other assistants.
               };
             }
 
-            const { spawn } = await import("child_process");
             const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
               const proc = spawn("pilotctl", ["untrust", node_id], { timeout: 10000 });
 
@@ -685,7 +679,6 @@ Check for messages from other assistants.
               // If not found in registry, check local peer list (for non-public agents with trust)
               if (!targetNodeId) {
                 try {
-                  const { spawn } = await import("child_process");
                   const peerInfo = await new Promise<string>((resolve) => {
                     const proc = spawn("pilotctl", ["info", "--json"], { timeout: 5000 });
                     let out = "";
@@ -730,7 +723,6 @@ Check for messages from other assistants.
 
               // Use pilotctl send-message <node_id> --data <message>
               // NOT pilotctl send <hostname> <port> --data <payload>
-              const { spawn } = await import("child_process");
               const sendResult = await new Promise<{ ok: boolean; output: string }>((resolve) => {
                 const proc = spawn("pilotctl", ["send-message", String(targetNodeId), "--data", message!], {
                   timeout: 15000,
@@ -833,7 +825,6 @@ Check for messages from other assistants.
               };
             }
 
-            const { spawn } = await import("child_process");
             const clearArg = clear === true;
             const inboxArgs = clearArg ? ["inbox", "--json", "--clear"] : ["inbox", "--json"];
             

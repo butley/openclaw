@@ -44,6 +44,7 @@ export async function fetchNetworkMetadata(env?: ConvexEnv | null): Promise<Netw
         path: "installations:get",
         args: {
           id: e.installationId,
+          gatewayToken: e.gatewayToken,
         },
         format: "json",
       }),
@@ -204,6 +205,13 @@ export async function markNotificationSent(params: {
     fromNodeId: params.fromNodeId,
   });
   return { ok: result.ok, error: result.error };
+}
+
+/** List all handshakes for this installation (for cache rebuilding). */
+export async function listAllHandshakes(): Promise<{ ok: boolean; handshakes?: HandshakeRecord[]; error?: string }> {
+  const result = await callConvexQuery("agentNetworkHandshakes:listAll", {});
+  if (!result.ok) return { ok: false, error: result.error };
+  return { ok: true, handshakes: (result.value as HandshakeRecord[]) ?? [] };
 }
 
 /** Get handshake record by node ID. */

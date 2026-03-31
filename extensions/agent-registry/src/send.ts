@@ -21,10 +21,16 @@ export type SendOptions = {
 };
 
 /**
- * Send a message to another agent via Pilot Protocol.
+ * Send a structured message to another agent via Pilot Protocol.
  *
- * Uses `pilotctl send <hostname> <port> --data <msg>`.
+ * Uses `pilotctl send <hostname> <port> --data <json>`.
  * The `to` field on the message can be either a hostname or a Pilot address.
+ *
+ * NOTE: This function sends JSON-structured payloads ({ body, metadata }).
+ * For chat-style replies (plain text), the poll loop in index.ts uses
+ * `pilotctl send-message <node_id> --data <raw_text>` directly.
+ * This is by design: structured messages carry metadata, while poll loop
+ * replies are raw text for natural chat flow.
  */
 export async function sendMessage(
   message: AgentRegistryOutboundMessage,

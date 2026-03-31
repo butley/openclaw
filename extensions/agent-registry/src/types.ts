@@ -4,7 +4,8 @@
 
 export type PilotPeer = {
   hostname: string;
-  address: string; // "1:0001.A3F2:1001"
+  address: string; // "0:0001.A3F2.1001"
+  installation_id?: string;
   name?: string;
   capabilities?: string[];
   lastSeen?: number;

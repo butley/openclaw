@@ -22,7 +22,13 @@ export type DaemonStatus = {
 /** Module-level reference to the spawned daemon process. */
 let daemonProcess: ChildProcess | null = null;
 
-/** Start the local Pilot daemon as a child process. */
+/**
+ * Start the local Pilot daemon as a child process.
+ *
+ * NOTE: In container/production environments, the daemon is managed by
+ * entrypoint.sh (not this function). startDaemon/stopDaemon are for
+ * local development only.
+ */
 export async function startDaemon(
   options?: { hostname?: string; port?: number },
 ): Promise<{ ok: boolean; address?: string; error?: string }> {
@@ -55,8 +61,8 @@ export async function startDaemon(
         stderr += chunk.toString();
       });
 
-      // Address pattern: "1:xxxx.xxxx:port"
-      const addressPattern = /\b(1:[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}:\d+)\b/;
+      // Address pattern: "0:xxxx.xxxx.xxxx" (Pilot address format)
+      const addressPattern = /\b(0:[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4})\b/;
 
       // Listen for early exit (startup failure)
       child.on("error", (err) => {
@@ -99,7 +105,12 @@ export async function startDaemon(
   });
 }
 
-/** Gracefully stop the Pilot daemon. Sends SIGTERM, then SIGKILL after 5s. */
+/**
+ * Gracefully stop the Pilot daemon. Sends SIGTERM, then SIGKILL after 5s.
+ *
+ * NOTE: In container/production environments, the daemon is managed by
+ * entrypoint.sh. This function is for local development only.
+ */
 export async function stopDaemon(): Promise<{ ok: boolean }> {
   if (!daemonProcess || daemonProcess.killed) {
     daemonProcess = null;

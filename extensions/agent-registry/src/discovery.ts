@@ -278,6 +278,7 @@ function agentToPeer(agent: AgentRecord): PilotPeer {
   return {
     hostname: agent.hostname,
     address: agent.pilot_address ?? "",
+    installation_id: agent.installation_id,
     name: agent.display_name,
     capabilities: agent.capabilities,
     lastSeen: agent.last_seen ? new Date(agent.last_seen).getTime() : undefined,

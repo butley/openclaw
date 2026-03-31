@@ -15,7 +15,7 @@ import { startMonitor } from "./src/monitor.js";
 import type { MonitorHandle } from "./src/monitor.js";
 import { getDaemonStatus, isPilotInstalled } from "./src/daemon.js";
 import { AgentRegistryClient } from "./src/discovery.js";
-import { fetchNetworkMetadata, getConvexEnv, upsertHandshake, getHandshakeByNodeId, markFirstMessageSent, markNotificationSent } from "./src/convex-client.js";
+import { fetchNetworkMetadata, getConvexEnv, upsertHandshake, getHandshakeByNodeId, markFirstMessageSent, markNotificationSent, listAllHandshakes } from "./src/convex-client.js";
 import type { NetworkMetadata } from "./src/convex-client.js";
 import { createAgentNetworkTool } from "./src/agent-network-tool.js";
 import { spawn } from "node:child_process";
@@ -52,7 +52,64 @@ const accountContexts = new Map<string, {
   setStatus: (next: any) => void;
 }>();
 
+/** Set of processed message hashes to avoid re-processing on clear failure. */
+const processedMessageHashes = new Set<string>();
+
+/** Whether a poll cycle is currently running (mutex). */
+let isPolling = false;
+
+/** Max entries in hostnameToNodeId cache (LRU-style eviction). */
+const MAX_HOSTNAME_CACHE_SIZE = 1000;
+
 const MAX_HEARTBEAT_FAILURES = 3;
+
+/* ------------------------------------------------------------------ */
+/*  Cache helpers                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Rebuild hostnameToNodeId cache from Convex handshakes on startup.
+ * Prevents loss of hostname→nodeId mappings across restarts.
+ */
+async function rebuildHostnameCache(log?: any): Promise<void> {
+  try {
+    const result = await listAllHandshakes();
+    if (result.ok && result.handshakes) {
+      for (const hs of result.handshakes) {
+        if (hs.fromHostname && hs.fromNodeId) {
+          hostnameToNodeIdSet(hs.fromHostname, hs.fromNodeId);
+        }
+      }
+      log?.info?.(`Rebuilt hostname cache from Convex: ${hostnameToNodeId.size} entries`);
+    }
+  } catch (err) {
+    log?.warn?.(`Failed to rebuild hostname cache: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * Set a hostname→nodeId mapping with LRU-style eviction.
+ * When the cache exceeds MAX_HOSTNAME_CACHE_SIZE, the oldest entry is evicted.
+ */
+function hostnameToNodeIdSet(hostname: string, nodeId: number): void {
+  // Delete first to move to end (Map preserves insertion order)
+  hostnameToNodeId.delete(hostname);
+  hostnameToNodeId.set(hostname, nodeId);
+
+  // Evict oldest entries if over limit
+  if (hostnameToNodeId.size > MAX_HOSTNAME_CACHE_SIZE) {
+    const firstKey = hostnameToNodeId.keys().next().value;
+    if (firstKey !== undefined) hostnameToNodeId.delete(firstKey);
+  }
+}
+
+/**
+ * Generate a hash key for a message to track processing.
+ * Uses from + data + received_at to uniquely identify a message.
+ */
+function messageHash(msg: InboxMessage): string {
+  return `${msg.from}:${msg.data}:${msg.received_at ?? ""}`;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Register / deregister helpers                                      */
@@ -170,14 +227,26 @@ function startHeartbeat(
       log?.warn?.(`Heartbeat failed (${failures}/${MAX_HEARTBEAT_FAILURES}): ${hb.error}`);
 
       if (failures >= MAX_HEARTBEAT_FAILURES) {
-        log?.info?.("Max heartbeat failures — re-registering");
+        log?.info?.("Max heartbeat failures — re-registering with full metadata");
         heartbeatFailures.set(accountId, 0);
         try { await client.deregister(currentAgentId); } catch { /* ok */ }
-        const reReg = await client.register(config);
-        if (reReg.ok && reReg.agentId) {
-          currentAgentId = reReg.agentId;
-          registryClients.set(accountId, { client, agentId: currentAgentId });
-          log?.info?.(`Re-registered as ${config.hostname} (new id: ${currentAgentId})`);
+        // Use registerAgent() to preserve enriched metadata (display name, description, capabilities from Convex)
+        const networkMeta = await fetchNetworkMetadata();
+        if (networkMeta) {
+          await registerAgent(accountId, config, client, networkMeta, log);
+          const entry = registryClients.get(accountId);
+          if (entry?.agentId) {
+            currentAgentId = entry.agentId;
+            log?.info?.(`Re-registered as ${config.hostname} (new id: ${currentAgentId})`);
+          }
+        } else {
+          // Fallback: register with base config if Convex is unavailable
+          const reReg = await client.register(config);
+          if (reReg.ok && reReg.agentId) {
+            currentAgentId = reReg.agentId;
+            registryClients.set(accountId, { client, agentId: currentAgentId });
+            log?.info?.(`Re-registered as ${config.hostname} (new id: ${currentAgentId})`);
+          }
         }
       }
     } else {
@@ -231,9 +300,8 @@ function parseNodeIdFromPilotAddress(address: string): number | undefined {
   // e.g. "0:0000.0000.37D8" → node_id = 0x37D8 = 14296
   const match = address.match(/^\d+:([0-9a-fA-F]{4})\.([0-9a-fA-F]{4})\.([0-9a-fA-F]{4})$/);
   if (!match) return undefined;
-  // Full node address = concatenation of all 3 groups
-  const fullHex = match[1] + match[2] + match[3];
-  const nodeId = parseInt(fullHex, 16);
+  // The node_id is in the last hex group only
+  const nodeId = parseInt(match[3], 16);
   return isNaN(nodeId) ? undefined : nodeId;
 }
 
@@ -241,7 +309,7 @@ function parseNodeIdFromPilotAddress(address: string): number | undefined {
  * Resolve a sender label (hostname) from a node_id.
  * Priority: from_hostname (if real hostname) → Agent Registry API → Convex handshake → fallback.
  */
-async function resolveHostnameForNode(nodeId: number, fromHostname?: string, config?: AgentNetworkConfig, log?: any): Promise<string> {
+async function resolveHostnameForNode(nodeId: number, fromHostname?: string, config?: import("./src/types.js").AgentRegistryConfig, log?: any): Promise<string> {
   // If from_hostname looks like a real hostname (not a Pilot address), use it directly
   if (fromHostname && !fromHostname.match(/^\d+:[0-9a-fA-F.]+$/)) {
     return fromHostname;
@@ -320,7 +388,7 @@ interface PendingEntry {
 
 /** Parsed inbox message from pilotctl. */
 interface InboxMessage {
-  from: number; // node_id
+  from: string; // Pilot address string like "0:0000.0000.37D8"
   from_hostname?: string;
   data: string;
   received_at?: string;
@@ -336,6 +404,24 @@ async function executePollCycle(params: {
   config: import("./src/types.js").AgentRegistryConfig;
   channelRuntime: any; // PluginRuntime["channel"]
   cfg: any; // OpenClawConfig
+  log?: any;
+}): Promise<void> {
+  // Mutex: skip if already polling
+  if (isPolling) return;
+  isPolling = true;
+
+  try {
+    await executePollCycleInner(params);
+  } finally {
+    isPolling = false;
+  }
+}
+
+async function executePollCycleInner(params: {
+  accountId: string;
+  config: import("./src/types.js").AgentRegistryConfig;
+  channelRuntime: any;
+  cfg: any;
   log?: any;
 }): Promise<void> {
   const { accountId, config, channelRuntime, cfg, log } = params;
@@ -452,6 +538,13 @@ async function executePollCycle(params: {
       const messages: InboxMessage[] = data.data?.messages ?? data.messages ?? [];
 
       for (const msg of messages) {
+        // Skip already-processed messages (protects against clear failures)
+        const hash = messageHash(msg);
+        if (processedMessageHashes.has(hash)) {
+          log?.debug?.(`Skipping already-processed message: ${hash}`);
+          continue;
+        }
+
         const senderAddress = msg.from; // Pilot address like "0:0000.0000.37D8"
         const messageBody = msg.data || "";
 
@@ -465,8 +558,11 @@ async function executePollCycle(params: {
         // Resolve actual hostname (not Pilot address) for session routing
         const senderLabel = await resolveHostnameForNode(senderNodeId, msg.from_hostname, config, log);
 
-        // Cache hostname → node_id mapping for outbound replies
-        hostnameToNodeId.set(senderLabel, senderNodeId);
+        // Cache hostname → node_id mapping for outbound replies (with LRU eviction)
+        hostnameToNodeIdSet(senderLabel, senderNodeId);
+
+        // Mark as processed
+        processedMessageHashes.add(hash);
 
         // Single Convex lookup for handshake data (reused for first-message check and intro text)
         let isFirstMessage = false;
@@ -580,9 +676,15 @@ async function executePollCycle(params: {
 
       // All messages processed successfully — now clear the inbox
       if (messages.length > 0) {
-        await runPilotctl(["inbox", "--clear"]).catch((err) => {
+        const clearResult = await runPilotctl(["inbox", "--clear"]).catch((err) => {
           log?.warn?.(`Failed to clear inbox after processing: ${err}`);
+          return { ok: false, output: "" };
         });
+
+        // Only clear the tracking set on successful clear
+        if (clearResult.ok) {
+          processedMessageHashes.clear();
+        }
       }
     }
   } catch (err) {
@@ -639,17 +741,22 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
       }
 
       // Fallback: try pilotctl send <hostname> <port> for hostname-based sends
-      const account = agentRegistryConfigAdapter.resolveAccount(ctx.cfg, ctx.accountId);
-      const result = await sendMessage(
-        { to: ctx.to, body: ctx.text },
-        { pilotPort: account.config.pilotPort },
-      );
+      try {
+        const account = agentRegistryConfigAdapter.resolveAccount(ctx.cfg, ctx.accountId);
+        const result = await sendMessage(
+          { to: ctx.to, body: ctx.text },
+          { pilotPort: account.config.pilotPort },
+        );
 
-      if (!result.ok) {
-        return { ok: false, error: new Error(result.error ?? "Send failed") } as any;
+        if (!result.ok) {
+          return { ok: false, error: new Error(result.error ?? "Send failed") } as any;
+        }
+
+        return { ok: true, messageId: result.messageId } as any;
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: new Error(`Fallback send failed: ${errorMsg}`) } as any;
       }
-
-      return { ok: true, messageId: result.messageId } as any;
     },
   },
 
@@ -672,6 +779,9 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
       heartbeatFailures.set(accountId, 0);
       registeredState.set(accountId, false);
 
+      // Rebuild hostname → nodeId cache from Convex handshakes
+      await rebuildHostnameCache(log);
+
       // Check Convex for networkDiscoverable — only register if public
       const networkMeta = await fetchNetworkMetadata();
       if (networkMeta?.networkDiscoverable) {
@@ -684,7 +794,7 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
       setStatus({ connected: true, running: true });
 
       // Start poll loop for pending handshakes and inbox messages
-      const pollIntervalMs = (config.pollIntervalSeconds ?? 300) * 1000;
+      const pollIntervalMs = (config.pollIntervalSeconds ?? 15) * 1000;
       const pilotAvailable = await isPilotInstalled();
       if (pilotAvailable && channelRuntime) {
         // Use initial config — poll interval is static and doesn't need dynamic reload
@@ -718,7 +828,7 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
         if (interval.unref) interval.unref();
         pollIntervals.set(accountId, interval);
 
-        log?.info?.(`Poll loop started (interval: ${config.pollIntervalSeconds ?? 300}s)`);
+        log?.info?.(`Poll loop started (interval: ${config.pollIntervalSeconds ?? 15}s)`);
       } else {
         if (!pilotAvailable) log?.info?.("Pilot Protocol not available — poll loop disabled");
         if (!channelRuntime) log?.info?.("channelRuntime not available — poll loop disabled");
@@ -859,15 +969,30 @@ const plugin = {
       });
 
       // POST /api/agent-registry/refresh — re-check Convex and register/deregister
-      api.registerGatewayMethod("agent-registry/refresh", async ({ respond }) => {
-        // Find the active account (typically "default")
-        const accountId = Array.from(accountContexts.keys())[0];
-        if (!accountId) {
-          respond(false, undefined, { code: "NO_ACCOUNT", message: "No active agent-registry account" });
-          return;
+      api.registerGatewayMethod("agent-registry/refresh", async ({ params, respond }) => {
+        const targetAccountId = params?.accountId as string | undefined;
+
+        if (targetAccountId) {
+          // Refresh specific account
+          if (!accountContexts.has(targetAccountId)) {
+            respond(false, undefined, { code: "NO_ACCOUNT", message: `No active account: ${targetAccountId}` });
+            return;
+          }
+          const result = await handleRefresh(targetAccountId);
+          respond(true, result);
+        } else {
+          // Refresh all accounts
+          const allIds = Array.from(accountContexts.keys());
+          if (allIds.length === 0) {
+            respond(false, undefined, { code: "NO_ACCOUNT", message: "No active agent-registry accounts" });
+            return;
+          }
+          const results: Record<string, { action: string; discoverable: boolean }> = {};
+          for (const id of allIds) {
+            results[id] = await handleRefresh(id);
+          }
+          respond(true, { accounts: results });
         }
-        const result = await handleRefresh(accountId);
-        respond(true, result);
       });
 
       // POST /api/agent-registry/send — manually send a message to a peer
