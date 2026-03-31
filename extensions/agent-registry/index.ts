@@ -49,10 +49,7 @@ const accountContexts = new Map<string, {
 }>();
 
 /** Connection pool for outbound P2P connections (shared across accounts). */
-const connectionPool = new ConnectionPool({
-  maxOutbound: 20,
-  maxInbound: 50,
-});
+const connectionPool = new ConnectionPool(20, 50);
 
 const MAX_HEARTBEAT_FAILURES = 3;
 
@@ -79,7 +76,7 @@ async function registerAgent(
 
   // Get installation_id from env
   const convexEnv = getConvexEnv();
-  const installationId = convexEnv?.installationId;
+  const installationId = convexEnv?.installationId || "unknown";
   const p2pEndpoint = process.env.P2P_ENDPOINT || `wss://localhost:${p2pPort}`;
 
   const regConfig = {
@@ -115,7 +112,7 @@ async function deregisterAgent(accountId: string, log?: any): Promise<void> {
   // Stop P2PServer
   const server = p2pServers.get(accountId);
   if (server) {
-    await server.stopServer();
+    await server.stop();
     p2pServers.delete(accountId);
     log?.info?.("P2PServer stopped");
   }
@@ -123,7 +120,6 @@ async function deregisterAgent(accountId: string, log?: any): Promise<void> {
   // Stop P2PClient
   const client = p2pClients.get(accountId);
   if (client) {
-    client.cleanup();
     p2pClients.delete(accountId);
     log?.info?.("P2PClient stopped");
   }
@@ -390,7 +386,7 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
       });
 
       try {
-        await p2pServer.startServer();
+        await p2pServer.start();
         p2pServers.set(accountId, p2pServer);
         log?.info?.(`P2PServer started on port ${p2pPort}`);
       } catch (err) {
@@ -417,7 +413,7 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
       }
 
       // Mark channel as started (even if not registered — channel is alive and ready for refresh)
-      setStatus({ connected: true, running: true });
+      setStatus({ accountId, connected: true, running: true });
 
       // Keep the channel alive — gateway restarts if startAccount resolves.
       await new Promise<void>((resolve) => {

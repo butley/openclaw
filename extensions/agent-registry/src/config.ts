@@ -4,14 +4,12 @@
  * Resolves account configuration from OpenClaw config.
  */
 
-import type { ChannelConfigAdapter } from "openclaw/plugin-sdk/signal";
-import type { OpenClawConfig } from "openclaw/plugin-sdk/signal";
 import type { AgentRegistryConfig, ResolvedAgentRegistryAccount } from "./types.js";
 
 const DEFAULT_ACCOUNT_ID = "default";
 
 export function resolveAgentRegistryAccount(params: {
-  cfg: OpenClawConfig;
+  cfg: any;
   accountId?: string | null;
 }): ResolvedAgentRegistryAccount {
   const accountId = params.accountId ?? DEFAULT_ACCOUNT_ID;
@@ -39,46 +37,42 @@ export function resolveAgentRegistryAccount(params: {
     displayName: accountData.displayName,
     description: accountData.description,
     capabilities: accountData.capabilities,
-    pilotPort: accountData.pilotPort,
     registryUrl: accountData.registryUrl,
     registryApiKey: accountData.registryApiKey,
-    autoTrust: accountData.autoTrust ?? false,
-    allowFrom: accountData.allowFrom,
-    pollIntervalSeconds: accountData.pollIntervalSeconds ?? 15,
   };
 
   return { accountId, config };
 }
 
-export const agentRegistryConfigAdapter: ChannelConfigAdapter<ResolvedAgentRegistryAccount> = {
-  listAccountIds: (cfg) => {
+export const agentRegistryConfigAdapter = {
+  listAccountIds: (cfg: any) => {
     const channelConfig = (cfg as any)?.channels?.["agent-registry"];
     const accounts = channelConfig?.accounts ?? [];
     if (accounts.length === 0) return [];
     return accounts.map((a: any) => a.id ?? DEFAULT_ACCOUNT_ID);
   },
 
-  resolveAccount: (cfg, accountId) => {
+  resolveAccount: (cfg: any, accountId: string) => {
     return resolveAgentRegistryAccount({ cfg, accountId });
   },
 
-  defaultAccountId: (cfg) => {
+  defaultAccountId: (cfg: any) => {
     const ids = agentRegistryConfigAdapter.listAccountIds(cfg);
     return ids[0] ?? DEFAULT_ACCOUNT_ID;
   },
 
-  isEnabled: (account) => account.config.enabled,
+  isEnabled: (account: ResolvedAgentRegistryAccount) => account.config.enabled,
 
-  isConfigured: (account) => {
+  isConfigured: (account: ResolvedAgentRegistryAccount) => {
     return account.config.enabled && !!account.config.hostname;
   },
 
-  resolveAllowFrom: ({ cfg, accountId }) => {
+  resolveAllowFrom: ({ cfg, accountId }: { cfg: any; accountId: string }) => {
     const account = resolveAgentRegistryAccount({ cfg, accountId });
-    return account.config.allowFrom;
+    return undefined; // No allowFrom filtering for P2P
   },
 
-  resolveDefaultTo: ({ cfg, accountId }) => {
+  resolveDefaultTo: ({ cfg, accountId }: { cfg: any; accountId: string }) => {
     void cfg;
     void accountId;
     return undefined;

@@ -1,5 +1,5 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { getConvexEnv, updateHandshakeStatus } from "./convex-client.js";
+import { getConvexEnv } from "./convex-client.js";
 
 interface AgentNetworkConfig {
   registryUrl: string;
@@ -62,7 +62,7 @@ const ACTIONS = {
 };
 
 export function createAgentNetworkTool(api: OpenClawPluginApi) {
-  const config = (api.pluginConfig ?? {}) as AgentNetworkConfig;
+  const config = (api.pluginConfig as unknown ?? {}) as AgentNetworkConfig;
 
   const log = api.logger;
 
@@ -75,6 +75,7 @@ export function createAgentNetworkTool(api: OpenClawPluginApi) {
 
   return {
     name: "agent_network",
+    label: "Agent Network",
     description: `Discover and contact other AI assistants on the network. Actions: ${actionNames}.
 
 Use this tool to find assistants with specific knowledge or capabilities, and optionally send them messages via P2P WebSocket.
@@ -386,8 +387,7 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
               };
             }
 
-            // Update Convex status
-            await updateHandshakeStatus({ fromNodeId: 0, status: "approved" }).catch((err) => log?.warn?.("Convex sync failed (approve):", err));
+            // Update status in registry (no local Convex sync needed for P2P)
 
             return {
               content: [
@@ -427,8 +427,7 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
               };
             }
 
-            // Update Convex status
-            await updateHandshakeStatus({ fromNodeId: 0, status: "rejected" }).catch((err) => log?.warn?.("Convex sync failed (reject):", err));
+            // Update status in registry (no local Convex sync needed for P2P)
 
             return {
               content: [

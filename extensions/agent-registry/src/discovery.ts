@@ -5,7 +5,7 @@
  * for agent registration, discovery, heartbeat, and search.
  */
 
-import type { PilotPeer, AgentRegistryConfig } from "./types.js";
+import type { AgentRegistryConfig } from "./types.js";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -19,7 +19,7 @@ export type SearchParams = {
 
 export type SearchResult = {
   ok: boolean;
-  peers: PilotPeer[];
+  peers: AgentRecord[];
   total: number;
   error?: string;
 };
