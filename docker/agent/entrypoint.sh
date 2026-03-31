@@ -70,6 +70,7 @@ if "agent-registry" not in channels:
         
         account = {
             "id": "default",
+            "enabled": True,
             "hostname": hostname,
             "registryUrl": registry_url
         }
@@ -85,6 +86,10 @@ else:
     ar_ch = channels["agent-registry"]
     if "accounts" in ar_ch:
         for acc in ar_ch["accounts"]:
+            if "enabled" not in acc:
+                acc["enabled"] = True
+                changed = True
+                print("[entrypoint] Set agent-registry account enabled=true")
             if api_key and "registryApiKey" not in acc:
                 acc["registryApiKey"] = api_key
                 changed = True
