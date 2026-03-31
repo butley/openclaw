@@ -119,41 +119,27 @@ if [ -f /root/.openclaw/gateway-credentials.json ]; then
         "import json; print(json.load(open('/root/.openclaw/gateway-credentials.json'))['gatewayToken'])")
 fi
 
-# Start Pilot Protocol daemon for P2P agent communication
-if command -v pilot-daemon &> /dev/null; then
-    # Use INSTALLATION_ID as hostname if available
-    PILOT_HOSTNAME="${INSTALLATION_ID:-agent-$(hostname | cut -c1-8)}"
-    # Email must be unique per agent to get unique Node ID from registry
-    PILOT_EMAIL="agent-${INSTALLATION_ID:-$(hostname)}@butley.ai"
-    
-    # Init config (creates /root/.pilot/identity.json if not exists)
-    # The identity directory is mounted as a volume, so trust is preserved across restarts
-    pilotctl init --non-interactive 2>/dev/null || true
-    
-    # Get public IP and port from environment (set by orchestrator)
-    PUBLIC_IP="${PILOT_PUBLIC_IP:-}"
-    PILOT_PORT="${PILOT_PORT:-30000}"
-    
-    # Start daemon directly with fixed endpoint (skips STUN)
-    if [ -n "$PUBLIC_IP" ]; then
-        # Create identity directory — mounted as volume for persistence
-        mkdir -p /root/.pilot
-        
-        # Use fixed endpoint mode with persistent identity
-        # -identity preserves Ed25519 keypair and trust relationships across restarts
-        pilot-daemon -hostname "$PILOT_HOSTNAME" -email "$PILOT_EMAIL" \
-            -listen ":${PILOT_PORT}" \
-            -endpoint "${PUBLIC_IP}:${PILOT_PORT}" \
-            -identity /root/.pilot/identity.json \
-            >> /root/.pilot/pilot.log 2>&1 &
-        echo "[entrypoint] Pilot daemon started with fixed endpoint ${PUBLIC_IP}:${PILOT_PORT} (hostname=$PILOT_HOSTNAME)"
-    else
-        # Fallback to pilotctl daemon start (STUN mode)
-        pilotctl daemon start --hostname "$PILOT_HOSTNAME" --email "$PILOT_EMAIL" --background 2>/dev/null && \
-            echo "[entrypoint] Pilot Protocol daemon started in STUN mode (hostname=$PILOT_HOSTNAME)" || \
-            echo "[entrypoint] Pilot Protocol daemon failed to start (optional, continuing...)"
-    fi
-fi
+# DISABLED: Pilot Protocol daemon causes high CPU usage (~90% per container)
+# See: https://github.com/TeoSlayer/pilotprotocol/issues/XXX (to be reported)
+# Agent-to-agent communication uses HTTP relay via Agent Registry instead
+#
+# if command -v pilot-daemon &> /dev/null; then
+#     PILOT_HOSTNAME="${INSTALLATION_ID:-agent-$(hostname | cut -c1-8)}"
+#     PILOT_EMAIL="agent-${INSTALLATION_ID:-$(hostname)}@butley.ai"
+#     pilotctl init --non-interactive 2>/dev/null || true
+#     PUBLIC_IP="${PILOT_PUBLIC_IP:-}"
+#     PILOT_PORT="${PILOT_PORT:-30000}"
+#     if [ -n "$PUBLIC_IP" ]; then
+#         mkdir -p /root/.pilot
+#         pilot-daemon -hostname "$PILOT_HOSTNAME" -email "$PILOT_EMAIL" \
+#             -listen ":${PILOT_PORT}" -endpoint "${PUBLIC_IP}:${PILOT_PORT}" \
+#             -identity /root/.pilot/identity.json >> /root/.pilot/pilot.log 2>&1 &
+#         echo "[entrypoint] Pilot daemon started (hostname=$PILOT_HOSTNAME)"
+#     else
+#         pilotctl daemon start --hostname "$PILOT_HOSTNAME" --email "$PILOT_EMAIL" --background 2>/dev/null
+#     fi
+# fi
+echo "[entrypoint] Pilot Protocol daemon disabled (high CPU issue) — using HTTP relay"
 
 # Bootstrap runs in parallel — credentials, QMD indexing, gateway readiness, onboarding.
 python3 /bootstrap.py &
