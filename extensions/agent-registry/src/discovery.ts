@@ -197,7 +197,7 @@ export class AgentRegistryClient {
    * Get a single agent by ID.
    * GET /api/v1/agents/{agentId}
    */
-  async getAgent(agentId: string): Promise<{ ok: boolean; agent?: PilotPeer; error?: string }> {
+  async getAgent(agentId: string): Promise<{ ok: boolean; agent?: AgentRecord; error?: string }> {
     try {
       const res = await fetch(
         `${this.baseUrl}/api/v1/agents/${encodeURIComponent(agentId)}`,
@@ -220,7 +220,7 @@ export class AgentRegistryClient {
    * List all registered agents.
    * GET /api/v1/agents/
    */
-  async listAgents(): Promise<{ ok: boolean; peers: PilotPeer[]; error?: string }> {
+  async listAgents(): Promise<{ ok: boolean; peers: AgentRecord[]; error?: string }> {
     try {
       const res = await fetch(`${this.baseUrl}/api/v1/agents/`, { headers: this.headers() });
 
@@ -274,15 +274,8 @@ export async function sendHeartbeat(config: AgentRegistryConfig & { agentId: str
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function agentToPeer(agent: AgentRecord): PilotPeer {
-  return {
-    hostname: agent.hostname,
-    address: agent.pilot_address ?? "",
-    installation_id: agent.installation_id,
-    name: agent.display_name,
-    capabilities: agent.capabilities,
-    lastSeen: agent.last_seen ? new Date(agent.last_seen).getTime() : undefined,
-  };
+function agentToPeer(agent: AgentRecord): AgentRecord {
+  return agent;
 }
 
 async function safeReadBody(res: Response): Promise<string> {
