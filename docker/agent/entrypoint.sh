@@ -100,6 +100,13 @@ else:
     if not changed:
         print("[entrypoint] agent-registry channel already configured")
 
+# Set session.dmScope to "per-channel-peer" for isolated DM sessions per peer
+session = config.setdefault("session", {})
+if session.get("dmScope") != "per-channel-peer":
+    session["dmScope"] = "per-channel-peer"
+    changed = True
+    print("[entrypoint] Set session.dmScope to per-channel-peer")
+
 if changed:
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
