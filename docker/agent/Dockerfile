@@ -149,16 +149,8 @@ RUN curl -L "https://github.com/steipete/gogcli/releases/download/v${GOGCLI_VERS
 # Install Poetry (for agent skills that need Python)
 RUN pip3 install --break-system-packages poetry==1.8.4 || true
 
-# Install Pilot Protocol for P2P agent-to-agent communication
-# Binaries go directly to /usr/local/bin (NOT /root/.pilot which is volume-mounted)
-ARG PILOT_VERSION=v1.4.1
-RUN mkdir -p /tmp/pilot-install && \
-    curl -fsSL "https://github.com/TeoSlayer/pilotprotocol/releases/download/${PILOT_VERSION}/pilot-linux-amd64.tar.gz" \
-    | tar -xz -C /tmp/pilot-install && \
-    cp /tmp/pilot-install/pilotctl /usr/local/bin/pilotctl && \
-    cp /tmp/pilot-install/daemon /usr/local/bin/pilot-daemon && \
-    chmod +x /usr/local/bin/pilotctl /usr/local/bin/pilot-daemon && \
-    rm -rf /tmp/pilot-install
+# P2P WebSocket communication now uses native Node.js WebSocket (ws package)
+# No external Pilot Protocol daemon needed
 
 # Enable corepack for pnpm (needed if any pnpm commands are used at runtime)
 RUN npm install -g --force corepack@latest && corepack enable

@@ -1,15 +1,6 @@
 /**
- * Agent Registry channel types — Pilot Protocol P2P communication.
+ * Agent Registry channel types — P2P WebSocket communication.
  */
-
-export type PilotPeer = {
-  hostname: string;
-  address: string; // "0:0001.A3F2.1001"
-  installation_id?: string;
-  name?: string;
-  capabilities?: string[];
-  lastSeen?: number;
-};
 
 export type AgentRegistryConfig = {
   enabled: boolean;
@@ -17,12 +8,8 @@ export type AgentRegistryConfig = {
   displayName?: string;
   description?: string;
   capabilities?: string[];
-  pilotPort?: number;
   registryUrl?: string;
   registryApiKey?: string;
-  autoTrust?: boolean;
-  allowFrom?: string[];
-  pollIntervalSeconds?: number;
 };
 
 export type AgentRegistryInboundMessage = {

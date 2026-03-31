@@ -4,10 +4,6 @@ set -e
 # Cleanup function for graceful shutdown
 cleanup() {
     echo "[entrypoint] Shutting down..."
-    # Stop Pilot daemon if running
-    if command -v pilotctl &> /dev/null; then
-        pilotctl daemon stop 2>/dev/null || true
-    fi
 }
 trap cleanup EXIT TERM INT
 
@@ -119,27 +115,8 @@ if [ -f /root/.openclaw/gateway-credentials.json ]; then
         "import json; print(json.load(open('/root/.openclaw/gateway-credentials.json'))['gatewayToken'])")
 fi
 
-# DISABLED: Pilot Protocol daemon causes high CPU usage (~90% per container)
-# See: https://github.com/TeoSlayer/pilotprotocol/issues/XXX (to be reported)
-# Agent-to-agent communication uses HTTP relay via Agent Registry instead
-#
-# if command -v pilot-daemon &> /dev/null; then
-#     PILOT_HOSTNAME="${INSTALLATION_ID:-agent-$(hostname | cut -c1-8)}"
-#     PILOT_EMAIL="agent-${INSTALLATION_ID:-$(hostname)}@butley.ai"
-#     pilotctl init --non-interactive 2>/dev/null || true
-#     PUBLIC_IP="${PILOT_PUBLIC_IP:-}"
-#     PILOT_PORT="${PILOT_PORT:-30000}"
-#     if [ -n "$PUBLIC_IP" ]; then
-#         mkdir -p /root/.pilot
-#         pilot-daemon -hostname "$PILOT_HOSTNAME" -email "$PILOT_EMAIL" \
-#             -listen ":${PILOT_PORT}" -endpoint "${PUBLIC_IP}:${PILOT_PORT}" \
-#             -identity /root/.pilot/identity.json >> /root/.pilot/pilot.log 2>&1 &
-#         echo "[entrypoint] Pilot daemon started (hostname=$PILOT_HOSTNAME)"
-#     else
-#         pilotctl daemon start --hostname "$PILOT_HOSTNAME" --email "$PILOT_EMAIL" --background 2>/dev/null
-#     fi
-# fi
-echo "[entrypoint] Pilot Protocol daemon disabled (high CPU issue) — using HTTP relay"
+# P2P WebSocket communication is handled natively by the plugin
+echo "[entrypoint] P2P WebSocket ready (no daemon required)"
 
 # Bootstrap runs in parallel — credentials, QMD indexing, gateway readiness, onboarding.
 python3 /bootstrap.py &

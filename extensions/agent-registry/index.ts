@@ -1,8 +1,8 @@
 /**
- * Agent Registry channel plugin — P2P agent-to-agent communication via Pilot Protocol.
+ * Agent Registry channel plugin — P2P agent-to-agent communication via WebSocket.
  *
  * Enables OpenClaw agents to discover and communicate with other AI agents
- * through the Agent Registry and Pilot Protocol.
+ * through the Agent Registry and P2P WebSocket connections.
  */
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/signal";
@@ -10,31 +10,28 @@ import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/signal";
 import type { ChannelPlugin } from "openclaw/plugin-sdk/signal";
 import type { ResolvedAgentRegistryAccount } from "./src/types.js";
 import { agentRegistryConfigAdapter } from "./src/config.js";
-import { sendMessage } from "./src/send.js";
-import { startMonitor } from "./src/monitor.js";
-import type { MonitorHandle } from "./src/monitor.js";
-import { getDaemonStatus, isPilotInstalled } from "./src/daemon.js";
 import { AgentRegistryClient } from "./src/discovery.js";
-import { fetchNetworkMetadata, getConvexEnv, upsertHandshake, getHandshakeByNodeId, markFirstMessageSent, markNotificationSent, listAllHandshakes } from "./src/convex-client.js";
-import type { NetworkMetadata } from "./src/convex-client.js";
+import { fetchNetworkMetadata, getConvexEnv } from "./src/convex-client.js";
 import { createAgentNetworkTool } from "./src/agent-network-tool.js";
-import { spawn } from "node:child_process";
+import { P2PServer } from "./src/p2p/server.js";
+import { P2PClient } from "./src/p2p/client.js";
+import { ConnectionPool } from "./src/p2p/connection-pool.js";
 
 /* ------------------------------------------------------------------ */
 /*  State                                                              */
 /* ------------------------------------------------------------------ */
 
-/** Active monitor handle per account, keyed by accountId. */
-const activeMonitors = new Map<string, MonitorHandle>();
+/** P2P Server per account, keyed by accountId. */
+const p2pServers = new Map<string, P2PServer>();
 
-/** Hostname → node_id mapping for outbound delivery. */
-const hostnameToNodeId = new Map<string, number>();
-
-/** Heartbeat intervals per account. */
-const heartbeatIntervals = new Map<string, ReturnType<typeof setInterval>>();
+/** P2P Client per account, keyed by accountId. */
+const p2pClients = new Map<string, P2PClient>();
 
 /** Registry client + agentId per account, for deregister on stop and client reuse. */
 const registryClients = new Map<string, { client: AgentRegistryClient; agentId?: string }>();
+
+/** Heartbeat intervals per account. */
+const heartbeatIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
 /** Heartbeat failure counter per account, for re-registration logic. */
 const heartbeatFailures = new Map<string, number>();
@@ -42,74 +39,22 @@ const heartbeatFailures = new Map<string, number>();
 /** Whether currently registered in the registry (per account). */
 const registeredState = new Map<string, boolean>();
 
-/** Poll intervals per account (for inbox/pending polling). */
-const pollIntervals = new Map<string, ReturnType<typeof setInterval>>();
-
-/** Cached account context for refresh (log, config, etc). */
+/** Cached account context for refresh and message injection. */
 const accountContexts = new Map<string, {
   config: import("./src/types.js").AgentRegistryConfig;
   log: any;
   setStatus: (next: any) => void;
+  channelRuntime: any;
+  cfg: any;
 }>();
 
-/** Set of processed message hashes to avoid re-processing on clear failure. */
-const processedMessageHashes = new Set<string>();
-
-/** Whether a poll cycle is currently running (mutex). */
-let isPolling = false;
-
-/** Max entries in hostnameToNodeId cache (LRU-style eviction). */
-const MAX_HOSTNAME_CACHE_SIZE = 1000;
+/** Connection pool for outbound P2P connections (shared across accounts). */
+const connectionPool = new ConnectionPool({
+  maxOutbound: 20,
+  maxInbound: 50,
+});
 
 const MAX_HEARTBEAT_FAILURES = 3;
-
-/* ------------------------------------------------------------------ */
-/*  Cache helpers                                                      */
-/* ------------------------------------------------------------------ */
-
-/**
- * Rebuild hostnameToNodeId cache from Convex handshakes on startup.
- * Prevents loss of hostname→nodeId mappings across restarts.
- */
-async function rebuildHostnameCache(log?: any): Promise<void> {
-  try {
-    const result = await listAllHandshakes();
-    if (result.ok && result.handshakes) {
-      for (const hs of result.handshakes) {
-        if (hs.fromHostname && hs.fromNodeId) {
-          hostnameToNodeIdSet(hs.fromHostname, hs.fromNodeId);
-        }
-      }
-      log?.info?.(`Rebuilt hostname cache from Convex: ${hostnameToNodeId.size} entries`);
-    }
-  } catch (err) {
-    log?.warn?.(`Failed to rebuild hostname cache: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-/**
- * Set a hostname→nodeId mapping with LRU-style eviction.
- * When the cache exceeds MAX_HOSTNAME_CACHE_SIZE, the oldest entry is evicted.
- */
-function hostnameToNodeIdSet(hostname: string, nodeId: number): void {
-  // Delete first to move to end (Map preserves insertion order)
-  hostnameToNodeId.delete(hostname);
-  hostnameToNodeId.set(hostname, nodeId);
-
-  // Evict oldest entries if over limit
-  if (hostnameToNodeId.size > MAX_HOSTNAME_CACHE_SIZE) {
-    const firstKey = hostnameToNodeId.keys().next().value;
-    if (firstKey !== undefined) hostnameToNodeId.delete(firstKey);
-  }
-}
-
-/**
- * Generate a hash key for a message to track processing.
- * Uses from + data + received_at to uniquely identify a message.
- */
-function messageHash(msg: InboxMessage): string {
-  return `${msg.from}:${msg.data}:${msg.received_at ?? ""}`;
-}
 
 /* ------------------------------------------------------------------ */
 /*  Register / deregister helpers                                      */
@@ -119,7 +64,8 @@ async function registerAgent(
   accountId: string,
   config: import("./src/types.js").AgentRegistryConfig,
   client: AgentRegistryClient,
-  networkMeta: NetworkMetadata,
+  networkMeta: any,
+  p2pPort: number,
   log?: any,
 ): Promise<void> {
   if (registeredState.get(accountId)) {
@@ -134,20 +80,12 @@ async function registerAgent(
   // Get installation_id from env
   const convexEnv = getConvexEnv();
   const installationId = convexEnv?.installationId;
-
-  // Get pilot_node_id from daemon if running
-  let pilotNodeId: number | undefined;
-  try {
-    const pilotStatus = await getDaemonStatus();
-    if (pilotStatus?.node_id) {
-      pilotNodeId = pilotStatus.node_id;
-    }
-  } catch { /* pilot not running, ok */ }
+  const p2pEndpoint = process.env.P2P_ENDPOINT || `wss://localhost:${p2pPort}`;
 
   const regConfig = {
     ...config,
     installationId,
-    pilotNodeId,
+    p2p_endpoint: p2pEndpoint,
     displayName: networkMeta.networkDisplayName ?? config.displayName,
     description: networkMeta.networkDescription ?? config.description,
     capabilities: networkMeta.networkCapabilities ?? config.capabilities,
@@ -161,15 +99,6 @@ async function registerAgent(
 
     // Start heartbeat
     startHeartbeat(accountId, regResult.agentId, config, client, log);
-
-    // Start Pilot monitor if available
-    const pilotAvailable = await isPilotInstalled();
-    if (pilotAvailable && !activeMonitors.has(accountId)) {
-      log?.info?.("Starting Pilot Protocol monitor");
-      // Monitor setup would go here when Pilot is available
-    } else if (!pilotAvailable) {
-      log?.info?.("Pilot Protocol not installed — discovery-only mode");
-    }
   } else {
     log?.warn?.(`Failed to register in Agent Registry: ${regResult.error}`);
   }
@@ -183,11 +112,20 @@ async function deregisterAgent(accountId: string, log?: any): Promise<void> {
     heartbeatIntervals.delete(accountId);
   }
 
-  // Stop monitor
-  const monitor = activeMonitors.get(accountId);
-  if (monitor) {
-    monitor.stop();
-    activeMonitors.delete(accountId);
+  // Stop P2PServer
+  const server = p2pServers.get(accountId);
+  if (server) {
+    await server.stopServer();
+    p2pServers.delete(accountId);
+    log?.info?.("P2PServer stopped");
+  }
+
+  // Stop P2PClient
+  const client = p2pClients.get(accountId);
+  if (client) {
+    client.cleanup();
+    p2pClients.delete(accountId);
+    log?.info?.("P2PClient stopped");
   }
 
   // Deregister from registry
@@ -230,10 +168,11 @@ function startHeartbeat(
         log?.info?.("Max heartbeat failures — re-registering with full metadata");
         heartbeatFailures.set(accountId, 0);
         try { await client.deregister(currentAgentId); } catch { /* ok */ }
-        // Use registerAgent() to preserve enriched metadata (display name, description, capabilities from Convex)
+        
         const networkMeta = await fetchNetworkMetadata();
+        const p2pPort = parseInt(process.env.P2P_PORT || "18790", 10);
         if (networkMeta) {
-          await registerAgent(accountId, config, client, networkMeta, log);
+          await registerAgent(accountId, config, client, networkMeta, p2pPort, log);
           const entry = registryClients.get(accountId);
           if (entry?.agentId) {
             currentAgentId = entry.agentId;
@@ -269,9 +208,11 @@ async function handleRefresh(accountId: string): Promise<{ action: string; disco
   const isDiscoverable = networkMeta?.networkDiscoverable === true;
   const isRegistered = registeredState.get(accountId) === true;
 
+  const p2pPort = parseInt(process.env.P2P_PORT || "18790", 10);
+
   if (isDiscoverable && !isRegistered) {
     // Go public
-    await registerAgent(accountId, ctx.config, entry.client, networkMeta!, ctx.log);
+    await registerAgent(accountId, ctx.config, entry.client, networkMeta!, p2pPort, ctx.log);
     return { action: "registered", discoverable: true };
   } else if (!isDiscoverable && isRegistered) {
     // Go private
@@ -279,7 +220,7 @@ async function handleRefresh(accountId: string): Promise<{ action: string; disco
     return { action: "deregistered", discoverable: false };
   } else if (isDiscoverable && isRegistered) {
     // Update metadata (display name, description, capabilities may have changed)
-    await registerAgent(accountId, ctx.config, entry.client, networkMeta!, ctx.log);
+    await registerAgent(accountId, ctx.config, entry.client, networkMeta!, p2pPort, ctx.log);
     return { action: "updated", discoverable: true };
   }
 
@@ -287,412 +228,78 @@ async function handleRefresh(accountId: string): Promise<{ action: string; disco
 }
 
 /* ------------------------------------------------------------------ */
-/*  Pilot address helpers                                              */
+/*  Message injection via P2P Server                                   */
 /* ------------------------------------------------------------------ */
 
 /**
- * Parse a Pilot address like "0:0000.0000.37D8" to extract the node_id.
- * The last hex group (after the last dot) contains the node_id.
- * Returns undefined if the format doesn't match.
+ * Inject a received P2P message into the OpenClaw session.
+ * Uses the same pattern as the old Pilot Protocol message injection.
  */
-function parseNodeIdFromPilotAddress(address: string): number | undefined {
-  // Format: "<network>:<group1>.<group2>.<node_hex>"
-  // e.g. "0:0000.0000.37D8" → node_id = 0x37D8 = 14296
-  const match = address.match(/^\d+:([0-9a-fA-F]{4})\.([0-9a-fA-F]{4})\.([0-9a-fA-F]{4})$/);
-  if (!match) return undefined;
-  // The node_id is in the last hex group only
-  const nodeId = parseInt(match[3], 16);
-  return isNaN(nodeId) ? undefined : nodeId;
-}
-
-/**
- * Resolve a sender label (hostname) from a node_id.
- * Priority: from_hostname (if real hostname) → Agent Registry API → Convex handshake → fallback.
- */
-async function resolveHostnameForNode(nodeId: number, fromHostname?: string, config?: import("./src/types.js").AgentRegistryConfig, log?: any): Promise<string> {
-  // If from_hostname looks like a real hostname (not a Pilot address), use it directly
-  if (fromHostname && !fromHostname.match(/^\d+:[0-9a-fA-F.]+$/)) {
-    return fromHostname;
-  }
-
-  // Try Agent Registry API — search by pilot_node_id
-  if (config?.registryUrl) {
-    try {
-      const url = new URL("/api/v1/agents/", config.registryUrl);
-      url.searchParams.set("pilot_node_id", String(nodeId));
-      const response = await fetch(url.toString(), {
-        headers: config.registryApiKey ? { "X-Registry-Key": config.registryApiKey } : {},
-      });
-      if (response.ok) {
-        const data = await response.json();
-        const agents = data.agents ?? [];
-        if (agents.length > 0 && agents[0].hostname) {
-          return agents[0].hostname;
-        }
-      }
-    } catch {
-      // Registry lookup failed
-    }
-  }
-
-  // Try Convex handshake record
-  try {
-    const hsResult = await getHandshakeByNodeId({ fromNodeId: nodeId });
-    if (hsResult.ok && hsResult.handshake?.fromHostname) {
-      return hsResult.handshake.fromHostname;
-    }
-  } catch {
-    // Convex lookup failed
-  }
-
-  log?.debug?.(`Could not resolve hostname for node ${nodeId}, using fallback`);
-  return `node-${nodeId}`;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Poll loop — pending handshakes + inbox messages                    */
-/* ------------------------------------------------------------------ */
-
-/** Run a pilotctl command and return parsed JSON output. */
-function runPilotctl(args: string[], timeoutMs = 10000): Promise<{ ok: boolean; output: string }> {
-  return new Promise((resolve) => {
-    const proc = spawn("pilotctl", args, { timeout: timeoutMs });
-    let stdout = "";
-    let stderr = "";
-
-    proc.stdout?.on("data", (d: Buffer) => (stdout += d.toString()));
-    proc.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
-
-    proc.on("close", (code) => {
-      if (code === 0) {
-        resolve({ ok: true, output: stdout.trim() });
-      } else {
-        resolve({ ok: false, output: stderr.trim() || stdout.trim() || `Exit code ${code}` });
-      }
-    });
-
-    proc.on("error", (err) => {
-      resolve({ ok: false, output: `Spawn error: ${err.message}` });
-    });
-  });
-}
-
-/** Parsed pending handshake entry from pilotctl. */
-interface PendingEntry {
-  node_id: number;
-  hostname?: string;
-  public_key?: string;
-  justification?: string;
-  received_at?: number;
-}
-
-/** Parsed inbox message from pilotctl. */
-interface InboxMessage {
-  from: string; // Pilot address string like "0:0000.0000.37D8"
-  from_hostname?: string;
-  data: string;
-  received_at?: string;
-  type?: string;
-}
-
-/**
- * Execute one poll cycle: check for pending handshakes and inbox messages.
- * Injects them as inbound messages via channelRuntime.
- */
-async function executePollCycle(params: {
+async function injectP2PMessage(params: {
   accountId: string;
-  config: import("./src/types.js").AgentRegistryConfig;
-  channelRuntime: any; // PluginRuntime["channel"]
-  cfg: any; // OpenClawConfig
+  fromId: string;
+  fromHostname: string;
+  body: string;
   log?: any;
 }): Promise<void> {
-  // Mutex: skip if already polling
-  if (isPolling) return;
-  isPolling = true;
-
-  try {
-    await executePollCycleInner(params);
-  } finally {
-    isPolling = false;
-  }
-}
-
-async function executePollCycleInner(params: {
-  accountId: string;
-  config: import("./src/types.js").AgentRegistryConfig;
-  channelRuntime: any;
-  cfg: any;
-  log?: any;
-}): Promise<void> {
-  const { accountId, config, channelRuntime, cfg, log } = params;
-
-  const pilotAvailable = await isPilotInstalled();
-  if (!pilotAvailable) return;
-
-  log?.debug?.(`Poll cycle started for account ${accountId}`);
-
-  // A) Check pending handshakes
-  try {
-    const pendingResult = await runPilotctl(["pending", "--json"]);
-    if (pendingResult.ok && pendingResult.output) {
-      const data = JSON.parse(pendingResult.output);
-      const pending: PendingEntry[] = data.data?.pending ?? data.pending ?? [];
-
-      for (const entry of pending) {
-        const introduction = entry.justification || "(no introduction)";
-
-        // Save to Convex — upsert returns existing record or creates new
-        await upsertHandshake({
-          fromNodeId: entry.node_id,
-          fromHostname: entry.hostname,
-          fromPublicKey: entry.public_key ?? "",
-          introduction,
-          status: "pending",
-        }).catch((err) => {
-          log?.warn?.(`Failed to save handshake to Convex: ${err}`);
-        });
-
-        // Check if we already notified about this handshake
-        let alreadyNotified = false;
-        try {
-          const hsResult = await getHandshakeByNodeId({ fromNodeId: entry.node_id });
-          if (hsResult.ok && hsResult.handshake?.notificationSent) {
-            alreadyNotified = true;
-          }
-        } catch {
-          // If lookup fails, skip notification to be safe (avoid duplicates)
-          alreadyNotified = true;
-        }
-
-        if (alreadyNotified) continue;
-
-        // Build session key for handshake notifications (use main session)
-        const route = channelRuntime.routing.resolveAgentRoute({
-          cfg,
-          channel: "agent-registry",
-          accountId,
-          peer: {
-            kind: "direct",
-            id: entry.hostname || `node-${entry.node_id}`,
-          },
-        });
-
-        const handshakeBody = `🤝 Pedido de conexão de ${entry.hostname || `node ${entry.node_id}`}\n\nIntrodução: "${introduction}"\n\nPara aprovar: agent_network({ action: "approve", node_id: "${entry.node_id}" })\nPara rejeitar: agent_network({ action: "reject", node_id: "${entry.node_id}" })`;
-
-        const msgCtx = channelRuntime.reply.finalizeInboundContext({
-          Body: handshakeBody,
-          BodyForAgent: handshakeBody,
-          RawBody: handshakeBody,
-          CommandBody: handshakeBody,
-          From: `agent-registry:${entry.hostname || entry.node_id}`,
-          To: config.hostname,
-          SessionKey: route.sessionKey,
-          AccountId: accountId,
-          OriginatingChannel: "agent-registry",
-          OriginatingTo: config.hostname,
-          ChatType: "direct",
-          SenderName: entry.hostname || `Agent ${entry.node_id}`,
-          SenderId: String(entry.node_id),
-          Provider: "agent-registry",
-          Surface: "agent-registry",
-          ConversationLabel: entry.hostname || `Agent ${entry.node_id}`,
-          Timestamp: Date.now(),
-          CommandAuthorized: true,
-        });
-
-        await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
-          ctx: msgCtx,
-          cfg,
-          dispatcherOptions: {
-            deliver: async (_payload: { text?: string; body?: string }) => {
-              // No-op: handshake notifications are informational only.
-              // Cannot send messages to unapproved peers via Pilot Protocol.
-              log?.debug?.(`Handshake notification reply suppressed for unapproved node ${entry.node_id}`);
-            },
-          },
-        });
-
-        // Mark notification as sent to prevent re-notification on next poll cycle
-        await markNotificationSent({ fromNodeId: entry.node_id }).catch((err) => {
-          log?.warn?.(`Failed to mark notification sent: ${err}`);
-        });
-
-        log?.info?.(`Injected pending handshake from ${entry.hostname || entry.node_id} (node ${entry.node_id})`);
-      }
-    }
-  } catch (err) {
-    // Tolerate parse/network errors — will retry next cycle
-    if (err instanceof SyntaxError) {
-      // No pending or non-JSON output — OK
-    } else {
-      log?.warn?.(`Poll pending error: ${err instanceof Error ? err.message : String(err)}`);
-    }
+  const { accountId, fromId, fromHostname, body, log } = params;
+  const ctx = accountContexts.get(accountId);
+  
+  if (!ctx) {
+    log?.warn?.(`No account context for ${accountId} to inject P2P message`);
+    return;
   }
 
-  // B) Check inbox messages
+  const { config, channelRuntime, cfg } = ctx;
+
   try {
-    // Fetch without --clear first; only clear after successful processing
-    const inboxResult = await runPilotctl(["inbox", "--json"]);
-    if (inboxResult.ok && inboxResult.output) {
-      const data = JSON.parse(inboxResult.output);
-      const messages: InboxMessage[] = data.data?.messages ?? data.messages ?? [];
+    // Resolve route with per-channel-peer scope for DM sessions
+    const route = channelRuntime.routing.resolveAgentRoute({
+      cfg,
+      channel: "agent-registry",
+      accountId,
+      peer: {
+        kind: "direct",
+        id: fromHostname,
+      },
+    });
 
-      for (const msg of messages) {
-        // Skip already-processed messages (protects against clear failures)
-        const hash = messageHash(msg);
-        if (processedMessageHashes.has(hash)) {
-          log?.debug?.(`Skipping already-processed message: ${hash}`);
-          continue;
-        }
+    // Inject the message
+    const msgCtx = channelRuntime.reply.finalizeInboundContext({
+      Body: body,
+      BodyForAgent: body,
+      RawBody: body,
+      CommandBody: body,
+      From: `agent-registry:${fromHostname}`,
+      To: config.hostname,
+      SessionKey: route.sessionKey,
+      AccountId: accountId,
+      OriginatingChannel: "agent-registry",
+      OriginatingTo: config.hostname,
+      ChatType: "direct",
+      SenderName: fromHostname,
+      SenderId: fromId,
+      Provider: "agent-registry",
+      Surface: "agent-registry",
+      ConversationLabel: fromHostname,
+      Timestamp: Date.now(),
+      CommandAuthorized: true,
+    });
 
-        const senderAddress = msg.from; // Pilot address like "0:0000.0000.37D8"
-        const messageBody = msg.data || "";
+    await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
+      ctx: msgCtx,
+      cfg,
+      dispatcherOptions: {
+        deliver: async (payload: { text?: string; body?: string }) => {
+          // Messages arrive via P2P — no reply delivery needed
+          log?.debug?.(`P2P message injected and processed from ${fromHostname}`);
+        },
+      },
+    });
 
-        // Parse the Pilot address to extract numeric node_id
-        const senderNodeId = parseNodeIdFromPilotAddress(senderAddress);
-        if (senderNodeId === undefined) {
-          log?.warn?.(`Could not parse node_id from address ${senderAddress}, skipping message`);
-          continue;
-        }
-
-        // Resolve actual hostname (not Pilot address) for session routing
-        const senderLabel = await resolveHostnameForNode(senderNodeId, msg.from_hostname, config, log);
-
-        // Cache hostname → node_id mapping for outbound replies (with LRU eviction)
-        hostnameToNodeIdSet(senderLabel, senderNodeId);
-
-        // Mark as processed
-        processedMessageHashes.add(hash);
-
-        // Single Convex lookup for handshake data (reused for first-message check and intro text)
-        let isFirstMessage = false;
-        let introText = "(no introduction)";
-        try {
-          const hsResult = await getHandshakeByNodeId({ fromNodeId: senderNodeId });
-          if (hsResult.ok && hsResult.handshake) {
-            isFirstMessage = !hsResult.handshake.firstMessageSent;
-            if (hsResult.handshake.introduction) {
-              introText = hsResult.handshake.introduction;
-            }
-          }
-        } catch {
-          // If Convex lookup fails, skip intro logic
-        }
-
-        // Resolve route with per-channel-peer scope for DM sessions
-        const route = channelRuntime.routing.resolveAgentRoute({
-          cfg,
-          channel: "agent-registry",
-          accountId,
-          peer: {
-            kind: "direct",
-            id: senderLabel,
-          },
-        });
-
-        // If first message, inject system event with introduction
-        if (isFirstMessage) {
-
-          const systemBody = `[Sessão com agente via Agent Network]\nHostname: ${senderLabel}\nIntrodução: "${introText}"`;
-
-          const systemCtx = channelRuntime.reply.finalizeInboundContext({
-            Body: systemBody,
-            BodyForAgent: systemBody,
-            RawBody: systemBody,
-            CommandBody: systemBody,
-            From: `agent-registry:${senderLabel}`,
-            To: config.hostname,
-            SessionKey: route.sessionKey,
-            AccountId: accountId,
-            OriginatingChannel: "agent-registry",
-            OriginatingTo: config.hostname,
-            ChatType: "direct",
-            SenderName: senderLabel,
-            SenderId: String(senderNodeId),
-            Provider: "agent-registry",
-            Surface: "agent-registry",
-            ConversationLabel: senderLabel,
-            Timestamp: Date.now(),
-            CommandAuthorized: true,
-            SystemEvent: true,
-          });
-
-          await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
-            ctx: systemCtx,
-            cfg,
-            dispatcherOptions: {
-              deliver: async () => {
-                // System event — no reply needed
-              },
-            },
-          });
-
-          // Mark first message as sent
-          await markFirstMessageSent({ fromNodeId: senderNodeId }).catch((err) => {
-            log?.warn?.(`Failed to mark first message sent: ${err}`);
-          });
-
-          log?.info?.(`Injected introduction system event for ${senderLabel}`);
-        }
-
-        // Inject the actual message
-        const msgCtx = channelRuntime.reply.finalizeInboundContext({
-          Body: messageBody,
-          BodyForAgent: messageBody,
-          RawBody: messageBody,
-          CommandBody: messageBody,
-          From: `agent-registry:${senderLabel}`,
-          To: config.hostname,
-          SessionKey: route.sessionKey,
-          AccountId: accountId,
-          OriginatingChannel: "agent-registry",
-          OriginatingTo: config.hostname,
-          ChatType: "direct",
-          SenderName: senderLabel,
-          SenderId: String(senderNodeId),
-          Provider: "agent-registry",
-          Surface: "agent-registry",
-          ConversationLabel: senderLabel,
-          Timestamp: Date.now(),
-          CommandAuthorized: true,
-        });
-
-        await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
-          ctx: msgCtx,
-          cfg,
-          dispatcherOptions: {
-            deliver: async (payload: { text?: string; body?: string }) => {
-              const text = payload?.text ?? payload?.body;
-              if (text) {
-                // Send reply back via Pilot Protocol
-                await runPilotctl(["send-message", String(senderNodeId), "--data", text], 15000);
-              }
-            },
-          },
-        });
-
-        log?.info?.(`Injected inbox message from ${senderLabel} (node ${senderNodeId})`);
-      }
-
-      // All messages processed successfully — now clear the inbox
-      if (messages.length > 0) {
-        const clearResult = await runPilotctl(["inbox", "--clear"]).catch((err) => {
-          log?.warn?.(`Failed to clear inbox after processing: ${err}`);
-          return { ok: false, output: "" };
-        });
-
-        // Only clear the tracking set on successful clear
-        if (clearResult.ok) {
-          processedMessageHashes.clear();
-        }
-      }
-    }
+    log?.info?.(`Injected P2P message from ${fromHostname} (id: ${fromId})`);
   } catch (err) {
-    if (err instanceof SyntaxError) {
-      // Empty inbox or non-JSON — OK
-    } else {
-      log?.warn?.(`Poll inbox error: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    log?.error?.(`Failed to inject P2P message: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -706,9 +313,9 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
   meta: {
     id: "agent-registry",
     label: "Agent Registry",
-    selectionLabel: "Agent Registry (P2P)",
+    selectionLabel: "Agent Registry (P2P WebSocket)",
     docsPath: "/channels/agent-registry",
-    blurb: "Discover and communicate with AI agents via Pilot Protocol",
+    blurb: "Discover and communicate with AI agents via P2P WebSocket",
   },
 
   capabilities: {
@@ -725,44 +332,25 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
     deliveryMode: "direct",
 
     sendText: async (ctx) => {
-      // Try to resolve node_id from the cached hostname → node_id mapping
-      const targetNodeId = hostnameToNodeId.get(ctx.to);
-
-      if (targetNodeId !== undefined) {
-        // Use pilotctl send-message <node_id> --data <text> for known peers
-        const result = await runPilotctl(
-          ["send-message", String(targetNodeId), "--data", ctx.text],
-          15000,
-        );
-        if (!result.ok) {
-          return { ok: false, error: new Error(result.output ?? "Send failed") } as any;
-        }
-        return { ok: true, messageId: undefined } as any;
+      // Get P2PClient for this account
+      const p2pClient = p2pClients.get(ctx.accountId);
+      if (!p2pClient) {
+        return { ok: false, error: new Error("P2P client not available") } as any;
       }
 
-      // Fallback: try pilotctl send <hostname> <port> for hostname-based sends
-      try {
-        const account = agentRegistryConfigAdapter.resolveAccount(ctx.cfg, ctx.accountId);
-        const result = await sendMessage(
-          { to: ctx.to, body: ctx.text },
-          { pilotPort: account.config.pilotPort },
-        );
-
-        if (!result.ok) {
-          return { ok: false, error: new Error(result.error ?? "Send failed") } as any;
-        }
-
-        return { ok: true, messageId: result.messageId } as any;
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        return { ok: false, error: new Error(`Fallback send failed: ${errorMsg}`) } as any;
+      // Send via P2P WebSocket
+      const success = await p2pClient.sendMessage(ctx.to, ctx.text);
+      if (!success) {
+        return { ok: false, error: new Error("P2P send failed") } as any;
       }
+
+      return { ok: true, messageId: undefined } as any;
     },
   },
 
   gateway: {
     startAccount: async (ctx) => {
-      const { account, accountId, log, setStatus, getStatus, channelRuntime, abortSignal } = ctx;
+      const { account, accountId, log, setStatus, getStatus, channelRuntime, abortSignal, cfg } = ctx;
       const config = account.config;
 
       if (!config.enabled || !config.hostname) {
@@ -773,66 +361,63 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
       const registryUrl = config.registryUrl ?? "http://localhost:8001";
       const registryClient = new AgentRegistryClient(registryUrl, config.registryApiKey);
 
-      // Store context for refresh calls
+      // Store context for refresh calls and message injection
       registryClients.set(accountId, { client: registryClient });
-      accountContexts.set(accountId, { config, log, setStatus });
+      accountContexts.set(accountId, { config, log, setStatus, channelRuntime, cfg });
       heartbeatFailures.set(accountId, 0);
       registeredState.set(accountId, false);
 
-      // Rebuild hostname → nodeId cache from Convex handshakes
-      await rebuildHostnameCache(log);
+      // Get P2P port from env
+      const p2pPort = parseInt(process.env.P2P_PORT || "18790", 10);
+
+      // Create and start P2PServer
+      const p2pServer = new P2PServer({
+        port: p2pPort,
+        installationId: process.env.BUTLEY_INSTALLATION_ID || "unknown",
+        hostname: config.hostname,
+        registryUrl,
+        registryApiKey: config.registryApiKey,
+        onMessage: async (fromId: string, fromHostname: string, body: string) => {
+          // Inject message into session
+          await injectP2PMessage({
+            accountId,
+            fromId,
+            fromHostname,
+            body,
+            log,
+          });
+        },
+      });
+
+      try {
+        await p2pServer.startServer();
+        p2pServers.set(accountId, p2pServer);
+        log?.info?.(`P2PServer started on port ${p2pPort}`);
+      } catch (err) {
+        log?.error?.(`Failed to start P2PServer: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Create P2PClient for outbound connections
+      const p2pClient = new P2PClient({
+        installationId: process.env.BUTLEY_INSTALLATION_ID || "unknown",
+        hostname: config.hostname,
+        registryUrl,
+        connectionPool,
+      });
+
+      p2pClients.set(accountId, p2pClient);
+      log?.info?.("P2PClient created");
 
       // Check Convex for networkDiscoverable — only register if public
       const networkMeta = await fetchNetworkMetadata();
       if (networkMeta?.networkDiscoverable) {
-        await registerAgent(accountId, config, registryClient, networkMeta, log);
+        await registerAgent(accountId, config, registryClient, networkMeta, p2pPort, log);
       } else {
         log?.info?.("Workspace is not public — standing by (waiting for refresh signal)");
       }
 
       // Mark channel as started (even if not registered — channel is alive and ready for refresh)
       setStatus({ connected: true, running: true });
-
-      // Start poll loop for pending handshakes and inbox messages
-      const pollIntervalMs = (config.pollIntervalSeconds ?? 15) * 1000;
-      const pilotAvailable = await isPilotInstalled();
-      if (pilotAvailable && channelRuntime) {
-        // Use initial config — poll interval is static and doesn't need dynamic reload
-        const getCfg = () => ctx.cfg;
-
-        // Run first poll immediately
-        executePollCycle({
-          accountId,
-          config,
-          channelRuntime,
-          cfg: getCfg(),
-          log,
-        }).catch((err) => {
-          log?.warn?.(`Initial poll cycle error: ${err instanceof Error ? err.message : String(err)}`);
-        });
-
-        // Schedule recurring polls
-        const interval = setInterval(async () => {
-          try {
-            await executePollCycle({
-              accountId,
-              config,
-              channelRuntime,
-              cfg: getCfg(),
-              log,
-            });
-          } catch (err) {
-            log?.warn?.(`Poll cycle error: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        }, pollIntervalMs);
-        if (interval.unref) interval.unref();
-        pollIntervals.set(accountId, interval);
-
-        log?.info?.(`Poll loop started (interval: ${config.pollIntervalSeconds ?? 15}s)`);
-      } else {
-        if (!pilotAvailable) log?.info?.("Pilot Protocol not available — poll loop disabled");
-        if (!channelRuntime) log?.info?.("channelRuntime not available — poll loop disabled");
-      }
 
       // Keep the channel alive — gateway restarts if startAccount resolves.
       await new Promise<void>((resolve) => {
@@ -847,14 +432,6 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
     stopAccount: async (ctx) => {
       const { accountId, log } = ctx;
 
-      // Stop poll loop
-      const pollInterval = pollIntervals.get(accountId);
-      if (pollInterval) {
-        clearInterval(pollInterval);
-        pollIntervals.delete(accountId);
-        log?.info?.("Poll loop stopped");
-      }
-
       await deregisterAgent(accountId, log);
       registryClients.delete(accountId);
       accountContexts.delete(accountId);
@@ -863,21 +440,20 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
 
   gatewayMethods: [
     "agent-registry/status",
-    "agent-registry/peers",
     "agent-registry/search",
-    "agent-registry/send",
     "agent-registry/refresh",
   ],
 
   status: {
     buildAccountSnapshot: async ({ account, runtime }) => {
-      const daemonStatus = await getDaemonStatus();
+      const server = p2pServers.get(account.accountId);
       return {
         accountId: account.accountId,
         enabled: account.config.enabled,
         configured: !!account.config.hostname,
-        connected: daemonStatus.running,
-        running: activeMonitors.has(account.accountId),
+        connected: !!server,
+        running: registeredState.get(account.accountId) === true,
+        p2p_port: parseInt(process.env.P2P_PORT || "18790", 10),
         ...runtime,
       };
     },
@@ -892,13 +468,6 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
       if (!account.config.hostname) {
         return { ok: false, reason: "Agent Registry hostname not configured" };
       }
-      // Only require Pilot daemon if P2P messaging is enabled (pilotPort configured)
-      if (account.config.pilotPort) {
-        const daemonStatus = await getDaemonStatus();
-        if (!daemonStatus.running) {
-          return { ok: false, reason: "Pilot daemon is not running" };
-        }
-      }
       return { ok: true, reason: "Agent Registry is ready" };
     },
   },
@@ -911,7 +480,7 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
 const plugin = {
   id: "agent-registry",
   name: "Agent Registry",
-  description: "P2P agent-to-agent communication via Pilot Protocol",
+  description: "P2P agent-to-agent communication via WebSocket",
   configSchema: emptyPluginConfigSchema(),
   register(api: OpenClawPluginApi) {
     api.registerChannel({ plugin: agentRegistryPlugin });
@@ -924,28 +493,19 @@ const plugin = {
 
     // Register gateway HTTP method handlers
     if (api.registerGatewayMethod) {
-      // GET /api/agent-registry/status — daemon status + registry info
+      // GET /api/agent-registry/status — P2P status + registry info
       api.registerGatewayMethod("agent-registry/status", async ({ respond }) => {
-        const daemonStatus = await getDaemonStatus();
-        respond(true, {
-          daemon: daemonStatus,
-          monitors: Array.from(activeMonitors.keys()),
-        });
-      });
-
-      // GET /api/agent-registry/peers — list known peers from registry
-      api.registerGatewayMethod("agent-registry/peers", async ({ params, respond }) => {
-        const registryUrl = (params?.registryUrl as string) ?? "http://localhost:8001";
-        // Reuse stored client if available, otherwise create ad-hoc
-        const storedEntry = Array.from(registryClients.values()).find(
-          (e) => e.client["baseUrl"] === registryUrl.replace(/\/+$/, ""),
-        );
-        const client = storedEntry?.client ?? new AgentRegistryClient(registryUrl);
-        const result = await client.listAgents();
-        respond(result.ok, {
-          peers: result.peers,
-          error: result.error,
-        });
+        const statuses: Record<string, any> = {};
+        for (const [accountId, server] of p2pServers) {
+          const connections = server.getConnections?.();
+          statuses[accountId] = {
+            p2p_running: true,
+            connections: connections?.length ?? 0,
+            p2p_port: parseInt(process.env.P2P_PORT || "18790", 10),
+            registered: registeredState.get(accountId) ?? false,
+          };
+        }
+        respond(true, { accounts: statuses });
       });
 
       // GET /api/agent-registry/search — search for agents by query or capabilities
@@ -993,25 +553,6 @@ const plugin = {
           }
           respond(true, { accounts: results });
         }
-      });
-
-      // POST /api/agent-registry/send — manually send a message to a peer
-      api.registerGatewayMethod("agent-registry/send", async ({ params, respond }) => {
-        const to = params?.to as string | undefined;
-        const body = params?.body as string | undefined;
-        const metadata = params?.metadata as Record<string, unknown> | undefined;
-        const pilotPort = params?.pilotPort as number | undefined;
-
-        if (!to || !body) {
-          respond(false, undefined, { code: "BAD_REQUEST", message: "Missing required fields: to, body" });
-          return;
-        }
-
-        const result = await sendMessage(
-          { to, body, metadata },
-          { pilotPort },
-        );
-        respond(result.ok, result, result.ok ? undefined : { code: "SEND_FAILED", message: result.error ?? "Send failed" });
       });
     }
   },
