@@ -239,37 +239,42 @@ function parseNodeIdFromPilotAddress(address: string): number | undefined {
 
 /**
  * Resolve a sender label (hostname) from a node_id.
- * Priority: Convex handshake record → pilotctl peer list → fallback to node-<id>.
+ * Priority: from_hostname (if real hostname) → Agent Registry API → Convex handshake → fallback.
  */
-async function resolveHostnameForNode(nodeId: number, fromHostname?: string, log?: any): Promise<string> {
+async function resolveHostnameForNode(nodeId: number, fromHostname?: string, config?: AgentNetworkConfig, log?: any): Promise<string> {
   // If from_hostname looks like a real hostname (not a Pilot address), use it directly
   if (fromHostname && !fromHostname.match(/^\d+:[0-9a-fA-F.]+$/)) {
     return fromHostname;
   }
 
-  // Try Convex handshake record first
+  // Try Agent Registry API — search by pilot_node_id
+  if (config?.registryUrl) {
+    try {
+      const url = new URL("/api/v1/agents/", config.registryUrl);
+      url.searchParams.set("pilot_node_id", String(nodeId));
+      const response = await fetch(url.toString(), {
+        headers: config.registryApiKey ? { "X-Registry-Key": config.registryApiKey } : {},
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const agents = data.agents ?? [];
+        if (agents.length > 0 && agents[0].hostname) {
+          return agents[0].hostname;
+        }
+      }
+    } catch {
+      // Registry lookup failed
+    }
+  }
+
+  // Try Convex handshake record
   try {
     const hsResult = await getHandshakeByNodeId({ fromNodeId: nodeId });
     if (hsResult.ok && hsResult.handshake?.fromHostname) {
       return hsResult.handshake.fromHostname;
     }
   } catch {
-    // Convex lookup failed, try pilotctl
-  }
-
-  // Try pilotctl to get peer info
-  try {
-    const result = await runPilotctl(["peers", "--json"]);
-    if (result.ok && result.output) {
-      const data = JSON.parse(result.output);
-      const peers = data.data?.peers ?? data.peers ?? [];
-      const peer = peers.find((p: any) => p.node_id === nodeId);
-      if (peer?.hostname) {
-        return peer.hostname;
-      }
-    }
-  } catch {
-    // peers lookup failed
+    // Convex lookup failed
   }
 
   log?.debug?.(`Could not resolve hostname for node ${nodeId}, using fallback`);
@@ -447,11 +452,18 @@ async function executePollCycle(params: {
       const messages: InboxMessage[] = data.data?.messages ?? data.messages ?? [];
 
       for (const msg of messages) {
-        const senderNodeId = msg.from;
+        const senderAddress = msg.from; // Pilot address like "0:0000.0000.37D8"
         const messageBody = msg.data || "";
 
+        // Parse the Pilot address to extract numeric node_id
+        const senderNodeId = parseNodeIdFromPilotAddress(senderAddress);
+        if (senderNodeId === undefined) {
+          log?.warn?.(`Could not parse node_id from address ${senderAddress}, skipping message`);
+          continue;
+        }
+
         // Resolve actual hostname (not Pilot address) for session routing
-        const senderLabel = await resolveHostnameForNode(senderNodeId, msg.from_hostname, log);
+        const senderLabel = await resolveHostnameForNode(senderNodeId, msg.from_hostname, config, log);
 
         // Cache hostname → node_id mapping for outbound replies
         hostnameToNodeId.set(senderLabel, senderNodeId);
