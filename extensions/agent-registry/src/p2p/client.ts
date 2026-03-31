@@ -74,8 +74,8 @@ export class P2PClient {
       };
 
       ws.send(JSON.stringify(msg));
-      logger.debug(
-        `Message sent to ${installation_id}: ${body.substring(0, 50)}`
+      logger.info(
+        `[msg] → to=${installation_id} len=${body.length} preview="${body.substring(0, 50)}${body.length > 50 ? "..." : ""}"`
       );
       return true;
     } catch (error) {
@@ -109,7 +109,7 @@ export class P2PClient {
       throw new Error(`Could not find P2P endpoint for ${installation_id}`);
     }
 
-    logger.debug(`Connecting to ${installation_id} at ${endpoint}`);
+    logger.info(`[conn] Connecting to ${installation_id} at ${endpoint}`);
 
     // Dynamic import to avoid ws circular dependency at module load
     const ws_module = await import("ws");
@@ -151,12 +151,12 @@ export class P2PClient {
             if (authTimeout) clearTimeout(authTimeout);
             authCompleted = true;
             this.reconnectAttempts.delete(installation_id);
-            logger.info(`Authenticated to ${installation_id}`);
+            logger.info(`[auth] ✓ Authenticated to ${installation_id}`);
             resolve(ws);
           } else if (msg.type === "auth_fail") {
             if (authTimeout) clearTimeout(authTimeout);
             logger.error(
-              `Auth failed for ${installation_id}: ${(msg as any).reason}`
+              `[auth] ✗ Auth failed for ${installation_id}: ${(msg as any).reason}`
             );
             ws.close(1008, "Auth failed");
             reject(new Error(`Auth failed: ${(msg as any).reason}`));

@@ -89,11 +89,13 @@ export class P2PServer {
       try {
         this.wss = new WebSocketServer({ port: this.config.port });
 
-        this.wss.on("connection", async (ws: any) => {
+        this.wss.on("connection", async (ws: any, req: any) => {
+          const remoteAddr = req.socket?.remoteAddress || "unknown";
+          logger.info(`[conn] New P2P connection from ${remoteAddr}`);
           try {
-            await this.handleNewConnection(ws);
+            await this.handleNewConnection(ws, remoteAddr);
           } catch (error) {
-            logger.error(`Error handling new connection: ${error}`);
+            logger.error(`[conn] Error handling connection from ${remoteAddr}: ${error}`);
             ws.close(1011, "Internal server error");
           }
         });
@@ -183,8 +185,7 @@ export class P2PServer {
   /**
    * Handle new WebSocket connection
    */
-  private async handleNewConnection(ws: any): Promise<void> {
-    logger.debug("New P2P connection");
+  private async handleNewConnection(ws: any, remoteAddr: string = "unknown"): Promise<void> {
 
     // Set up message listener (before auth)
     ws.on("message", (data: any) => {
@@ -195,13 +196,14 @@ export class P2PServer {
       }
     });
 
-    ws.on("close", () => {
+    ws.on("close", (code: number, reason: string) => {
       const peer = this.peers.get(ws);
       if (peer) {
-        logger.info(`Peer disconnected: ${peer.installation_id}`);
+        logger.info(`[conn] Peer disconnected: ${peer.installation_id} (${peer.hostname}) code=${code} reason=${reason || "none"}`);
         this.peers.delete(ws);
+      } else {
+        logger.debug(`[conn] Unauthenticated connection closed from ${remoteAddr} code=${code}`);
       }
-      this.connectionPool.registerInbound(peer?.installation_id || "unknown", ws);
     });
 
     ws.on("error", (error: any) => {
@@ -249,7 +251,7 @@ export class P2PServer {
         );
 
         if (blocked) {
-          logger.warn(`Blocked peer attempted connection: ${authReq.installation_id}`);
+          logger.warn(`[auth] ✗ Blocked peer attempted connection: ${authReq.installation_id}`);
           const fail: AuthFail = {
             type: "auth_fail",
             authenticated: false,
@@ -284,14 +286,14 @@ export class P2PServer {
 
         ws.send(JSON.stringify(ok));
         logger.info(
-          `Peer authenticated: ${authReq.installation_id} (session ${peer.session_id})`
+          `[auth] ✓ Peer authenticated: ${authReq.installation_id} (session ${peer.session_id}) clients=${this.peers.size}`
         );
         return;
       }
 
       // All other messages require auth
       if (!peer) {
-        logger.warn(`Unauthenticated message received, closing connection`);
+        logger.warn(`[auth] ✗ Unauthenticated message received, closing connection`);
         ws.close(1008, "Not authenticated");
         return;
       }
@@ -318,10 +320,12 @@ export class P2PServer {
 
         if (!trusted) {
           logger.warn(
-            `Message from untrusted peer: ${peer.installation_id}, ignoring`
+            `[msg] ✗ Message from untrusted peer: ${peer.installation_id}, ignoring`
           );
           return;
         }
+
+        logger.info(`[msg] ← from=${peer.installation_id} (${peer.hostname}) len=${inbound.body.length} preview="${inbound.body.substring(0, 50)}${inbound.body.length > 50 ? "..." : ""}"`);
 
         // Deliver to session
         if (this.config.onMessage) {
@@ -330,9 +334,8 @@ export class P2PServer {
             peer.hostname,
             inbound.body
           );
+          logger.debug(`[msg] Delivered to session handler`);
         }
-
-        logger.debug(`Message from ${peer.installation_id}: ${inbound.body.substring(0, 50)}`);
       }
     } catch (error) {
       logger.error(`Error processing message: ${error}`);
