@@ -27,6 +27,9 @@ import { spawn } from "node:child_process";
 /** Active monitor handle per account, keyed by accountId. */
 const activeMonitors = new Map<string, MonitorHandle>();
 
+/** Hostname → node_id mapping for outbound delivery. */
+const hostnameToNodeId = new Map<string, number>();
+
 /** Heartbeat intervals per account. */
 const heartbeatIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
@@ -215,6 +218,65 @@ async function handleRefresh(accountId: string): Promise<{ action: string; disco
 }
 
 /* ------------------------------------------------------------------ */
+/*  Pilot address helpers                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Parse a Pilot address like "0:0000.0000.37D8" to extract the node_id.
+ * The last hex group (after the last dot) contains the node_id.
+ * Returns undefined if the format doesn't match.
+ */
+function parseNodeIdFromPilotAddress(address: string): number | undefined {
+  // Format: "<network>:<group1>.<group2>.<node_hex>"
+  // e.g. "0:0000.0000.37D8" → node_id = 0x37D8 = 14296
+  const match = address.match(/^\d+:([0-9a-fA-F]{4})\.([0-9a-fA-F]{4})\.([0-9a-fA-F]{4})$/);
+  if (!match) return undefined;
+  // Full node address = concatenation of all 3 groups
+  const fullHex = match[1] + match[2] + match[3];
+  const nodeId = parseInt(fullHex, 16);
+  return isNaN(nodeId) ? undefined : nodeId;
+}
+
+/**
+ * Resolve a sender label (hostname) from a node_id.
+ * Priority: Convex handshake record → pilotctl peer list → fallback to node-<id>.
+ */
+async function resolveHostnameForNode(nodeId: number, fromHostname?: string, log?: any): Promise<string> {
+  // If from_hostname looks like a real hostname (not a Pilot address), use it directly
+  if (fromHostname && !fromHostname.match(/^\d+:[0-9a-fA-F.]+$/)) {
+    return fromHostname;
+  }
+
+  // Try Convex handshake record first
+  try {
+    const hsResult = await getHandshakeByNodeId({ fromNodeId: nodeId });
+    if (hsResult.ok && hsResult.handshake?.fromHostname) {
+      return hsResult.handshake.fromHostname;
+    }
+  } catch {
+    // Convex lookup failed, try pilotctl
+  }
+
+  // Try pilotctl to get peer info
+  try {
+    const result = await runPilotctl(["peers", "--json"]);
+    if (result.ok && result.output) {
+      const data = JSON.parse(result.output);
+      const peers = data.data?.peers ?? data.peers ?? [];
+      const peer = peers.find((p: any) => p.node_id === nodeId);
+      if (peer?.hostname) {
+        return peer.hostname;
+      }
+    }
+  } catch {
+    // peers lookup failed
+  }
+
+  log?.debug?.(`Could not resolve hostname for node ${nodeId}, using fallback`);
+  return `node-${nodeId}`;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Poll loop — pending handshakes + inbox messages                    */
 /* ------------------------------------------------------------------ */
 
@@ -386,8 +448,13 @@ async function executePollCycle(params: {
 
       for (const msg of messages) {
         const senderNodeId = msg.from;
-        const senderLabel = msg.from_hostname || `node-${senderNodeId}`;
         const messageBody = msg.data || "";
+
+        // Resolve actual hostname (not Pilot address) for session routing
+        const senderLabel = await resolveHostnameForNode(senderNodeId, msg.from_hostname, log);
+
+        // Cache hostname → node_id mapping for outbound replies
+        hostnameToNodeId.set(senderLabel, senderNodeId);
 
         // Single Convex lookup for handshake data (reused for first-message check and intro text)
         let isFirstMessage = false;
@@ -544,6 +611,22 @@ export const agentRegistryPlugin: ChannelPlugin<ResolvedAgentRegistryAccount> = 
     deliveryMode: "direct",
 
     sendText: async (ctx) => {
+      // Try to resolve node_id from the cached hostname → node_id mapping
+      const targetNodeId = hostnameToNodeId.get(ctx.to);
+
+      if (targetNodeId !== undefined) {
+        // Use pilotctl send-message <node_id> --data <text> for known peers
+        const result = await runPilotctl(
+          ["send-message", String(targetNodeId), "--data", ctx.text],
+          15000,
+        );
+        if (!result.ok) {
+          return { ok: false, error: new Error(result.output ?? "Send failed") } as any;
+        }
+        return { ok: true, messageId: undefined } as any;
+      }
+
+      // Fallback: try pilotctl send <hostname> <port> for hostname-based sends
       const account = agentRegistryConfigAdapter.resolveAccount(ctx.cfg, ctx.accountId);
       const result = await sendMessage(
         { to: ctx.to, body: ctx.text },
