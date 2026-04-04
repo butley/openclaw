@@ -51,6 +51,18 @@ def write_json_if_changed(path, original, updated):
     return False
 
 
+def is_valid_auth_profile(profile):
+    if not isinstance(profile, dict):
+        return False
+    provider = str(profile.get("provider", "")).strip()
+    if not provider:
+        return False
+    # Persist only real auth profiles (mode/type present), drop placeholders/partial entries.
+    has_mode = isinstance(profile.get("mode"), str) and profile.get("mode").strip()
+    has_type = isinstance(profile.get("type"), str) and profile.get("type").strip()
+    return bool(has_mode or has_type)
+
+
 config = load_json_file(config_path)
 if not isinstance(config, dict):
     print(f"[entrypoint] Warning: {config_path} is missing or malformed; skipping config patching")
@@ -185,21 +197,24 @@ else:
     profiles = auth_profiles.get("profiles")
 
     # Preferred auth-profiles format: profiles is an object map {id: profile}
+    kept_profile_ids = set()
+
     if isinstance(profiles, dict):
         cleaned_profiles = {}
         removed = 0
         for profile_id, profile in profiles.items():
             if not isinstance(profile, dict):
-                cleaned_profiles[profile_id] = profile
+                removed += 1
                 continue
             provider = str(profile.get("provider", "")).strip().lower()
-            if provider == "anthropic":
+            if provider == "anthropic" or not is_valid_auth_profile(profile):
                 removed += 1
                 continue
             cleaned_profiles[profile_id] = profile
+            kept_profile_ids.add(profile_id)
         auth_profiles["profiles"] = cleaned_profiles
         if removed:
-            print(f"[entrypoint] Removed {removed} anthropic auth profile(s)")
+            print(f"[entrypoint] Removed {removed} invalid/anthropic auth profile(s)")
 
     # Backward compatibility: if profiles is a list, normalize to the expected object map.
     elif isinstance(profiles, list):
@@ -207,28 +222,42 @@ else:
         removed = 0
         for i, profile in enumerate(profiles):
             if not isinstance(profile, dict):
+                removed += 1
                 continue
             provider = str(profile.get("provider", "")).strip().lower()
-            if provider == "anthropic":
+            if provider == "anthropic" or not is_valid_auth_profile(profile):
                 removed += 1
                 continue
             profile_id = profile.get("id")
             if not isinstance(profile_id, str) or not profile_id.strip():
                 profile_id = f"migrated:{provider or 'unknown'}:{i}"
             cleaned_profiles[profile_id] = profile
+            kept_profile_ids.add(profile_id)
         auth_profiles["profiles"] = cleaned_profiles
         print("[entrypoint] Normalized auth profiles list to object map")
         if removed:
-            print(f"[entrypoint] Removed {removed} anthropic auth profile(s)")
+            print(f"[entrypoint] Removed {removed} invalid/anthropic auth profile(s)")
 
     last_good = auth_profiles.get("lastGood")
-    if isinstance(last_good, dict) and "anthropic" in last_good:
-        last_good.pop("anthropic", None)
+    if isinstance(last_good, dict):
+        if "anthropic" in last_good:
+            last_good.pop("anthropic", None)
+            print("[entrypoint] Removed lastGood.anthropic")
+        # Remove stale pointers to removed profile ids.
+        for provider_name, profile_id in list(last_good.items()):
+            if isinstance(profile_id, str) and profile_id and profile_id not in kept_profile_ids:
+                last_good.pop(provider_name, None)
         auth_profiles["lastGood"] = last_good
-        print("[entrypoint] Removed lastGood.anthropic")
+
+    usage_stats = auth_profiles.get("usageStats")
+    if isinstance(usage_stats, dict):
+        auth_profiles["usageStats"] = {
+            k: v for k, v in usage_stats.items()
+            if isinstance(k, str) and k in kept_profile_ids
+        }
 
     if write_json_if_changed(auth_profiles_path, original_auth_profiles, auth_profiles):
-        print("[entrypoint] Migrated auth-profiles.json (anthropic entries removed)")
+        print("[entrypoint] Migrated auth-profiles.json (invalid/anthropic entries removed)")
 PYEOF
 fi
 
