@@ -28,8 +28,7 @@ auth_profiles_path = "/root/.openclaw/agents/main/agent/auth-profiles.json"
 
 OPENAI_PRIMARY = "openai/gpt-5.4"
 OPENAI_FALLBACKS = [
-    "openai/gpt-5.2",
-    "openai/gpt-5-mini",
+    "openai/gpt-5.4-mini",
 ]
 
 
