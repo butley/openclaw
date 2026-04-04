@@ -201,20 +201,23 @@ else:
         if removed:
             print(f"[entrypoint] Removed {removed} anthropic auth profile(s)")
 
-    # Backward compatibility: if profiles is a list, sanitize list entries without reshaping.
+    # Backward compatibility: if profiles is a list, normalize to the expected object map.
     elif isinstance(profiles, list):
-        filtered_profiles = []
+        cleaned_profiles = {}
         removed = 0
-        for profile in profiles:
+        for i, profile in enumerate(profiles):
             if not isinstance(profile, dict):
-                filtered_profiles.append(profile)
                 continue
             provider = str(profile.get("provider", "")).strip().lower()
             if provider == "anthropic":
                 removed += 1
                 continue
-            filtered_profiles.append(profile)
-        auth_profiles["profiles"] = filtered_profiles
+            profile_id = profile.get("id")
+            if not isinstance(profile_id, str) or not profile_id.strip():
+                profile_id = f"migrated:{provider or 'unknown'}:{i}"
+            cleaned_profiles[profile_id] = profile
+        auth_profiles["profiles"] = cleaned_profiles
+        print("[entrypoint] Normalized auth profiles list to object map")
         if removed:
             print(f"[entrypoint] Removed {removed} anthropic auth profile(s)")
 
