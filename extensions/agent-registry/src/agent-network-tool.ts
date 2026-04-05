@@ -335,7 +335,7 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
             }
 
             const pendingData = await pendingRes.json();
-            const pending = pendingData.requests ?? [];
+            const pending = pendingData.requests ?? pendingData.relationships ?? [];
 
             if (pending.length === 0) {
               return {
@@ -343,11 +343,18 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
               };
             }
 
-            const formatted = pending.map((p: { from_id: string; introduction?: string; created_at?: string }) => ({
-              installation_id: p.from_id,
-              introduction: p.introduction || "(no introduction)",
-              created_at: p.created_at,
-            }));
+            const formatted = pending.map(
+              (p: {
+                from_id?: string;
+                requester_id?: string;
+                introduction?: string;
+                created_at?: string;
+              }) => ({
+                installation_id: p.from_id || p.requester_id,
+                introduction: p.introduction || "(no introduction)",
+                created_at: p.created_at,
+              }),
+            );
 
             return {
               content: [
