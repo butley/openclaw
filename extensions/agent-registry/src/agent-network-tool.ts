@@ -35,14 +35,14 @@ const ACTIONS = {
     optionalArgs: [] as string[],
   },
   pending: {
-    description: "List pending handshake requests from other assistants (via Registry API)",
+    description: "List pending handshake requests from other assistants (via Registry API), prioritizing assistant/human names instead of raw installation IDs",
     requiredArgs: [] as string[],
     optionalArgs: [] as string[],
   },
   approve: {
     description: "Approve a pending handshake request",
-    requiredArgs: ["installation_id"],
-    optionalArgs: [] as string[],
+    requiredArgs: [] as string[],
+    optionalArgs: ["installation_id", "assistant_name"],
   },
   reject: {
     description: "Reject a pending handshake request",
@@ -106,7 +106,10 @@ List incoming handshake requests waiting for your approval. Use this to see who 
 
 ### approve
 Approve a pending handshake request.
-- installation_id (string, required): The installation_id from the pending list
+- installation_id (string, optional): The installation_id from pending data
+- assistant_name (string, optional): Friendly assistant name shown in pending list
+
+If both are provided, installation_id takes precedence.
 
 ### reject
 Reject a pending handshake request.
@@ -149,6 +152,10 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
           type: "string" as const,
           description: "Target assistant's installation_id (for handshake/approve/reject/untrust/contact — from search results)",
         },
+        assistant_name: {
+          type: "string" as const,
+          description: "Friendly assistant name (for approve action, avoids exposing installation_id to end users)",
+        },
         introduction: {
           type: "string" as const,
           description: "Introduction message for handshake (e.g., 'Hi, I'm X, assistant of Y')",
@@ -169,11 +176,34 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
         limit?: number;
         hostname?: string;
         installation_id?: string;
+        assistant_name?: string;
         introduction?: string;
         message?: string;
       },
     ) {
-      const { action, query, capabilities, limit, hostname, installation_id, introduction, message } = params;
+      const { action, query, capabilities, limit, hostname, installation_id, assistant_name, introduction, message } = params;
+
+      const inferHumanName = (intro?: string): string | null => {
+        if (!intro) return null;
+        const m = intro.match(/assistente\s+do\s+([A-Za-zÀ-ÖØ-öø-ÿ'\-\s]{2,40})/i)
+          || intro.match(/assistant\s+for\s+([A-Za-zÀ-ÖØ-öø-ÿ'\-\s]{2,40})/i);
+        return m?.[1]?.trim() || null;
+      };
+
+      const getAssistantNameByInstallationId = async (iid: string): Promise<string | null> => {
+        try {
+          const u = new URL(`${config.registryUrl}/api/v1/agents/`);
+          u.searchParams.set("installation_id", iid);
+          u.searchParams.set("limit", "1");
+          const r = await fetch(u.toString(), { headers });
+          if (!r.ok) return null;
+          const j = await r.json() as { agents?: Array<{ display_name?: string; hostname?: string }> };
+          const a = j.agents?.[0];
+          return a?.display_name || a?.hostname || null;
+        } catch {
+          return null;
+        }
+      };
 
       const actionDef = ACTIONS[action as keyof typeof ACTIONS];
       if (!actionDef) {
@@ -343,32 +373,64 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
               };
             }
 
-            const formatted = pending.map(
-              (p: {
+            const formatted = await Promise.all(
+              pending.map(async (p: {
                 from_id?: string;
                 requester_id?: string;
                 introduction?: string;
                 created_at?: string;
+                from_assistant_name?: string;
+                from_human_name?: string;
               }) => ({
-                installation_id: p.from_id || p.requester_id,
+                assistant_name:
+                  p.from_assistant_name
+                  || (await getAssistantNameByInstallationId(p.from_id || p.requester_id || ""))
+                  || "Assistente desconhecido",
+                human_name: p.from_human_name || inferHumanName(p.introduction) || "Humano não informado",
                 introduction: p.introduction || "(no introduction)",
                 created_at: p.created_at,
-              }),
+                resolver_key: p.from_id || p.requester_id,
+              })),
             );
 
             return {
               content: [
                 {
                   type: "text",
-                  text: `Pending handshake requests:\n\n${JSON.stringify(formatted, null, 2)}\n\nUse 'approve' with the installation_id to accept a request.`,
+                  text: `Pending handshake requests:\n\n${JSON.stringify(formatted, null, 2)}\n\nPrefer approving by assistant_name (friendlier). If needed, use resolver_key internally.`,
                 },
               ],
             };
           }
 
           case "approve": {
-            if (!installation_id) {
-              return { content: [{ type: "text", text: "installation_id is required for approve action" }] };
+            let targetInstallationId = installation_id;
+
+            if (!targetInstallationId && assistant_name) {
+              const convexEnv = getConvexEnv();
+              const myInstallationId = convexEnv?.installationId || "unknown";
+              const pendingUrl = new URL(`${config.registryUrl}/api/v1/trust/pending/${encodeURIComponent(myInstallationId)}`);
+              const pendingRes = await fetch(pendingUrl.toString(), { headers });
+              if (pendingRes.ok) {
+                const pendingData = await pendingRes.json() as {
+                  requests?: Array<{ from_id?: string; requester_id?: string }>;
+                  relationships?: Array<{ from_id?: string; requester_id?: string }>;
+                };
+                const rows = pendingData.requests ?? pendingData.relationships ?? [];
+                for (const row of rows) {
+                  const iid = row.from_id || row.requester_id;
+                  if (!iid) continue;
+                  const resolvedName = await getAssistantNameByInstallationId(iid);
+                  if (resolvedName && resolvedName.toLowerCase() === assistant_name.toLowerCase()) {
+                    targetInstallationId = iid;
+                    break;
+                  }
+                }
+              }
+            }
+
+            if (!targetInstallationId) {
+              return { content: [{ type: "text", text: "For approve, provide installation_id or assistant_name." }] };
             }
 
             // Get our installation_id
@@ -381,7 +443,7 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
               method: "POST",
               headers,
               body: JSON.stringify({
-                from_id: installation_id,
+                from_id: targetInstallationId,
                 to_id: myInstallationId,
               }),
             });
@@ -400,7 +462,7 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
               content: [
                 {
                   type: "text",
-                  text: `Approved handshake from '${installation_id}'.\n\nYou can now exchange messages with this assistant via P2P.`,
+                  text: `Approved handshake from '${assistant_name || targetInstallationId}'.\n\nYou can now exchange messages with this assistant via P2P.`,
                 },
               ],
             };
