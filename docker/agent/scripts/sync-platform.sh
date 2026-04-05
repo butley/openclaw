@@ -81,7 +81,11 @@ config_changed = False
 
 # Load existing openclaw.json
 if os.path.isfile(config_path):
-    config = json.load(open(config_path))
+    try:
+        config = json.load(open(config_path))
+    except json.JSONDecodeError:
+        print(f'{log}  ⚠ openclaw.json is invalid JSON, treating as empty')
+        config = {}
 else:
     config = {}
 

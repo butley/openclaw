@@ -406,8 +406,14 @@ Skip followUps when:
       console.log('📭 All follow-ups filtered out (cooldown or invalid).');
     } else {
       // Output followUps as structured block for the cron agent to process
+      // Prefix each followUp message with marker
+      const prefixedFollowUps = validFollowUps.map(fu => ({
+        ...fu,
+        message: `[context follow-up] ${fu.message}`,
+      }));
+
       console.log('\n===FOLLOWUPS_START===');
-      console.log(JSON.stringify(validFollowUps, null, 2));
+      console.log(JSON.stringify(prefixedFollowUps, null, 2));
       console.log('===FOLLOWUPS_END===');
 
       // Update state for all valid followUps (agent will process them)

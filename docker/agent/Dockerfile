@@ -42,8 +42,10 @@ RUN OPENCLAW_A2UI_SKIP_MISSING=1 pnpm build || \
      node --import tsx scripts/write-cli-compat.ts) || \
     (test -f dist/entry.js && echo "Build partially succeeded, continuing...")
 
-# Copy butley-api extension to dist (custom fork extension, not built by tsdown)
-RUN cp -r extensions/butley-api dist/extensions/butley-api
+# Copy custom fork extensions to dist (not built by tsdown)
+# Use cp -rT to copy contents into existing directory without nesting
+RUN cp -rT extensions/butley-api dist/extensions/butley-api && \
+    cp -rT extensions/agent-registry dist/extensions/agent-registry
 
 # Build the Control UI
 ENV OPENCLAW_PREFER_PNPM=1
@@ -146,6 +148,9 @@ RUN curl -L "https://github.com/steipete/gogcli/releases/download/v${GOGCLI_VERS
 
 # Install Poetry (for agent skills that need Python)
 RUN pip3 install --break-system-packages poetry==1.8.4 || true
+
+# P2P WebSocket communication now uses native Node.js WebSocket (ws package)
+# No external Pilot Protocol daemon needed
 
 # Enable corepack for pnpm (needed if any pnpm commands are used at runtime)
 RUN npm install -g --force corepack@latest && corepack enable

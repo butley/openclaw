@@ -485,14 +485,21 @@ def provision_system_crons() -> None:
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode == 0 and result.stdout.strip():
-            data = json.loads(result.stdout)
+            # CLI may print config warnings before JSON — extract JSON portion only
+            raw_output = result.stdout.strip()
+            json_start = raw_output.find("{")
+            if json_start == -1:
+                json_start = raw_output.find("[")
+            if json_start != -1:
+                raw_output = raw_output[json_start:]
+            data = json.loads(raw_output)
             jobs = data if isinstance(data, list) else data.get("jobs", [])
             existing_names = {j.get("name", "") for j in jobs}
             log.info("  Found %d existing cron job(s): %s", len(jobs), existing_names or "(none)")
         else:
             log.warning("  cron list returned rc=%d — stderr: %s", result.returncode, result.stderr.strip()[:200])
-    except json.JSONDecodeError:
-        log.warning("  cron list output not valid JSON — will attempt creation anyway")
+    except json.JSONDecodeError as e:
+        log.warning("  cron list output not valid JSON (%s) — will attempt creation anyway", e)
     except Exception as exc:
         log.warning("  Could not list cron jobs: %s — will attempt creation anyway", exc)
 
