@@ -30,12 +30,14 @@ const ACTIONS = {
     optionalArgs: [] as string[],
   },
   handshake: {
-    description: "Establish trust with another assistant via Registry API (required before contact)",
-    requiredArgs: ["installation_id", "introduction"],
-    optionalArgs: [] as string[],
+    description:
+      "Establish trust with another assistant via Registry API (required before contact)",
+    requiredArgs: ["installation_id", "assistant_name"],
+    optionalArgs: ["human_name", "introduction"],
   },
   pending: {
-    description: "List pending handshake requests from other assistants (via Registry API), prioritizing assistant/human names instead of raw installation IDs",
+    description:
+      "List pending handshake requests from other assistants (via Registry API), prioritizing assistant/human names instead of raw installation IDs",
     requiredArgs: [] as string[],
     optionalArgs: [] as string[],
   },
@@ -55,14 +57,15 @@ const ACTIONS = {
     optionalArgs: [] as string[],
   },
   contact: {
-    description: "Send a message to another assistant via P2P WebSocket (requires handshake first). Use installation_id to identify target.",
+    description:
+      "Send a message to another assistant via P2P WebSocket (requires handshake first). Use installation_id to identify target.",
     requiredArgs: ["installation_id", "message"],
     optionalArgs: [] as string[],
   },
 };
 
 export function createAgentNetworkTool(api: OpenClawPluginApi) {
-  const config = (api.pluginConfig as unknown ?? {}) as AgentNetworkConfig;
+  const config = ((api.pluginConfig as unknown) ?? {}) as AgentNetworkConfig;
 
   const log = api.logger;
 
@@ -97,7 +100,9 @@ Get full details about a specific assistant.
 ### handshake
 Request to establish trust with another assistant via Registry API. Must be done before P2P contact.
 - installation_id (string, required): The assistant's installation_id (from search results)
-- introduction (string, required): A message introducing yourself (e.g., "Hi, I'm Junin, Guilherme's assistant")
+- assistant_name (string, required): Your assistant's name, stored with the request and shown in pending
+- human_name (string, optional): Your human/requester name, stored with the request and shown in pending
+- introduction (string, optional): Optional freeform introduction text
 
 Think of this like sending a friend request — you introduce yourself and wait for approval.
 
@@ -150,15 +155,21 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
         },
         installation_id: {
           type: "string" as const,
-          description: "Target assistant's installation_id (for handshake/approve/reject/untrust/contact — from search results)",
+          description:
+            "Target assistant's installation_id (for handshake/approve/reject/untrust/contact — from search results)",
         },
         assistant_name: {
           type: "string" as const,
-          description: "Friendly assistant name (for approve action, avoids exposing installation_id to end users)",
+          description:
+            "Friendly assistant name (required for handshake, optional for approve to avoid exposing installation_id)",
+        },
+        human_name: {
+          type: "string" as const,
+          description: "Optional human/requester name attached to a handshake request",
         },
         introduction: {
           type: "string" as const,
-          description: "Introduction message for handshake (e.g., 'Hi, I'm X, assistant of Y')",
+          description: "Optional introduction message for handshake",
         },
         message: {
           type: "string" as const,
@@ -177,18 +188,23 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
         hostname?: string;
         installation_id?: string;
         assistant_name?: string;
+        human_name?: string;
         introduction?: string;
         message?: string;
       },
     ) {
-      const { action, query, capabilities, limit, hostname, installation_id, assistant_name, introduction, message } = params;
-
-      const inferHumanName = (intro?: string): string | null => {
-        if (!intro) return null;
-        const m = intro.match(/assistente\s+do\s+([A-Za-zÀ-ÖØ-öø-ÿ'\-\s]{2,40})/i)
-          || intro.match(/assistant\s+for\s+([A-Za-zÀ-ÖØ-öø-ÿ'\-\s]{2,40})/i);
-        return m?.[1]?.trim() || null;
-      };
+      const {
+        action,
+        query,
+        capabilities,
+        limit,
+        hostname,
+        installation_id,
+        assistant_name,
+        human_name,
+        introduction,
+        message,
+      } = params;
 
       const getAssistantNameByInstallationId = async (iid: string): Promise<string | null> => {
         try {
@@ -197,7 +213,9 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
           u.searchParams.set("limit", "1");
           const r = await fetch(u.toString(), { headers });
           if (!r.ok) return null;
-          const j = await r.json() as { agents?: Array<{ display_name?: string; hostname?: string }> };
+          const j = (await r.json()) as {
+            agents?: Array<{ display_name?: string; hostname?: string }>;
+          };
           const a = j.agents?.[0];
           return a?.display_name || a?.hostname || null;
         } catch {
@@ -250,12 +268,18 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
             const data = await res.json();
 
             if (!res.ok) {
-              return { content: [{ type: "text", text: `Registry error: ${data.detail || res.statusText}` }] };
+              return {
+                content: [
+                  { type: "text", text: `Registry error: ${data.detail || res.statusText}` },
+                ],
+              };
             }
 
             const agents = (data.agents ?? []) as SearchResult[];
             if (agents.length === 0) {
-              return { content: [{ type: "text", text: "No assistants found matching your criteria." }] };
+              return {
+                content: [{ type: "text", text: "No assistants found matching your criteria." }],
+              };
             }
 
             const formatted = agents.map((a) => ({
@@ -271,18 +295,28 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
 
           case "get_agent": {
             // Use exact hostname endpoint for precise lookup
-            const url = new URL(`${config.registryUrl}/api/v1/agents/by-hostname/${encodeURIComponent(hostname!)}`);
+            const url = new URL(
+              `${config.registryUrl}/api/v1/agents/by-hostname/${encodeURIComponent(hostname!)}`,
+            );
 
             const res = await fetch(url.toString(), { headers });
 
             if (res.status === 404) {
-              return { content: [{ type: "text", text: `Assistant '${hostname}' not found or not online.` }] };
+              return {
+                content: [
+                  { type: "text", text: `Assistant '${hostname}' not found or not online.` },
+                ],
+              };
             }
 
             const data = await res.json();
 
             if (!res.ok) {
-              return { content: [{ type: "text", text: `Registry error: ${data.detail || res.statusText}` }] };
+              return {
+                content: [
+                  { type: "text", text: `Registry error: ${data.detail || res.statusText}` },
+                ],
+              };
             }
 
             const match = data as SearchResult;
@@ -312,8 +346,6 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
             // Get our installation_id to identify ourselves
             const convexEnv = getConvexEnv();
             const myInstallationId = convexEnv?.installationId || "unknown";
-            
-            const intro = introduction || "Agent network connection request";
 
             // POST /api/v1/trust/request on Registry API
             const trustUrl = new URL(`${config.registryUrl}/api/v1/trust/request`);
@@ -323,7 +355,9 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
               body: JSON.stringify({
                 from_id: myInstallationId,
                 to_id: installation_id,
-                introduction: intro,
+                assistant_name,
+                human_name,
+                introduction,
               }),
             });
 
@@ -354,13 +388,20 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
             // GET /api/v1/trust/pending/{installation_id} on Registry API
             const convexEnv = getConvexEnv();
             const myInstallationId = convexEnv?.installationId || "unknown";
-            
-            const pendingUrl = new URL(`${config.registryUrl}/api/v1/trust/pending/${encodeURIComponent(myInstallationId)}`);
+
+            const pendingUrl = new URL(
+              `${config.registryUrl}/api/v1/trust/pending/${encodeURIComponent(myInstallationId)}`,
+            );
             const pendingRes = await fetch(pendingUrl.toString(), { headers });
 
             if (!pendingRes.ok) {
               return {
-                content: [{ type: "text", text: `Failed to get pending requests: ${pendingRes.statusText}` }],
+                content: [
+                  {
+                    type: "text",
+                    text: `Failed to get pending requests: ${pendingRes.statusText}`,
+                  },
+                ],
               };
             }
 
@@ -374,23 +415,25 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
             }
 
             const formatted = await Promise.all(
-              pending.map(async (p: {
-                from_id?: string;
-                requester_id?: string;
-                introduction?: string;
-                created_at?: string;
-                from_assistant_name?: string;
-                from_human_name?: string;
-              }) => ({
-                assistant_name:
-                  p.from_assistant_name
-                  || (await getAssistantNameByInstallationId(p.from_id || p.requester_id || ""))
-                  || "Assistente desconhecido",
-                human_name: p.from_human_name || inferHumanName(p.introduction) || "Humano não informado",
-                introduction: p.introduction || "(no introduction)",
-                created_at: p.created_at,
-                resolver_key: p.from_id || p.requester_id,
-              })),
+              pending.map(
+                async (p: {
+                  from_id?: string;
+                  requester_id?: string;
+                  introduction?: string;
+                  created_at?: string;
+                  from_assistant_name?: string;
+                  from_human_name?: string;
+                }) => ({
+                  assistant_name:
+                    p.from_assistant_name ||
+                    (await getAssistantNameByInstallationId(p.from_id || p.requester_id || "")) ||
+                    "Assistente desconhecido",
+                  human_name: p.from_human_name || "Humano não informado",
+                  introduction: p.introduction || "(no introduction)",
+                  created_at: p.created_at,
+                  resolver_key: p.from_id || p.requester_id,
+                }),
+              ),
             );
 
             return {
@@ -409,18 +452,29 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
             if (!targetInstallationId && assistant_name) {
               const convexEnv = getConvexEnv();
               const myInstallationId = convexEnv?.installationId || "unknown";
-              const pendingUrl = new URL(`${config.registryUrl}/api/v1/trust/pending/${encodeURIComponent(myInstallationId)}`);
+              const pendingUrl = new URL(
+                `${config.registryUrl}/api/v1/trust/pending/${encodeURIComponent(myInstallationId)}`,
+              );
               const pendingRes = await fetch(pendingUrl.toString(), { headers });
               if (pendingRes.ok) {
-                const pendingData = await pendingRes.json() as {
-                  requests?: Array<{ from_id?: string; requester_id?: string }>;
-                  relationships?: Array<{ from_id?: string; requester_id?: string }>;
+                const pendingData = (await pendingRes.json()) as {
+                  requests?: Array<{
+                    from_id?: string;
+                    requester_id?: string;
+                    from_assistant_name?: string;
+                  }>;
+                  relationships?: Array<{
+                    from_id?: string;
+                    requester_id?: string;
+                    from_assistant_name?: string;
+                  }>;
                 };
                 const rows = pendingData.requests ?? pendingData.relationships ?? [];
                 for (const row of rows) {
                   const iid = row.from_id || row.requester_id;
                   if (!iid) continue;
-                  const resolvedName = await getAssistantNameByInstallationId(iid);
+                  const resolvedName =
+                    row.from_assistant_name || (await getAssistantNameByInstallationId(iid));
                   if (resolvedName && resolvedName.toLowerCase() === assistant_name.toLowerCase()) {
                     targetInstallationId = iid;
                     break;
@@ -430,13 +484,17 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
             }
 
             if (!targetInstallationId) {
-              return { content: [{ type: "text", text: "For approve, provide installation_id or assistant_name." }] };
+              return {
+                content: [
+                  { type: "text", text: "For approve, provide installation_id or assistant_name." },
+                ],
+              };
             }
 
             // Get our installation_id
             const convexEnv = getConvexEnv();
             const myInstallationId = convexEnv?.installationId || "unknown";
-            
+
             // POST /api/v1/trust/approve on Registry API
             const approveUrl = new URL(`${config.registryUrl}/api/v1/trust/approve`);
             const approveRes = await fetch(approveUrl.toString(), {
@@ -452,7 +510,12 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
 
             if (!approveRes.ok) {
               return {
-                content: [{ type: "text", text: `Failed to approve: ${approveData.detail || approveData.error || "Registry error"}` }],
+                content: [
+                  {
+                    type: "text",
+                    text: `Failed to approve: ${approveData.detail || approveData.error || "Registry error"}`,
+                  },
+                ],
               };
             }
 
@@ -470,13 +533,15 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
 
           case "reject": {
             if (!installation_id) {
-              return { content: [{ type: "text", text: "installation_id is required for reject action" }] };
+              return {
+                content: [{ type: "text", text: "installation_id is required for reject action" }],
+              };
             }
 
             // Get our installation_id
             const convexEnv = getConvexEnv();
             const myInstallationId = convexEnv?.installationId || "unknown";
-            
+
             // POST /api/v1/trust/reject on Registry API
             const rejectUrl = new URL(`${config.registryUrl}/api/v1/trust/reject`);
             const rejectRes = await fetch(rejectUrl.toString(), {
@@ -492,7 +557,12 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
 
             if (!rejectRes.ok) {
               return {
-                content: [{ type: "text", text: `Failed to reject: ${rejectData.detail || rejectData.error || "Registry error"}` }],
+                content: [
+                  {
+                    type: "text",
+                    text: `Failed to reject: ${rejectData.detail || rejectData.error || "Registry error"}`,
+                  },
+                ],
               };
             }
 
@@ -510,13 +580,15 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
 
           case "untrust": {
             if (!installation_id) {
-              return { content: [{ type: "text", text: "installation_id is required for untrust action" }] };
+              return {
+                content: [{ type: "text", text: "installation_id is required for untrust action" }],
+              };
             }
 
             // Get our installation_id
             const convexEnv = getConvexEnv();
             const myInstallationId = convexEnv?.installationId || "unknown";
-            
+
             // POST /api/v1/trust/block on Registry API
             const blockUrl = new URL(`${config.registryUrl}/api/v1/trust/block`);
             const blockRes = await fetch(blockUrl.toString(), {
@@ -532,7 +604,12 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
 
             if (!blockRes.ok) {
               return {
-                content: [{ type: "text", text: `Failed to block: ${blockData.detail || blockData.error || "Registry error"}` }],
+                content: [
+                  {
+                    type: "text",
+                    text: `Failed to block: ${blockData.detail || blockData.error || "Registry error"}`,
+                  },
+                ],
               };
             }
 
@@ -550,18 +627,23 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
             // Validate required args
             if (!installation_id || !message) {
               return {
-                content: [{ type: "text", text: "Error: Both 'installation_id' and 'message' are required for contact action." }],
+                content: [
+                  {
+                    type: "text",
+                    text: "Error: Both 'installation_id' and 'message' are required for contact action.",
+                  },
+                ],
               };
             }
 
             // Get our installation_id
             const convexEnv = getConvexEnv();
             const myInstallationId = convexEnv?.installationId || "unknown";
-            
+
             // Send via P2P WebSocket (P2PClient will handle this from the plugin)
             // For now, we return instructions — the actual message routing happens via channelRuntime.outbound.sendText
             // which uses p2pClients to send the message
-            
+
             return {
               content: [
                 {

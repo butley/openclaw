@@ -24,7 +24,9 @@ interface ConvexEnv {
 /** Read Convex connection info from environment variables. */
 export function getConvexEnv(): ConvexEnv | null {
   const convexUrl = process.env.BUTLEY_CONVEX_URL?.trim();
-  const installationId = (process.env.BUTLEY_INSTALLATION_ID ?? process.env.INSTALLATION_ID)?.trim();
+  const installationId = (
+    process.env.BUTLEY_INSTALLATION_ID ?? process.env.INSTALLATION_ID
+  )?.trim();
   const gatewayToken = process.env.BUTLEY_GATEWAY_TOKEN?.trim();
 
   if (!convexUrl || !installationId) return null;
@@ -32,7 +34,9 @@ export function getConvexEnv(): ConvexEnv | null {
 }
 
 /** Fetch the installation's network metadata from Convex. */
-export async function fetchNetworkMetadata(env?: ConvexEnv | null): Promise<NetworkMetadata | null> {
+export async function fetchNetworkMetadata(
+  env?: ConvexEnv | null,
+): Promise<NetworkMetadata | null> {
   const e = env ?? getConvexEnv();
   if (!e) return null;
 
@@ -79,6 +83,8 @@ export interface HandshakeRecord {
   installationId: string;
   fromNodeId: number;
   fromHostname?: string;
+  fromAssistantName?: string;
+  fromHumanName?: string;
   fromPublicKey: string;
   introduction: string;
   status: "pending" | "approved" | "rejected";
@@ -152,6 +158,8 @@ async function callConvexQuery(
 export async function upsertHandshake(params: {
   fromNodeId: number;
   fromHostname?: string;
+  fromAssistantName?: string;
+  fromHumanName?: string;
   fromPublicKey: string;
   introduction: string;
   status?: "pending" | "approved" | "rejected";
@@ -159,6 +167,8 @@ export async function upsertHandshake(params: {
   const result = await callConvexMutation("agentNetworkHandshakes:upsert", {
     fromNodeId: params.fromNodeId,
     fromHostname: params.fromHostname,
+    fromAssistantName: params.fromAssistantName,
+    fromHumanName: params.fromHumanName,
     fromPublicKey: params.fromPublicKey ?? "",
     introduction: params.introduction ?? "",
     status: params.status ?? "pending",
@@ -181,7 +191,11 @@ export async function updateHandshakeStatus(params: {
 }
 
 /** List pending handshakes for this installation. */
-export async function listPendingHandshakes(): Promise<{ ok: boolean; handshakes?: HandshakeRecord[]; error?: string }> {
+export async function listPendingHandshakes(): Promise<{
+  ok: boolean;
+  handshakes?: HandshakeRecord[];
+  error?: string;
+}> {
   const result = await callConvexQuery("agentNetworkHandshakes:listPending", {});
   if (!result.ok) return { ok: false, error: result.error };
   return { ok: true, handshakes: (result.value as HandshakeRecord[]) ?? [] };
@@ -208,7 +222,11 @@ export async function markNotificationSent(params: {
 }
 
 /** List all handshakes for this installation (for cache rebuilding). */
-export async function listAllHandshakes(): Promise<{ ok: boolean; handshakes?: HandshakeRecord[]; error?: string }> {
+export async function listAllHandshakes(): Promise<{
+  ok: boolean;
+  handshakes?: HandshakeRecord[];
+  error?: string;
+}> {
   const result = await callConvexQuery("agentNetworkHandshakes:listAll", {});
   if (!result.ok) return { ok: false, error: result.error };
   return { ok: true, handshakes: (result.value as HandshakeRecord[]) ?? [] };
