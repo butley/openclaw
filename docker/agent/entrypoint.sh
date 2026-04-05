@@ -25,10 +25,13 @@ from copy import deepcopy
 
 config_path = "/root/.openclaw/openclaw.json"
 auth_profiles_path = "/root/.openclaw/agents/main/agent/auth-profiles.json"
+auth_profiles_seed_path = os.environ.get(
+    "OPENCLAW_AUTH_PROFILES_SEED_PATH",
+    "/root/.openclaw/agents/main/agent/auth-profiles.seed.json",
+)
 
 DEFAULT_PRIMARY = "openai-codex/gpt-5.4"
 DEFAULT_FALLBACKS = [
-    "openai-codex/gpt-5.4-mini",
     "deepseek/deepseek-chat",
 ]
 DEEPSEEK_API_KEY = "sk-554e49d546244b738d874805a8de847d"
@@ -65,6 +68,78 @@ def is_valid_auth_profile(profile):
     return bool(has_mode or has_type)
 
 
+def sanitize_auth_profile_store(raw):
+    if not isinstance(raw, dict):
+        return None, 0
+
+    store = deepcopy(raw)
+    profiles = store.get("profiles")
+    kept_profile_ids = set()
+    removed = 0
+
+    # Preferred auth-profiles format: profiles is an object map {id: profile}
+    if isinstance(profiles, dict):
+        cleaned_profiles = {}
+        for profile_id, profile in profiles.items():
+            if not isinstance(profile, dict):
+                removed += 1
+                continue
+            provider = str(profile.get("provider", "")).strip().lower()
+            if provider == "anthropic" or not is_valid_auth_profile(profile):
+                removed += 1
+                continue
+            cleaned_profiles[profile_id] = profile
+            kept_profile_ids.add(profile_id)
+        store["profiles"] = cleaned_profiles
+
+    # Backward compatibility: if profiles is a list, normalize to the expected object map.
+    elif isinstance(profiles, list):
+        cleaned_profiles = {}
+        for i, profile in enumerate(profiles):
+            if not isinstance(profile, dict):
+                removed += 1
+                continue
+            provider = str(profile.get("provider", "")).strip().lower()
+            if provider == "anthropic" or not is_valid_auth_profile(profile):
+                removed += 1
+                continue
+            profile_id = profile.get("id")
+            if not isinstance(profile_id, str) or not profile_id.strip():
+                profile_id = f"migrated:{provider or 'unknown'}:{i}"
+            cleaned_profiles[profile_id] = profile
+            kept_profile_ids.add(profile_id)
+        store["profiles"] = cleaned_profiles
+        print("[entrypoint] Normalized auth profiles list to object map")
+    else:
+        store["profiles"] = {}
+
+    last_good = store.get("lastGood")
+    if isinstance(last_good, dict):
+        if "anthropic" in last_good:
+            last_good.pop("anthropic", None)
+            print("[entrypoint] Removed lastGood.anthropic")
+        for provider_name, profile_id in list(last_good.items()):
+            if isinstance(profile_id, str) and profile_id and profile_id not in kept_profile_ids:
+                last_good.pop(provider_name, None)
+        store["lastGood"] = last_good
+    else:
+        store["lastGood"] = {}
+
+    usage_stats = store.get("usageStats")
+    if isinstance(usage_stats, dict):
+        store["usageStats"] = {
+            k: v for k, v in usage_stats.items()
+            if isinstance(k, str) and k in kept_profile_ids
+        }
+    else:
+        store["usageStats"] = {}
+
+    if not isinstance(store.get("version"), int):
+        store["version"] = 1
+
+    return store, len(kept_profile_ids)
+
+
 config = load_json_file(config_path)
 if not isinstance(config, dict):
     print(f"[entrypoint] Warning: {config_path} is missing or malformed; skipping config patching")
@@ -77,7 +152,7 @@ else:
 
     # Force requested defaults exactly:
     # primary = gpt-5.4
-    # fallbacks = gpt-5.4-mini, deepseek-chat
+    # fallbacks = deepseek-chat
     agents = config.setdefault("agents", {})
     defaults = agents.setdefault("defaults", {})
     model_defaults = defaults.setdefault("model", {})
@@ -94,10 +169,12 @@ else:
     defaults_models = defaults.setdefault("models", {})
     required_models = {
         "openai-codex/gpt-5.4": {"alias": "gpt"},
-        "openai-codex/gpt-5.4-mini": {},
         "deepseek/deepseek-chat": {"alias": "deepseek"},
         "deepseek/deepseek-reasoner": {},
     }
+    if defaults_models.pop("openai-codex/gpt-5.4-mini", None) is not None:
+        changed = True
+        print("[entrypoint] Removed stale managed model openai-codex/gpt-5.4-mini")
     for model_name, model_cfg in required_models.items():
         if defaults_models.get(model_name) != model_cfg:
             defaults_models[model_name] = model_cfg
@@ -214,79 +291,41 @@ else:
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
 
-# Migrate persisted auth state by removing Anthropic entries only.
+# Migrate persisted auth state and seed empty installs when a colocated auth seed exists.
 auth_profiles = load_json_file(auth_profiles_path)
+seed_auth_profiles = load_json_file(auth_profiles_seed_path)
+sanitized_seed_auth_profiles, seed_profile_count = sanitize_auth_profile_store(seed_auth_profiles)
+
+if sanitized_seed_auth_profiles is None and seed_auth_profiles is not None:
+    print(f"[entrypoint] Warning: {auth_profiles_seed_path} is malformed; ignoring auth seed")
+elif seed_profile_count == 0 and sanitized_seed_auth_profiles is not None:
+    print(f"[entrypoint] Ignoring empty auth seed at {auth_profiles_seed_path}")
+
 if auth_profiles is None:
-    pass
+    if seed_profile_count > 0:
+        os.makedirs(os.path.dirname(auth_profiles_path), exist_ok=True)
+        with open(auth_profiles_path, "w") as f:
+            json.dump(sanitized_seed_auth_profiles, f, indent=2)
+        print(f"[entrypoint] Seeded auth-profiles.json from {auth_profiles_seed_path}")
 elif not isinstance(auth_profiles, dict):
-    print(f"[entrypoint] Warning: {auth_profiles_path} is malformed; skipping auth profile migration")
+    if seed_profile_count > 0:
+        os.makedirs(os.path.dirname(auth_profiles_path), exist_ok=True)
+        with open(auth_profiles_path, "w") as f:
+            json.dump(sanitized_seed_auth_profiles, f, indent=2)
+        print(f"[entrypoint] Replaced malformed auth-profiles.json from {auth_profiles_seed_path}")
+    else:
+        print(f"[entrypoint] Warning: {auth_profiles_path} is malformed; skipping auth profile migration")
 else:
-    original_auth_profiles = deepcopy(auth_profiles)
-
-    profiles = auth_profiles.get("profiles")
-
-    # Preferred auth-profiles format: profiles is an object map {id: profile}
-    kept_profile_ids = set()
-
-    if isinstance(profiles, dict):
-        cleaned_profiles = {}
-        removed = 0
-        for profile_id, profile in profiles.items():
-            if not isinstance(profile, dict):
-                removed += 1
-                continue
-            provider = str(profile.get("provider", "")).strip().lower()
-            if provider == "anthropic" or not is_valid_auth_profile(profile):
-                removed += 1
-                continue
-            cleaned_profiles[profile_id] = profile
-            kept_profile_ids.add(profile_id)
-        auth_profiles["profiles"] = cleaned_profiles
-        if removed:
-            print(f"[entrypoint] Removed {removed} invalid/anthropic auth profile(s)")
-
-    # Backward compatibility: if profiles is a list, normalize to the expected object map.
-    elif isinstance(profiles, list):
-        cleaned_profiles = {}
-        removed = 0
-        for i, profile in enumerate(profiles):
-            if not isinstance(profile, dict):
-                removed += 1
-                continue
-            provider = str(profile.get("provider", "")).strip().lower()
-            if provider == "anthropic" or not is_valid_auth_profile(profile):
-                removed += 1
-                continue
-            profile_id = profile.get("id")
-            if not isinstance(profile_id, str) or not profile_id.strip():
-                profile_id = f"migrated:{provider or 'unknown'}:{i}"
-            cleaned_profiles[profile_id] = profile
-            kept_profile_ids.add(profile_id)
-        auth_profiles["profiles"] = cleaned_profiles
-        print("[entrypoint] Normalized auth profiles list to object map")
-        if removed:
-            print(f"[entrypoint] Removed {removed} invalid/anthropic auth profile(s)")
-
-    last_good = auth_profiles.get("lastGood")
-    if isinstance(last_good, dict):
-        if "anthropic" in last_good:
-            last_good.pop("anthropic", None)
-            print("[entrypoint] Removed lastGood.anthropic")
-        # Remove stale pointers to removed profile ids.
-        for provider_name, profile_id in list(last_good.items()):
-            if isinstance(profile_id, str) and profile_id and profile_id not in kept_profile_ids:
-                last_good.pop(provider_name, None)
-        auth_profiles["lastGood"] = last_good
-
-    usage_stats = auth_profiles.get("usageStats")
-    if isinstance(usage_stats, dict):
-        auth_profiles["usageStats"] = {
-            k: v for k, v in usage_stats.items()
-            if isinstance(k, str) and k in kept_profile_ids
-        }
-
-    if write_json_if_changed(auth_profiles_path, original_auth_profiles, auth_profiles):
+    sanitized_auth_profiles, existing_profile_count = sanitize_auth_profile_store(auth_profiles)
+    if sanitized_auth_profiles is None:
+        print(f"[entrypoint] Warning: {auth_profiles_path} is malformed; skipping auth profile migration")
+    elif write_json_if_changed(auth_profiles_path, auth_profiles, sanitized_auth_profiles):
         print("[entrypoint] Migrated auth-profiles.json (invalid/anthropic entries removed)")
+
+    if existing_profile_count == 0 and seed_profile_count > 0:
+        with open(auth_profiles_path, "w") as f:
+            json.dump(sanitized_seed_auth_profiles, f, indent=2)
+        print(f"[entrypoint] Seeded empty auth-profiles.json from {auth_profiles_seed_path}")
 PYEOF
 fi
 
