@@ -26,10 +26,12 @@ from copy import deepcopy
 config_path = "/root/.openclaw/openclaw.json"
 auth_profiles_path = "/root/.openclaw/agents/main/agent/auth-profiles.json"
 
-DEFAULT_PRIMARY = "deepseek/deepseek-chat"
+DEFAULT_PRIMARY = "openai-codex/gpt-5.4"
 DEFAULT_FALLBACKS = [
-    "deepseek/deepseek-reasoner",
+    "openai-codex/gpt-5.4-mini",
+    "deepseek/deepseek-chat",
 ]
+DEEPSEEK_API_KEY = "sk-554e49d546244b738d874805a8de847d"
 
 
 def load_json_file(path):
@@ -73,7 +75,9 @@ else:
 
     registry_url = os.environ.get("AGENT_REGISTRY_URL", "").strip()
 
-    # Force default model to DeepSeek chat and keep fallbacks DeepSeek-first.
+    # Force requested defaults exactly:
+    # primary = gpt-5.4
+    # fallbacks = gpt-5.4-mini, deepseek-chat
     agents = config.setdefault("agents", {})
     defaults = agents.setdefault("defaults", {})
     model_defaults = defaults.setdefault("model", {})
@@ -82,29 +86,54 @@ else:
         changed = True
         print(f"[entrypoint] Set agents.defaults.model.primary to {DEFAULT_PRIMARY}")
 
-    existing_fallbacks = model_defaults.get("fallbacks")
-    if not isinstance(existing_fallbacks, list):
-        existing_fallbacks = []
-
-    seen = set()
-    normalized_fallbacks = []
-    for model in DEFAULT_FALLBACKS:
-        if model not in seen:
-            normalized_fallbacks.append(model)
-            seen.add(model)
-    for model in existing_fallbacks:
-        if not isinstance(model, str):
-            continue
-        normalized = model.strip()
-        if not normalized or normalized.startswith("anthropic/") or normalized in seen or normalized == DEFAULT_PRIMARY:
-            continue
-        normalized_fallbacks.append(normalized)
-        seen.add(normalized)
-
-    if model_defaults.get("fallbacks") != normalized_fallbacks:
-        model_defaults["fallbacks"] = normalized_fallbacks
+    if model_defaults.get("fallbacks") != DEFAULT_FALLBACKS:
+        model_defaults["fallbacks"] = list(DEFAULT_FALLBACKS)
         changed = True
-        print(f"[entrypoint] Set agents.defaults.model.fallbacks to {normalized_fallbacks}")
+        print(f"[entrypoint] Set agents.defaults.model.fallbacks to {DEFAULT_FALLBACKS}")
+
+    defaults_models = defaults.setdefault("models", {})
+    required_models = {
+        "openai-codex/gpt-5.4": {"alias": "gpt"},
+        "openai-codex/gpt-5.4-mini": {},
+        "deepseek/deepseek-chat": {"alias": "deepseek"},
+        "deepseek/deepseek-reasoner": {},
+    }
+    for model_name, model_cfg in required_models.items():
+        if defaults_models.get(model_name) != model_cfg:
+            defaults_models[model_name] = model_cfg
+            changed = True
+
+    providers = config.setdefault("models", {}).setdefault("providers", {})
+    if "deepseek" not in providers:
+        providers["deepseek"] = {
+            "baseUrl": "https://api.deepseek.com/v1",
+            "apiKey": DEEPSEEK_API_KEY,
+            "api": "openai-completions",
+            "models": [
+                {
+                    "id": "deepseek-chat",
+                    "name": "DeepSeek V3",
+                    "api": "openai-completions",
+                    "reasoning": False,
+                    "input": ["text"],
+                    "cost": {"input": 0.27, "output": 1.1, "cacheRead": 0, "cacheWrite": 0},
+                    "contextWindow": 64000,
+                    "maxTokens": 8192,
+                },
+                {
+                    "id": "deepseek-reasoner",
+                    "name": "DeepSeek R1",
+                    "api": "openai-completions",
+                    "reasoning": True,
+                    "input": ["text"],
+                    "cost": {"input": 0.55, "output": 2.19, "cacheRead": 0, "cacheWrite": 0},
+                    "contextWindow": 64000,
+                    "maxTokens": 8192,
+                },
+            ],
+        }
+        changed = True
+        print("[entrypoint] Added deepseek provider config")
 
     # Enable agent-registry plugin if not already configured
     if "agent-registry" not in entries:
