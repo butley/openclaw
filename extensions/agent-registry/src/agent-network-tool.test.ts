@@ -66,6 +66,31 @@ describe("agent network tool", () => {
     expect(readText(result)).toContain("Missing required arg 'assistant_name'");
   });
 
+  it("generates a fallback introduction when handshake omits one", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = createAgentNetworkTool(createApi() as never);
+    await tool?.execute("call-2b", {
+      action: "handshake",
+      installation_id: "peer-installation",
+      assistant_name: "Junin",
+      human_name: "Guilherme",
+    });
+
+    const handshakeCall = fetchMock.mock.calls[0] as [RequestInfo | URL, RequestInit | undefined];
+    expect(JSON.parse(String(handshakeCall[1]?.body ?? ""))).toEqual({
+      from_id: "self-installation",
+      to_id: "peer-installation",
+      assistant_name: "Junin",
+      human_name: "Guilherme",
+      introduction: "Junin is reaching out on behalf of Guilherme.",
+    });
+  });
+
   it("shows pending names from the API without parsing introduction text", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

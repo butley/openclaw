@@ -346,6 +346,11 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
             // Get our installation_id to identify ourselves
             const convexEnv = getConvexEnv();
             const myInstallationId = convexEnv?.installationId || "unknown";
+            const resolvedIntroduction =
+              introduction ||
+              (human_name
+                ? `${assistant_name} is reaching out on behalf of ${human_name}.`
+                : `${assistant_name} is reaching out to connect.`);
 
             // POST /api/v1/trust/request on Registry API
             const trustUrl = new URL(`${config.registryUrl}/api/v1/trust/request`);
@@ -357,7 +362,7 @@ Send a message to another assistant via P2P WebSocket. Requires completed handsh
                 to_id: installation_id,
                 assistant_name,
                 human_name,
-                introduction,
+                introduction: resolvedIntroduction,
               }),
             });
 
