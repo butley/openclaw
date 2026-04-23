@@ -261,9 +261,13 @@ importers:
 
   extensions/brave: {}
 
+  extensions/butley-api: {}
+
   extensions/byteplus: {}
 
   extensions/chutes: {}
+
+  extensions/clickup-api: {}
 
   extensions/cloudflare-ai-gateway: {}
 
@@ -484,6 +488,8 @@ importers:
         version: 1.2.10
 
   extensions/minimax: {}
+
+  extensions/minimax-portal-auth: {}
 
   extensions/mistral: {}
 

@@ -474,6 +474,153 @@ const ACTIONS: Record<string, { desc: string; required?: string[]; handler: Acti
     },
   },
 
+  // ── Templates ─────────────────────────────────────────────────────────
+
+  getTaskTemplates: {
+    desc: "Get task templates available in the workspace. Args: page(optional, default 0)",
+    handler: async (args, config) => {
+      const page = Number(args.page ?? 0);
+      const data = (await clickupFetch(
+        `/team/${config.teamId}/taskTemplate?page=${page}`,
+        config.apiKey,
+      )) as Record<string, unknown>;
+      const templates = (data.templates as Array<Record<string, unknown>>) || [];
+      if (!templates.length) return "No task templates found.";
+      const lines = templates.map((t) => {
+        const id = (t.id as string) || "?";
+        const name = (t.name as string) || "Untitled";
+        const owner = ((t.owner as Record<string, unknown>)?.username as string) || "?";
+        return `• [${id}] ${name} — by ${owner}`;
+      });
+      return `📋 Task Templates (${templates.length})
+${lines.join("\n")}`;
+    },
+  },
+
+  createTaskFromTemplate: {
+    desc: "Create a task from a template in a list. Args: listId, templateId, name(optional - overrides template name)",
+    required: ["listId", "templateId"],
+    handler: async (args, config) => {
+      const body: Record<string, unknown> = {};
+      if (args.name) body.name = args.name;
+
+      const data = (await clickupFetch(
+        `/list/${args.listId}/taskTemplate/${args.templateId}`,
+        config.apiKey,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      )) as Record<string, unknown>;
+
+      const id = (data.custom_id as string) || (data.id as string);
+      return `✅ Task created from template: [${id}] ${data.name}
+${data.url || ""}`;
+    },
+  },
+
+  createFolderFromTemplate: {
+    desc: "Create a folder from a template in a space. Args: spaceId, templateId, name(optional - overrides template name)",
+    required: ["spaceId", "templateId"],
+    handler: async (args, config) => {
+      const body: Record<string, unknown> = {};
+      if (args.name) body.name = args.name;
+
+      const data = (await clickupFetch(
+        `/space/${args.spaceId}/folder_template/${args.templateId}`,
+        config.apiKey,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      )) as Record<string, unknown>;
+
+      return `✅ Folder created from template: [${data.id}] ${data.name}`;
+    },
+  },
+
+  getFolderTemplates: {
+    desc: "Get folder/list templates available in the workspace. Args: page(optional, default 0)",
+    handler: async (args, config) => {
+      const page = Number(args.page ?? 0);
+      const data = (await clickupFetch(
+        `/team/${config.teamId}/folder_template?page=${page}`,
+        config.apiKey,
+      )) as Record<string, unknown>;
+      const templates = (data.templates as Array<Record<string, unknown>>) || [];
+      if (!templates.length) return "No folder templates found.";
+      const lines = templates.map((t) => {
+        const id = (t.id as string) || "?";
+        const name = (t.name as string) || "Untitled";
+        const owner = ((t.owner as Record<string, unknown>)?.username as string) || "?";
+        return `• [${id}] ${name} — by ${owner}`;
+      });
+      return `📁 Folder Templates (${templates.length})
+${lines.join("\n")}`;
+    },
+  },
+
+  getListTemplates: {
+    desc: "Get list templates available in the workspace. Args: page(optional, default 0)",
+    handler: async (args, config) => {
+      const page = Number(args.page ?? 0);
+      const data = (await clickupFetch(
+        `/team/${config.teamId}/list_template?page=${page}`,
+        config.apiKey,
+      )) as Record<string, unknown>;
+      const templates = (data.templates as Array<Record<string, unknown>>) || [];
+      if (!templates.length) return "No list templates found.";
+      const lines = templates.map((t) => {
+        const id = (t.id as string) || "?";
+        const name = (t.name as string) || "Untitled";
+        const owner = ((t.owner as Record<string, unknown>)?.username as string) || "?";
+        return `• [${id}] ${name} — by ${owner}`;
+      });
+      return `📋 List Templates (${templates.length})
+${lines.join("\n")}`;
+    },
+  },
+
+  createListFromTemplateInFolder: {
+    desc: "Create a list from a template in a folder. Args: folderId, templateId, name(optional - overrides template name)",
+    required: ["folderId", "templateId"],
+    handler: async (args, config) => {
+      const body: Record<string, unknown> = {};
+      if (args.name) body.name = args.name;
+
+      const data = (await clickupFetch(
+        `/folder/${args.folderId}/list_template/${args.templateId}`,
+        config.apiKey,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      )) as Record<string, unknown>;
+
+      return `✅ List created from template: [${data.id}] ${data.name}`;
+    },
+  },
+
+  createListFromTemplateInSpace: {
+    desc: "Create a list from a template in a space (folderless). Args: spaceId, templateId, name(optional - overrides template name)",
+    required: ["spaceId", "templateId"],
+    handler: async (args, config) => {
+      const body: Record<string, unknown> = {};
+      if (args.name) body.name = args.name;
+
+      const data = (await clickupFetch(
+        `/space/${args.spaceId}/list_template/${args.templateId}`,
+        config.apiKey,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      )) as Record<string, unknown>;
+
+      return `✅ List created from template: [${data.id}] ${data.name}`;
+    },
+  },
+
   createTimeEntry: {
     desc: "Log a time entry. Args: task_id, duration(ms), start(timestamp ms), description(optional)",
     required: ["task_id", "duration", "start"],
